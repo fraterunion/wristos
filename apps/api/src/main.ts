@@ -36,7 +36,16 @@ async function bootstrap() {
 
     next();
   });
-
+    app.getHttpAdapter().get('/__debug_cors', (req, res) => {
+    res.status(200).json({
+      marker: 'manual-cors-v1',
+      origin: req.headers.origin ?? null,
+      hasAllowedOrigin:
+        typeof req.headers.origin === 'string' &&
+        allowedOrigins.has(req.headers.origin),
+      allowedOrigins: Array.from(allowedOrigins),
+    });
+  });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({
