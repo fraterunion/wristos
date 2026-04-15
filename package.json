@@ -2,7 +2,7 @@
   "name": "wristos",
   "version": "0.0.1",
   "private": true,
-  "description": "WristOS \u2014 Luxury Watch Dealer Operating System (Frater Union)",
+  "description": "WristOS — Luxury Watch Dealer Operating System (Frater Union)",
   "workspaces": [
     "apps/*"
   ],
@@ -26,5 +26,8 @@
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
+  },
+  "dependencies": {
+    "next": "^15.2.8"
   }
 }
