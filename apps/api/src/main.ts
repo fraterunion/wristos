@@ -18,6 +18,7 @@ async function bootstrap() {
       res.header('Access-Control-Allow-Origin', origin);
     }
 
+    res.header('X-Debug-Cors', 'manual-cors-v1');
     res.header('Vary', 'Origin');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header(
