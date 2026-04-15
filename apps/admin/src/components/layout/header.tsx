@@ -14,7 +14,7 @@ export function Header() {
 
   return (
     <header className="flex h-16 items-center justify-between border-b border-white/10 bg-panel/95 px-6 backdrop-blur">
-      <h1 className="text-sm font-medium tracking-wide text-muted">Admin Console</h1>
+      <h1 className="text-sm font-medium tracking-wide text-muted">Wrist Caviar · Admin</h1>
       <div className="flex items-center gap-4">
         <span className="text-sm text-white/90">{user?.email ?? 'Unknown user'}</span>
         <button

@@ -656,6 +656,7 @@ async function main() {
   const roleName = process.env.SEED_ROLE_NAME ?? 'OWNER';
   const userEmail = (process.env.SEED_USER_EMAIL ?? 'owner@wristos.local').toLowerCase();
   const userPassword = process.env.SEED_USER_PASSWORD ?? 'ChangeMe123!';
+  const seedOwnerUsername = process.env.SEED_USER_USERNAME?.trim().toLowerCase() || null;
 
   const passwordHash = await bcrypt.hash(userPassword, 12);
 
@@ -688,9 +689,11 @@ async function main() {
     update: {
       passwordHash,
       status: UserStatus.ACTIVE,
+      ...(seedOwnerUsername ? { username: seedOwnerUsername } : {}),
     },
     create: {
       email: userEmail,
+      username: seedOwnerUsername ?? undefined,
       passwordHash,
       status: UserStatus.ACTIVE,
       displayName: 'WristOS Owner',
@@ -711,6 +714,98 @@ async function main() {
       tenantId: tenant.id,
       userId: user.id,
       roleId: role.id,
+    },
+  });
+
+  // Wrist Caviar tenant + Trejo users (idempotent; not affected by demo tenant data reset below).
+  const wristCaviarSlug = process.env.SEED_WRIST_CAVIAR_SLUG ?? 'wrist-caviar';
+  const cesarPassword = process.env.SEED_CESAR_PASSWORD ?? 'hermanos4ever2012';
+  const reginaPassword = process.env.SEED_REGINA_PASSWORD ?? 'lakikis12345';
+
+  const wristCaviar = await prisma.tenant.upsert({
+    where: { slug: wristCaviarSlug },
+    update: { name: 'Wrist Caviar', status: TenantStatus.ACTIVE },
+    create: {
+      name: 'Wrist Caviar',
+      slug: wristCaviarSlug,
+      status: TenantStatus.ACTIVE,
+    },
+  });
+
+  const wcOwnerRole = await prisma.role.upsert({
+    where: {
+      tenantId_name: { tenantId: wristCaviar.id, name: 'OWNER' },
+    },
+    update: {},
+    create: { tenantId: wristCaviar.id, name: 'OWNER' },
+  });
+
+  const wcSalesRole = await prisma.role.upsert({
+    where: {
+      tenantId_name: { tenantId: wristCaviar.id, name: 'SALES' },
+    },
+    update: {},
+    create: { tenantId: wristCaviar.id, name: 'SALES' },
+  });
+
+  const cesarHash = await bcrypt.hash(cesarPassword, 12);
+  const reginaHash = await bcrypt.hash(reginaPassword, 12);
+
+  const cesarUser = await prisma.user.upsert({
+    where: { email: 'cesar.trejo@wristcaviar.local' },
+    update: {
+      username: 'cesar.trejo',
+      passwordHash: cesarHash,
+      status: UserStatus.ACTIVE,
+      displayName: 'Cesar Trejo',
+    },
+    create: {
+      email: 'cesar.trejo@wristcaviar.local',
+      username: 'cesar.trejo',
+      passwordHash: cesarHash,
+      status: UserStatus.ACTIVE,
+      displayName: 'Cesar Trejo',
+    },
+  });
+
+  const reginaUser = await prisma.user.upsert({
+    where: { email: 'regina.trejo@wristcaviar.local' },
+    update: {
+      username: 'regina.trejo',
+      passwordHash: reginaHash,
+      status: UserStatus.ACTIVE,
+      displayName: 'Regina Trejo',
+    },
+    create: {
+      email: 'regina.trejo@wristcaviar.local',
+      username: 'regina.trejo',
+      passwordHash: reginaHash,
+      status: UserStatus.ACTIVE,
+      displayName: 'Regina Trejo',
+    },
+  });
+
+  await prisma.tenantUser.upsert({
+    where: {
+      tenantId_userId: { tenantId: wristCaviar.id, userId: cesarUser.id },
+    },
+    update: { roleId: wcOwnerRole.id },
+    create: {
+      tenantId: wristCaviar.id,
+      userId: cesarUser.id,
+      roleId: wcOwnerRole.id,
+    },
+  });
+
+  await prisma.tenantUser.upsert({
+    where: {
+      tenantId_userId: { tenantId: wristCaviar.id, userId: reginaUser.id },
+    },
+    update: { roleId: wcSalesRole.id },
+    create: {
+      tenantId: wristCaviar.id,
+      userId: reginaUser.id,
+      roleId: wcSalesRole.id,
     },
   });
 

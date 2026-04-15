@@ -19,19 +19,36 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
-  async validateUser(email: string, password: string): Promise<CurrentUser> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
-      include: {
-        tenantUsers: {
-          include: {
-            tenant: true,
-            role: true,
+  async validateUser(identifier: string, password: string): Promise<CurrentUser> {
+    const trimmed = identifier.trim();
+    const emailKey = trimmed.toLowerCase();
+    const usernameKey = trimmed.toLowerCase();
+
+    const user =
+      (await this.prisma.user.findUnique({
+        where: { email: emailKey },
+        include: {
+          tenantUsers: {
+            include: {
+              tenant: true,
+              role: true,
+            },
+            orderBy: { createdAt: 'asc' },
           },
-          orderBy: { createdAt: 'asc' },
         },
-      },
-    });
+      })) ??
+      (await this.prisma.user.findUnique({
+        where: { username: usernameKey },
+        include: {
+          tenantUsers: {
+            include: {
+              tenant: true,
+              role: true,
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+        },
+      }));
 
     if (!user || user.status !== UserStatus.ACTIVE || !user.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
@@ -58,7 +75,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.validateUser(dto.email, dto.password);
+    const user = await this.validateUser(dto.identifier, dto.password);
     return this.issueTokens(user);
   }
 
