@@ -17,7 +17,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   accessToken: string | null;
   isLoading: boolean;
-  login: (identifier: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshCurrentUser: () => Promise<void>;
 };
@@ -119,11 +119,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [refreshCurrentUserInner]);
 
   const login = useCallback(
-    async (identifier: string, password: string) => {
-      const auth = await apiPost<
-        LoginResponse,
-        { identifier: string; password: string }
-      >('/auth/login', { identifier, password });
+    async (email: string, password: string) => {
+      const auth = await apiPost<LoginResponse, { email: string; password: string }>(
+        '/auth/login',
+        { email, password },
+      );
 
       const mePayload = await apiGet<AuthUser>('/auth/me', {
         authenticated: true,

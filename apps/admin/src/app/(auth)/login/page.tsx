@@ -10,14 +10,14 @@ export default function LoginPage() {
   const { login } = useAuthContext();
   const router = useRouter();
 
-  const [identifier, setIdentifier] = useState('owner@wristos.local');
+  const [email, setEmail] = useState('owner@wristos.local');
   const [password, setPassword] = useState('ChangeMe123!');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isDisabled = useMemo(
-    () => submitting || !identifier.trim() || !password.trim(),
-    [identifier, password, submitting],
+    () => submitting || !email.trim() || !password.trim(),
+    [email, password, submitting],
   );
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -26,7 +26,7 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      await login(identifier, password);
+      await login(email, password);
       router.replace('/dashboard');
     } catch (submitError) {
       setError(
@@ -55,12 +55,12 @@ export default function LoginPage() {
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
           <label className="block text-sm">
-            <span className="mb-1 block text-muted">Username or email</span>
+            <span className="mb-1 block text-muted">Email</span>
             <input
-              type="text"
-              value={identifier}
-              onChange={(event) => setIdentifier(event.target.value)}
-              autoComplete="username"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              autoComplete="email"
               className="w-full rounded-md border border-white/20 bg-surface px-3 py-2 outline-none ring-accent/40 focus:ring"
               required
             />

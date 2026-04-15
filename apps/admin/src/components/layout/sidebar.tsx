@@ -17,7 +17,7 @@ export function Sidebar() {
 
   return (
     <aside className="w-64 border-r border-white/10 bg-panel px-4 py-5">
-      <div className="mb-6 text-lg font-semibold tracking-wide text-white">Wrist Caviar</div>
+      <div className="mb-6 text-lg font-semibold tracking-wide text-white">WristOS</div>
       <nav className="space-y-1.5">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
