@@ -26,8 +26,5 @@
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
-  },
-  "dependencies": {
-    "next": "^15.2.8"
   }
 }

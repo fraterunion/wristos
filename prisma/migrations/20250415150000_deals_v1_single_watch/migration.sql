@@ -12,14 +12,13 @@ ALTER TABLE "deals" ALTER COLUMN "clientId" SET NOT NULL;
 
 -- For required watchId, temporarily backfill from an existing watch per tenant if needed.
 UPDATE "deals" d
-SET "watchId" = w."id"
-FROM LATERAL (
-  SELECT "id"
-  FROM "watches"
-  WHERE "tenantId" = d."tenantId"
-  ORDER BY "createdAt" ASC
+SET "watchId" = (
+  SELECT w."id"
+  FROM "watches" w
+  WHERE w."tenantId" = d."tenantId"
+  ORDER BY w."createdAt" ASC
   LIMIT 1
-) w
+)
 WHERE d."watchId" IS NULL;
 
 ALTER TABLE "deals" ALTER COLUMN "watchId" SET NOT NULL;

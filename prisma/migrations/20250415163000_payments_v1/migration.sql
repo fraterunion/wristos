@@ -16,14 +16,13 @@ WHERE "method" IS NULL;
 
 -- For required dealId in V1, backfill from any existing deal in tenant if needed.
 UPDATE "payments" p
-SET "dealId" = d."id"
-FROM LATERAL (
-  SELECT "id"
-  FROM "deals"
-  WHERE "tenantId" = p."tenantId"
-  ORDER BY "createdAt" ASC
+SET "dealId" = (
+  SELECT d."id"
+  FROM "deals" d
+  WHERE d."tenantId" = p."tenantId"
+  ORDER BY d."createdAt" ASC
   LIMIT 1
-) d
+)
 WHERE p."dealId" IS NULL;
 
 ALTER TABLE "payments" ALTER COLUMN "dealId" SET NOT NULL;
