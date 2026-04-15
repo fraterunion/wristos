@@ -54,10 +54,16 @@ export default function LoginPage() {
         <p className="mt-2 text-sm text-muted">Sign in to continue</p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-          <label className="block text-sm">
+          <label htmlFor="login-identifier" className="block text-sm">
             <span className="mb-1 block text-muted">Username or email</span>
             <input
+              id="login-identifier"
+              name="identifier"
               type="text"
+              inputMode="text"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={identifier}
               onChange={(event) => setIdentifier(event.target.value)}
               autoComplete="username"
@@ -66,9 +72,11 @@ export default function LoginPage() {
             />
           </label>
 
-          <label className="block text-sm">
+          <label htmlFor="login-password" className="block text-sm">
             <span className="mb-1 block text-muted">Password</span>
             <input
+              id="login-password"
+              name="password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
