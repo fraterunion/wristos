@@ -11,27 +11,29 @@ async function bootstrap() {
     'https://wristcaviar.fraterunion.com',
   ]);
 
-  app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
 
-      if (allowedOrigins.has(origin)) {
-        return callback(null, true);
-      }
+    if (origin && allowedOrigins.has(origin)) {
+      res.header('Access-Control-Allow-Origin', origin);
+    }
 
-      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
-    },
-    credentials: true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Accept',
-      'Origin',
-      'X-Requested-With',
-    ],
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    );
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, Accept, Origin, X-Requested-With',
+    );
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+
+    next();
   });
 
   app.setGlobalPrefix('api');
