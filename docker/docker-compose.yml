@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wristos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wristos
+      POSTGRES_PASSWORD: wristos
+      POSTGRES_DB: wristos
+    ports:
+      - "5432:5432"
+    volumes:
+      - wristos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wristos -d wristos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: wristos-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://wristos:wristos@postgres:5432/wristos?schema=public
+      JWT_SECRET: docker-dev-secret-change-me
+    ports:
+      - "4000:4000"
+
+volumes:
+  wristos_pgdata:

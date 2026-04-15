@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-surface text-white antialiased;
+}
+
+a {
+  @apply text-inherit no-underline;
+}
+
+@layer components {
+  .ui-page {
+    @apply space-y-6;
+  }
+
+  .ui-page-header {
+    @apply flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between;
+  }
+
+  .ui-title {
+    @apply text-2xl font-semibold tracking-tight text-white;
+  }
+
+  .ui-subtitle {
+    @apply mt-1 text-sm text-muted;
+  }
+
+  .ui-card {
+    @apply rounded-2xl border border-white/10 bg-panel p-5 shadow-sm shadow-black/20;
+  }
+
+  .ui-card-soft {
+    @apply rounded-xl border border-white/10 bg-surface/40 p-4;
+  }
+
+  .ui-btn {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .ui-btn-primary {
+    @apply ui-btn bg-accent font-semibold text-black hover:brightness-110;
+  }
+
+  .ui-btn-secondary {
+    @apply ui-btn border border-white/20 bg-white/5 text-white hover:bg-white/10;
+  }
+
+  .ui-btn-ghost {
+    @apply ui-btn border border-white/20 text-muted hover:bg-white/5 hover:text-white;
+  }
+
+  .ui-btn-danger {
+    @apply ui-btn border border-rose-400/35 text-rose-200 hover:bg-rose-500/10;
+  }
+
+  .ui-field-label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
+  }
+
+  .ui-input {
+    @apply w-full rounded-lg border border-white/15 bg-surface px-3 py-2 text-sm outline-none ring-accent/25 transition duration-150 focus:ring-2;
+  }
+
+  .ui-error {
+    @apply mt-1 text-xs text-rose-300;
+  }
+}

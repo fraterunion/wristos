@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# env files
+.env
+.env.*
+!.env.example
+
+# next.js
+.next/
+out/
+
+# build
+dist/
+build/
+
+# logs
+logs
+*.log
+
+# mac
+.DS_Store
+
+# misc
+coverage/
+.cache/

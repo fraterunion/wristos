@@ -1,0 +1,353 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Enums ---
+
+enum TenantStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum WatchOwnershipType {
+  OWNED
+  CONSIGNMENT
+}
+
+enum WatchStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  IN_TRANSIT
+  IN_SERVICE
+}
+
+enum DealStage {
+  LEAD
+  INTERESTED
+  NEGOTIATING
+  PENDING_PAYMENT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+}
+
+enum PaymentMethod {
+  TRANSFER
+  CASH
+  CARD
+  OTHER
+}
+
+enum ClientInteractionType {
+  CALL
+  MESSAGE
+  MEETING
+  NOTE
+}
+
+enum AutomationRuleType {
+  STALE_DEAL
+  OVERDUE_PAYMENT
+  AGING_INVENTORY
+}
+
+enum AutomationRunStatus {
+  SUCCESS
+  ERROR
+}
+
+// --- Core (platform) ---
+
+model Tenant {
+  id        String       @id @default(cuid())
+  name      String
+  slug      String       @unique
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  roles           Role[]
+  tenantUsers     TenantUser[]
+  clients         Client[]
+  clientPreferences ClientPreference[]
+  clientInteractions ClientInteraction[]
+  watches         Watch[]
+  deals           Deal[]
+  payments        Payment[]
+  automationRules AutomationRule[]
+  automationRuns  AutomationRun[]
+  matchSuggestions MatchSuggestion[]
+
+  @@index([slug])
+  @@map("tenants")
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String?
+  displayName  String?
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  tenantUsers TenantUser[]
+
+  @@map("users")
+}
+
+/// Role names are unique per tenant (e.g. OWNER, SALES, VIEWER).
+model Role {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantUsers TenantUser[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("roles")
+}
+
+model TenantUser {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+  @@index([tenantId])
+  @@map("tenant_users")
+}
+
+// --- WristOS domain (all tenant-scoped) ---
+
+model Client {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  email       String?
+  phone       String?
+  notes       String?
+  tags        String[]
+  budgetRange String?
+  deletedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant           Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deals            Deal[]
+  preferences      ClientPreference[]
+  matchSuggestions MatchSuggestion[]
+  interactions     ClientInteraction[]
+
+  @@index([tenantId])
+  @@index([tenantId, email])
+  @@index([tenantId, deletedAt])
+  @@map("clients")
+}
+
+model ClientPreference {
+  id              String   @id @default(cuid())
+  tenantId        String
+  clientId        String
+  preferredBrands String[]
+  preferredModels String[]
+  budgetMin       Decimal? @db.Decimal(12, 2)
+  budgetMax       Decimal? @db.Decimal(12, 2)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, clientId])
+  @@unique([tenantId, clientId])
+  @@map("client_preferences")
+}
+
+model ClientInteraction {
+  id         String                @id @default(cuid())
+  tenantId   String
+  clientId   String
+  type       ClientInteractionType
+  notes      String
+  occurredAt DateTime
+  createdAt  DateTime              @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, clientId])
+  @@index([tenantId, occurredAt])
+  @@map("client_interactions")
+}
+
+model Watch {
+  id                         String               @id @default(cuid())
+  tenantId                   String
+  brand                      String
+  model                      String
+  reference                  String?
+  serialNumber               String?
+  condition                  String
+  cost                       Decimal              @db.Decimal(12, 2)
+  price                      Decimal              @db.Decimal(12, 2)
+  ownershipType              WatchOwnershipType   @default(OWNED)
+  consignmentOwnerName       String?
+  consignmentSplitPercentage Decimal?             @db.Decimal(5, 2)
+  status                     WatchStatus          @default(AVAILABLE)
+  deletedAt                  DateTime?
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deals            Deal[]
+  matchSuggestions MatchSuggestion[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, deletedAt])
+  @@map("watches")
+}
+
+model Deal {
+  id              String    @id @default(cuid())
+  tenantId        String
+  clientId        String
+  watchId         String
+  stage           DealStage @default(LEAD)
+  expectedCloseAt DateTime?
+  agreedPrice     Decimal   @db.Decimal(12, 2)
+  notes           String?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client   Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  watch    Watch    @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  payments Payment[]
+
+  @@index([tenantId])
+  @@index([tenantId, stage])
+  @@index([tenantId, clientId])
+  @@index([tenantId, watchId])
+  @@index([tenantId, deletedAt])
+  @@map("deals")
+}
+
+model Payment {
+  id        String         @id @default(cuid())
+  tenantId  String
+  dealId    String
+  amount    Decimal        @db.Decimal(12, 2)
+  method    PaymentMethod
+  status    PaymentStatus  @default(PENDING)
+  dueDate   DateTime?
+  paidAt    DateTime?
+  notes     String?
+  deletedAt DateTime?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, method])
+  @@index([tenantId, dealId])
+  @@index([tenantId, deletedAt])
+  @@map("payments")
+}
+
+model MatchSuggestion {
+  id        String   @id @default(cuid())
+  tenantId  String
+  clientId  String
+  watchId   String
+  reason    String
+  score     Int
+  dismissedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  watch  Watch  @relation(fields: [watchId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([clientId])
+  @@index([watchId])
+  @@index([tenantId, dismissedAt])
+  @@unique([tenantId, clientId, watchId])
+  @@map("match_suggestions")
+}
+
+model AutomationRule {
+  id            String             @id @default(cuid())
+  tenantId      String
+  type          AutomationRuleType
+  isEnabled     Boolean            @default(true)
+  thresholdDays Int
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runs   AutomationRun[]
+
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, isEnabled])
+  @@unique([tenantId, type])
+  @@map("automation_rules")
+}
+
+model AutomationRun {
+  id           String              @id @default(cuid())
+  tenantId     String
+  ruleId       String
+  status       AutomationRunStatus
+  resultCount  Int
+  errorMessage String?
+  createdAt    DateTime            @default(now())
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rule   AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([ruleId])
+  @@map("automation_runs")
+}

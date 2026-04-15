@@ -1,0 +1,30 @@
+{
+  "name": "wristos",
+  "version": "0.0.1",
+  "private": true,
+  "description": "WristOS \u2014 Luxury Watch Dealer Operating System (Frater Union)",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run start:dev --workspace=@fraterunion/wristos-api",
+    "build": "npm run build --workspace=@fraterunion/wristos-api",
+    "start": "npm run start:prod --workspace=@fraterunion/wristos-api",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "devDependencies": {
+    "prisma": "^6.6.0",
+    "tsx": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  }
+}
