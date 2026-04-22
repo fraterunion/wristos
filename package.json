@@ -26,5 +26,8 @@
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0"
   }
 }
