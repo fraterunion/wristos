@@ -13,6 +13,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { MatchingModule } from './modules/matching/matching.module';
 import { AutomationsModule } from './modules/automations/automations.module';
+import { HistoryModule } from './modules/history/history.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { AutomationsModule } from './modules/automations/automations.module';
     AnalyticsModule,
     MatchingModule,
     AutomationsModule,
+    HistoryModule,
   ],
   controllers: [AppController],
 })

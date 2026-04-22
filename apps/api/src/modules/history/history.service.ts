@@ -1,0 +1,138 @@
+import { Injectable } from '@nestjs/common';
+import { DealStage, Watch, WatchStatus } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class HistoryService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getSummary(tenantId: string) {
+    const [totalAcquired, currentStock, soldDeals] = await Promise.all([
+      this.prisma.watch.count({ where: { tenantId } }),
+      this.prisma.watch.count({
+        where: { tenantId, deletedAt: null, status: { not: WatchStatus.SOLD } },
+      }),
+      this.prisma.deal.findMany({
+        where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
+        select: {
+          agreedPrice: true,
+          watch: { select: { cost: true } },
+        },
+      }),
+    ]);
+
+    const totalRevenue = soldDeals.reduce((sum, d) => sum + Number(d.agreedPrice), 0);
+    const totalCostOfSold = soldDeals.reduce((sum, d) => sum + Number(d.watch.cost), 0);
+
+    return {
+      totalAcquired,
+      totalSold: soldDeals.length,
+      currentStock,
+      totalRevenue: totalRevenue.toFixed(2),
+      totalCostOfSold: totalCostOfSold.toFixed(2),
+      totalProfit: (totalRevenue - totalCostOfSold).toFixed(2),
+    };
+  }
+
+  async getSold(tenantId: string) {
+    const deals = await this.prisma.deal.findMany({
+      where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
+      include: {
+        watch: true,
+        client: true,
+        payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return deals.map((deal) => ({
+      dealId: deal.id,
+      watch: this.serializeWatch(deal.watch),
+      buyer: {
+        id: deal.client.id,
+        name: deal.client.name,
+        email: deal.client.email,
+        phone: deal.client.phone,
+      },
+      agreedPrice: deal.agreedPrice.toString(),
+      notes: deal.notes,
+      soldAt: deal.updatedAt.toISOString(),
+      createdAt: deal.createdAt.toISOString(),
+      payments: deal.payments.map((p) => ({
+        id: p.id,
+        amount: p.amount.toString(),
+        method: p.method,
+        status: p.status,
+        paidAt: p.paidAt?.toISOString() ?? null,
+      })),
+    }));
+  }
+
+  async getStock(tenantId: string) {
+    const watches = await this.prisma.watch.findMany({
+      where: { tenantId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    return watches.map((w) => this.serializeWatch(w));
+  }
+
+  async getAcquired(tenantId: string) {
+    const watches = await this.prisma.watch.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return watches.map((w) => this.serializeWatch(w));
+  }
+
+  async getMovements(tenantId: string) {
+    const deals = await this.prisma.deal.findMany({
+      where: { tenantId, deletedAt: null },
+      include: { watch: true, client: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return deals.map((deal) => ({
+      dealId: deal.id,
+      stage: deal.stage,
+      watch: {
+        id: deal.watch.id,
+        brand: deal.watch.brand,
+        model: deal.watch.model,
+        reference: deal.watch.reference,
+        serialNumber: deal.watch.serialNumber,
+        status: deal.watch.status,
+      },
+      client: {
+        id: deal.client.id,
+        name: deal.client.name,
+        email: deal.client.email,
+        phone: deal.client.phone,
+      },
+      agreedPrice: deal.agreedPrice.toString(),
+      notes: deal.notes,
+      expectedCloseAt: deal.expectedCloseAt?.toISOString() ?? null,
+      createdAt: deal.createdAt.toISOString(),
+      updatedAt: deal.updatedAt.toISOString(),
+    }));
+  }
+
+  private serializeWatch(watch: Watch) {
+    return {
+      id: watch.id,
+      brand: watch.brand,
+      model: watch.model,
+      reference: watch.reference,
+      serialNumber: watch.serialNumber,
+      condition: watch.condition,
+      cost: watch.cost.toString(),
+      price: watch.price.toString(),
+      status: watch.status,
+      ownershipType: watch.ownershipType,
+      consignmentOwnerName: watch.consignmentOwnerName,
+      consignmentSplitPercentage: watch.consignmentSplitPercentage?.toString() ?? null,
+      createdAt: watch.createdAt.toISOString(),
+      updatedAt: watch.updatedAt.toISOString(),
+      deletedAt: watch.deletedAt?.toISOString() ?? null,
+    };
+  }
+}
