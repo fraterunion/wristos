@@ -276,7 +276,7 @@ export default function InventoryPage() {
       ) : null}
 
       {empty ? (
-        <div className="rounded-2xl border border-dashed border-white/15 bg-panel/50 px-8 py-16 text-center">
+        <div className="rounded-2xl border border-dashed border-white/15 bg-panel/50 px-4 py-12 text-center sm:px-8 sm:py-16">
           <p className="text-lg font-medium text-white">No watches in inventory yet</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted">
             Start by adding your first piece. You can track cost, price, status, and consignment in
@@ -295,15 +295,14 @@ export default function InventoryPage() {
       {!loading && !error && watches.length > 0 ? (
         <div className="ui-card overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="min-w-[960px] w-full border-collapse text-left text-sm">
+            <table className="min-w-[860px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
                   <th className="px-4 py-3 font-medium">Brand / Model</th>
-                  <th className="px-4 py-3 font-medium">Reference</th>
                   <th className="px-4 py-3 font-medium">Serial</th>
                   <th className="px-4 py-3 font-medium">Condition</th>
-                  <th className="px-4 py-3 font-medium text-right">Price</th>
-                  <th className="px-4 py-3 font-medium text-right">Cost</th>
+                  <th className="px-4 py-3 font-medium text-right">Price Range</th>
+                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Ownership</th>
                   <th className="px-4 py-3 font-medium text-right">Actions</th>
@@ -319,14 +318,20 @@ export default function InventoryPage() {
                       <div className="font-medium text-white">{watch.brand}</div>
                       <div className="text-xs text-muted">{watch.model}</div>
                     </td>
-                    <td className="px-4 py-3 text-muted">{dash(watch.reference)}</td>
                     <td className="px-4 py-3 font-mono text-xs text-muted">{dash(watch.serialNumber)}</td>
                     <td className="px-4 py-3 text-muted">{watch.condition}</td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
-                      {formatMoney(watch.price)}
+                    <td className="px-4 py-3 text-right tabular-nums text-white">
+                      {watch.priceMin === watch.priceMax
+                        ? formatMoney(watch.priceMin)
+                        : `${formatMoney(watch.priceMin)} – ${formatMoney(watch.priceMax)}`}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted">
-                      {formatMoney(watch.cost)}
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      <span className="font-medium text-white">{formatMoney(watch.effectiveCost)}</span>
+                      {watch.expenses.length > 0 ? (
+                        <div className="text-xs text-muted">
+                          Base {formatMoney(watch.cost)} + {watch.expenses.length} exp.
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={watch.status} />

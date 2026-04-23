@@ -31,10 +31,6 @@ export class UpdateWatchDto {
 
   @IsOptional()
   @IsString()
-  reference?: string | null;
-
-  @IsOptional()
-  @IsString()
   serialNumber?: string | null;
 
   @IsOptional()
@@ -52,7 +48,13 @@ export class UpdateWatchDto {
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  price?: number;
+  priceMin?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  priceMax?: number;
 
   @IsOptional()
   @IsEnum(WatchStatus)
