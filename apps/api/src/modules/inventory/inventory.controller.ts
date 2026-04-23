@@ -14,6 +14,7 @@ import {
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
+import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateWatchDto } from './dto/create-watch.dto';
 import { ListWatchesDto } from './dto/list-watches.dto';
 import { UpdateWatchDto } from './dto/update-watch.dto';
@@ -52,5 +53,24 @@ export class InventoryController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
     return this.inventoryService.remove(id, user.tenantId);
+  }
+
+  @Post(':id/expenses')
+  addExpense(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') id: string,
+    @Body() dto: CreateExpenseDto,
+  ) {
+    return this.inventoryService.addExpense(id, user.tenantId, dto);
+  }
+
+  @Delete(':id/expenses/:expenseId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeExpense(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') id: string,
+    @Param('expenseId') expenseId: string,
+  ) {
+    return this.inventoryService.removeExpense(id, expenseId, user.tenantId);
   }
 }

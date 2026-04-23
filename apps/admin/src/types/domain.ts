@@ -50,6 +50,24 @@ export type WatchStatus =
 
 export type WatchOwnershipType = 'OWNED' | 'CONSIGNMENT';
 
+export type WatchExpenseCategory =
+  | 'POLISHING'
+  | 'REPAIR'
+  | 'LINKS'
+  | 'SHIPPING'
+  | 'PARTS'
+  | 'COMMISSIONS'
+  | 'TRAVEL';
+
+export type WatchExpense = {
+  id: string;
+  watchId: string;
+  category: WatchExpenseCategory;
+  amount: string;
+  notes: string | null;
+  createdAt: string;
+};
+
 export type Watch = {
   id: string;
   tenantId: string;
@@ -59,7 +77,10 @@ export type Watch = {
   serialNumber: string | null;
   condition: string;
   cost: string;
-  price: string;
+  priceMin: string;
+  priceMax: string;
+  effectiveCost: string;
+  expenses: WatchExpense[];
   status: WatchStatus;
   ownershipType: WatchOwnershipType;
   consignmentOwnerName?: string | null;

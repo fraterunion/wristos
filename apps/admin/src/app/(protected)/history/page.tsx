@@ -22,10 +22,10 @@ type SoldItem = {
     id: string;
     brand: string;
     model: string;
-    reference: string | null;
     serialNumber: string | null;
     condition: string;
     cost: string;
+    effectiveCost: string;
     ownershipType: WatchOwnershipType;
     consignmentOwnerName: string | null;
     consignmentSplitPercentage: string | null;
@@ -42,11 +42,12 @@ type StockWatch = {
   id: string;
   brand: string;
   model: string;
-  reference: string | null;
   serialNumber: string | null;
   condition: string;
   cost: string;
-  price: string;
+  priceMin: string;
+  priceMax: string;
+  effectiveCost: string;
   status: WatchStatus;
   ownershipType: WatchOwnershipType;
   consignmentOwnerName: string | null;
@@ -57,7 +58,7 @@ type StockWatch = {
 type Movement = {
   dealId: string;
   stage: string;
-  watch: { id: string; brand: string; model: string; reference: string | null; serialNumber: string | null; status: WatchStatus };
+  watch: { id: string; brand: string; model: string; serialNumber: string | null; status: WatchStatus };
   client: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
   notes: string | null;
@@ -242,7 +243,7 @@ export default function HistoryPage() {
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
                   <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Reference / Serial</th>
+                  <th className="px-4 py-3 font-medium">Serial</th>
                   <th className="px-4 py-3 font-medium">Client</th>
                   <th className="px-4 py-3 font-medium">Stage</th>
                   <th className="px-4 py-3 font-medium text-right">Agreed Price</th>
@@ -257,10 +258,7 @@ export default function HistoryPage() {
                       <div className="font-medium text-white">{m.watch.brand}</div>
                       <div className="text-xs text-muted">{m.watch.model}</div>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="text-muted">{dash(m.watch.reference)}</div>
-                      <div className="font-mono text-xs text-muted/70">{dash(m.watch.serialNumber)}</div>
-                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted">{dash(m.watch.serialNumber)}</td>
                     <td className="px-4 py-3">
                       <div className="text-white">{m.client.name}</div>
                       <div className="text-xs text-muted">{dash(m.client.email)}</div>
@@ -293,10 +291,9 @@ export default function HistoryPage() {
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
                   <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Reference / Serial</th>
                   <th className="px-4 py-3 font-medium">Buyer</th>
                   <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Cost</th>
+                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
                   <th className="px-4 py-3 font-medium text-right">Sale Price</th>
                   <th className="px-4 py-3 font-medium text-right">Margin</th>
                   <th className="px-4 py-3 font-medium">Sold</th>
@@ -304,20 +301,18 @@ export default function HistoryPage() {
               </thead>
               <tbody>
                 {sold.map((item) => {
-                  const margin = Number(item.agreedPrice) - Number(item.watch.cost);
+                  const effectiveCost = Number(item.watch.effectiveCost);
+                  const margin = Number(item.agreedPrice) - effectiveCost;
                   const marginPct =
-                    Number(item.watch.cost) > 0
-                      ? ((margin / Number(item.watch.cost)) * 100).toFixed(1)
+                    effectiveCost > 0
+                      ? ((margin / effectiveCost) * 100).toFixed(1)
                       : '—';
                   return (
                     <tr key={item.dealId} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
                       <td className="px-4 py-3">
                         <div className="font-medium text-white">{item.watch.brand}</div>
                         <div className="text-xs text-muted">{item.watch.model}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-muted">{dash(item.watch.reference)}</div>
-                        <div className="font-mono text-xs text-muted/70">{dash(item.watch.serialNumber)}</div>
+                        <div className="font-mono text-xs text-muted/60">{dash(item.watch.serialNumber)}</div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-white">{item.buyer.name}</div>
@@ -331,7 +326,7 @@ export default function HistoryPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-muted">
-                        {formatMoney(item.watch.cost)}
+                        {formatMoney(item.watch.effectiveCost)}
                       </td>
                       <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
                         {formatMoney(item.agreedPrice)}
@@ -360,15 +355,14 @@ export default function HistoryPage() {
           <EmptyState message="No watches currently in stock." />
         ) : (
           <TableWrapper>
-            <table className="min-w-[960px] w-full border-collapse text-left text-sm">
+            <table className="min-w-[880px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
                   <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Reference / Serial</th>
                   <th className="px-4 py-3 font-medium">Condition</th>
                   <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Cost</th>
-                  <th className="px-4 py-3 font-medium text-right">Price</th>
+                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
+                  <th className="px-4 py-3 font-medium text-right">Price Range</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Acquired</th>
                 </tr>
@@ -379,10 +373,7 @@ export default function HistoryPage() {
                     <td className="px-4 py-3">
                       <div className="font-medium text-white">{w.brand}</div>
                       <div className="text-xs text-muted">{w.model}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-muted">{dash(w.reference)}</div>
-                      <div className="font-mono text-xs text-muted/70">{dash(w.serialNumber)}</div>
+                      <div className="font-mono text-xs text-muted/60">{dash(w.serialNumber)}</div>
                     </td>
                     <td className="px-4 py-3 text-muted">{w.condition}</td>
                     <td className="px-4 py-3">
@@ -392,8 +383,12 @@ export default function HistoryPage() {
                           : 'Owned'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.cost)}</td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">{formatMoney(w.price)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
+                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
+                      {w.priceMin === w.priceMax
+                        ? formatMoney(w.priceMin)
+                        : `${formatMoney(w.priceMin)} – ${formatMoney(w.priceMax)}`}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[w.status]}`}>
                         {w.status.replaceAll('_', ' ')}
@@ -414,15 +409,14 @@ export default function HistoryPage() {
           <EmptyState message="No watches acquired yet." />
         ) : (
           <TableWrapper>
-            <table className="min-w-[960px] w-full border-collapse text-left text-sm">
+            <table className="min-w-[880px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
                   <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Reference / Serial</th>
                   <th className="px-4 py-3 font-medium">Condition</th>
                   <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Cost</th>
-                  <th className="px-4 py-3 font-medium text-right">List Price</th>
+                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
+                  <th className="px-4 py-3 font-medium text-right">Price Range</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Acquired</th>
                 </tr>
@@ -436,10 +430,7 @@ export default function HistoryPage() {
                     <td className="px-4 py-3">
                       <div className="font-medium text-white">{w.brand}</div>
                       <div className="text-xs text-muted">{w.model}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-muted">{dash(w.reference)}</div>
-                      <div className="font-mono text-xs text-muted/70">{dash(w.serialNumber)}</div>
+                      <div className="font-mono text-xs text-muted/60">{dash(w.serialNumber)}</div>
                     </td>
                     <td className="px-4 py-3 text-muted">{w.condition}</td>
                     <td className="px-4 py-3">
@@ -449,8 +440,12 @@ export default function HistoryPage() {
                           : 'Owned'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.cost)}</td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">{formatMoney(w.price)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
+                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
+                      {w.priceMin === w.priceMax
+                        ? formatMoney(w.priceMin)
+                        : `${formatMoney(w.priceMin)} – ${formatMoney(w.priceMax)}`}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[w.status]}`}>
                         {w.status.replaceAll('_', ' ')}

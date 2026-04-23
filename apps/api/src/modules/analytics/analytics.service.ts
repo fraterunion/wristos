@@ -110,7 +110,7 @@ export class AnalyticsService {
       }),
       this.prisma.watch.aggregate({
         where: watchWhere,
-        _sum: { price: true, cost: true },
+        _sum: { priceMin: true, cost: true },
       }),
       this.prisma.client.count({ where: { tenantId, deletedAt: null } }),
       this.prisma.deal.count({ where: dealWhere }),
@@ -160,7 +160,7 @@ export class AnalyticsService {
       reservedWatches,
       soldWatches,
       consignmentWatches,
-      totalInventoryValue: (inventorySums._sum.price ?? new Prisma.Decimal(0)).toString(),
+      totalInventoryValue: (inventorySums._sum.priceMin ?? new Prisma.Decimal(0)).toString(),
       totalInventoryCost: (inventorySums._sum.cost ?? new Prisma.Decimal(0)).toString(),
       activeClients,
       totalDeals,

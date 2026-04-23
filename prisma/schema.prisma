@@ -73,6 +73,16 @@ enum AutomationRunStatus {
   ERROR
 }
 
+enum WatchExpenseCategory {
+  POLISHING
+  REPAIR
+  LINKS
+  SHIPPING
+  PARTS
+  COMMISSIONS
+  TRAVEL
+}
+
 // --- Core (platform) ---
 
 model Tenant {
@@ -89,6 +99,7 @@ model Tenant {
   clientPreferences ClientPreference[]
   clientInteractions ClientInteraction[]
   watches         Watch[]
+  watchExpenses   WatchExpense[]
   deals           Deal[]
   payments        Payment[]
   automationRules AutomationRule[]
@@ -222,7 +233,8 @@ model Watch {
   serialNumber               String?
   condition                  String
   cost                       Decimal              @db.Decimal(12, 2)
-  price                      Decimal              @db.Decimal(12, 2)
+  priceMin                   Decimal              @db.Decimal(12, 2)
+  priceMax                   Decimal              @db.Decimal(12, 2)
   ownershipType              WatchOwnershipType   @default(OWNED)
   consignmentOwnerName       String?
   consignmentSplitPercentage Decimal?             @db.Decimal(5, 2)
@@ -233,12 +245,30 @@ model Watch {
 
   tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deals            Deal[]
+  expenses         WatchExpense[]
   matchSuggestions MatchSuggestion[]
 
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([tenantId, deletedAt])
   @@map("watches")
+}
+
+model WatchExpense {
+  id        String               @id @default(cuid())
+  tenantId  String
+  watchId   String
+  category  WatchExpenseCategory
+  amount    Decimal              @db.Decimal(12, 2)
+  notes     String?
+  createdAt DateTime             @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  watch  Watch  @relation(fields: [watchId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([watchId])
+  @@map("watch_expenses")
 }
 
 model Deal {

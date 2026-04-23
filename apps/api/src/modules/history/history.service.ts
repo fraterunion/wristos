@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { DealStage, Watch, WatchStatus } from '@prisma/client';
+import { DealStage, Watch, WatchExpense, WatchStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+
+type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
 
 @Injectable()
 export class HistoryService {
@@ -16,13 +18,21 @@ export class HistoryService {
         where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
         select: {
           agreedPrice: true,
-          watch: { select: { cost: true } },
+          watch: {
+            select: {
+              cost: true,
+              expenses: { select: { amount: true } },
+            },
+          },
         },
       }),
     ]);
 
     const totalRevenue = soldDeals.reduce((sum, d) => sum + Number(d.agreedPrice), 0);
-    const totalCostOfSold = soldDeals.reduce((sum, d) => sum + Number(d.watch.cost), 0);
+    const totalCostOfSold = soldDeals.reduce((sum, d) => {
+      const expenseSum = d.watch.expenses.reduce((es, e) => es + Number(e.amount), 0);
+      return sum + Number(d.watch.cost) + expenseSum;
+    }, 0);
 
     return {
       totalAcquired,
@@ -38,7 +48,7 @@ export class HistoryService {
     const deals = await this.prisma.deal.findMany({
       where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
       include: {
-        watch: true,
+        watch: { include: { expenses: { orderBy: { createdAt: 'asc' } } } },
         client: true,
         payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
       },
@@ -71,6 +81,7 @@ export class HistoryService {
   async getStock(tenantId: string) {
     const watches = await this.prisma.watch.findMany({
       where: { tenantId, deletedAt: null },
+      include: { expenses: { orderBy: { createdAt: 'asc' } } },
       orderBy: { createdAt: 'desc' },
     });
     return watches.map((w) => this.serializeWatch(w));
@@ -79,6 +90,7 @@ export class HistoryService {
   async getAcquired(tenantId: string) {
     const watches = await this.prisma.watch.findMany({
       where: { tenantId },
+      include: { expenses: { orderBy: { createdAt: 'asc' } } },
       orderBy: { createdAt: 'desc' },
     });
     return watches.map((w) => this.serializeWatch(w));
@@ -98,7 +110,6 @@ export class HistoryService {
         id: deal.watch.id,
         brand: deal.watch.brand,
         model: deal.watch.model,
-        reference: deal.watch.reference,
         serialNumber: deal.watch.serialNumber,
         status: deal.watch.status,
       },
@@ -116,16 +127,23 @@ export class HistoryService {
     }));
   }
 
-  private serializeWatch(watch: Watch) {
+  private serializeWatch(watch: WatchWithExpenses) {
+    const totalExpenses = watch.expenses.reduce(
+      (sum, e) => sum + Number(e.amount),
+      0,
+    );
+    const effectiveCost = Number(watch.cost) + totalExpenses;
+
     return {
       id: watch.id,
       brand: watch.brand,
       model: watch.model,
-      reference: watch.reference,
       serialNumber: watch.serialNumber,
       condition: watch.condition,
       cost: watch.cost.toString(),
-      price: watch.price.toString(),
+      priceMin: watch.priceMin.toString(),
+      priceMax: watch.priceMax.toString(),
+      effectiveCost: effectiveCost.toFixed(2),
       status: watch.status,
       ownershipType: watch.ownershipType,
       consignmentOwnerName: watch.consignmentOwnerName,

@@ -196,18 +196,19 @@ export class MatchingService {
       reasons.push(`Model/reference match: ${modelHit}`);
     }
 
-    const watchPrice = Number(watch.price);
+    const watchPriceMin = Number(watch.priceMin);
+    const watchPriceMax = Number(watch.priceMax);
     const budgetMin = preference?.budgetMin ? Number(preference.budgetMin) : null;
     const budgetMax = preference?.budgetMax ? Number(preference.budgetMax) : null;
-    if (
+    const rangesOverlap =
       budgetMin !== null &&
       budgetMax !== null &&
-      watchPrice >= budgetMin &&
-      watchPrice <= budgetMax
-    ) {
+      watchPriceMin <= budgetMax &&
+      watchPriceMax >= budgetMin;
+    if (rangesOverlap) {
       score += 25;
       reasons.push(`Budget match: ${budgetMin}-${budgetMax}`);
-    } else if (budgetMax !== null && watchPrice <= budgetMax) {
+    } else if (budgetMax !== null && watchPriceMin <= budgetMax) {
       score += 10;
       reasons.push(`Within max budget: <= ${budgetMax}`);
     }

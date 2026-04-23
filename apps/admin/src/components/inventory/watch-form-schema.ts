@@ -12,31 +12,36 @@ export const WATCH_STATUS_VALUES = [
 
 export const WATCH_OWNERSHIP_VALUES = ['OWNED', 'CONSIGNMENT'] as const;
 
+const numericField = (label: string) =>
+  z.preprocess((val) => {
+    if (val === '' || val === null || val === undefined) return 0;
+    if (typeof val === 'number' && Number.isNaN(val)) return 0;
+    const n = Number(val);
+    return Number.isFinite(n) ? n : 0;
+  }, z.number().min(0, `${label} must be 0 or more`));
+
 export const watchFormSchema = z
   .object({
     brand: z.string().trim().min(1, 'Brand is required'),
     model: z.string().trim().min(1, 'Model is required'),
-    reference: z.string().optional(),
     serialNumber: z.string().optional(),
     condition: z.string().trim().min(1, 'Condition is required'),
-    cost: z.preprocess((val) => {
-      if (val === '' || val === null || val === undefined) return 0;
-      if (typeof val === 'number' && Number.isNaN(val)) return 0;
-      const n = Number(val);
-      return Number.isFinite(n) ? n : 0;
-    }, z.number().min(0, 'Cost must be 0 or more')),
-    price: z.preprocess((val) => {
-      if (val === '' || val === null || val === undefined) return 0;
-      if (typeof val === 'number' && Number.isNaN(val)) return 0;
-      const n = Number(val);
-      return Number.isFinite(n) ? n : 0;
-    }, z.number().min(0, 'Price must be 0 or more')),
+    cost: numericField('Base cost'),
+    priceMin: numericField('Min price'),
+    priceMax: numericField('Max price'),
     status: z.enum(WATCH_STATUS_VALUES),
     ownershipType: z.enum(WATCH_OWNERSHIP_VALUES),
     consignmentOwnerName: z.string().optional(),
     consignmentSplitPercentage: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.priceMax < data.priceMin) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Max price must be ≥ min price',
+        path: ['priceMax'],
+      });
+    }
     if (data.ownershipType === 'CONSIGNMENT') {
       const raw = data.consignmentSplitPercentage?.trim();
       if (raw) {
@@ -57,11 +62,11 @@ export type WatchFormValues = z.infer<typeof watchFormSchema>;
 export const defaultWatchFormValues: WatchFormValues = {
   brand: '',
   model: '',
-  reference: '',
   serialNumber: '',
   condition: '',
   cost: 0,
-  price: 0,
+  priceMin: 0,
+  priceMax: 0,
   status: 'AVAILABLE',
   ownershipType: 'OWNED',
   consignmentOwnerName: '',
@@ -72,11 +77,11 @@ export function watchToFormValues(watch: Watch): WatchFormValues {
   return {
     brand: watch.brand,
     model: watch.model,
-    reference: watch.reference ?? '',
     serialNumber: watch.serialNumber ?? '',
     condition: watch.condition,
     cost: Number(watch.cost),
-    price: Number(watch.price),
+    priceMin: Number(watch.priceMin),
+    priceMax: Number(watch.priceMax),
     status: watch.status,
     ownershipType: watch.ownershipType,
     consignmentOwnerName: watch.consignmentOwnerName ?? '',
@@ -93,13 +98,12 @@ export function buildCreateWatchBody(values: WatchFormValues) {
     model: values.model.trim(),
     condition: values.condition.trim(),
     cost: values.cost,
-    price: values.price,
+    priceMin: values.priceMin,
+    priceMax: values.priceMax,
     ownershipType: values.ownershipType,
     status: values.status,
   };
 
-  const ref = values.reference?.trim();
-  if (ref) body.reference = ref;
   const serial = values.serialNumber?.trim();
   if (serial) body.serialNumber = serial;
 
@@ -119,13 +123,12 @@ export function buildUpdateWatchBody(values: WatchFormValues) {
     model: values.model.trim(),
     condition: values.condition.trim(),
     cost: values.cost,
-    price: values.price,
+    priceMin: values.priceMin,
+    priceMax: values.priceMax,
     status: values.status,
     ownershipType: values.ownershipType,
   };
 
-  const ref = values.reference?.trim();
-  body.reference = ref || null;
   const serial = values.serialNumber?.trim();
   body.serialNumber = serial || null;
 
