@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DealStage, Watch, WatchExpense, WatchStatus } from '@prisma/client';
+import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
@@ -128,12 +129,6 @@ export class HistoryService {
   }
 
   private serializeWatch(watch: WatchWithExpenses) {
-    const totalExpenses = watch.expenses.reduce(
-      (sum, e) => sum + Number(e.amount),
-      0,
-    );
-    const effectiveCost = Number(watch.cost) + totalExpenses;
-
     return {
       id: watch.id,
       brand: watch.brand,
@@ -143,7 +138,7 @@ export class HistoryService {
       cost: watch.cost.toString(),
       priceMin: watch.priceMin.toString(),
       priceMax: watch.priceMax.toString(),
-      effectiveCost: effectiveCost.toFixed(2),
+      effectiveCost: computeEffectiveCost(watch.cost, watch.expenses),
       status: watch.status,
       ownershipType: watch.ownershipType,
       consignmentOwnerName: watch.consignmentOwnerName,

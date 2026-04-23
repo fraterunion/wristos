@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Watch, WatchExpense, WatchOwnershipType } from '@prisma/client';
+import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateWatchDto } from './dto/create-watch.dto';
@@ -186,24 +187,17 @@ export class InventoryService {
   }
 
   private serializeWatch(watch: WatchWithExpenses) {
-    const totalExpenses = watch.expenses.reduce(
-      (sum, e) => sum + Number(e.amount),
-      0,
-    );
-    const effectiveCost = Number(watch.cost) + totalExpenses;
-
     return {
       id: watch.id,
       tenantId: watch.tenantId,
       brand: watch.brand,
       model: watch.model,
-      reference: watch.reference,
       serialNumber: watch.serialNumber,
       condition: watch.condition,
       cost: watch.cost.toString(),
       priceMin: watch.priceMin.toString(),
       priceMax: watch.priceMax.toString(),
-      effectiveCost: effectiveCost.toFixed(2),
+      effectiveCost: computeEffectiveCost(watch.cost, watch.expenses),
       status: watch.status,
       ownershipType: watch.ownershipType,
       consignmentOwnerName: watch.consignmentOwnerName,

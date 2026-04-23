@@ -238,7 +238,7 @@ export default function MatchingPage() {
           </div>
 
           {mode === 'watch' ? (
-            <label className="min-w-[320px] flex-1">
+            <label className="min-w-0 w-full flex-1 basis-full sm:min-w-[240px] sm:basis-auto">
               <span className="mb-1 block text-xs uppercase tracking-wide text-muted">
                 Select watch
               </span>
@@ -249,13 +249,13 @@ export default function MatchingPage() {
               >
                 {watches.map((watch) => (
                   <option key={watch.id} value={watch.id}>
-                    {watch.brand} {watch.model} {watch.reference ? `(${watch.reference})` : ''}
+                    {watch.brand} {watch.model}{watch.serialNumber ? ` · ${watch.serialNumber}` : ''}
                   </option>
                 ))}
               </select>
             </label>
           ) : (
-            <label className="min-w-[320px] flex-1">
+            <label className="min-w-0 w-full flex-1 basis-full sm:min-w-[240px] sm:basis-auto">
               <span className="mb-1 block text-xs uppercase tracking-wide text-muted">
                 Select client
               </span>
@@ -330,7 +330,7 @@ export default function MatchingPage() {
                         {client?.name ?? 'Unknown client'} ↔ {watch ? `${watch.brand} ${watch.model}` : 'Unknown watch'}
                       </h3>
                       <p className="mt-1 text-xs text-muted">
-                        {watch?.reference ? `Ref ${watch.reference}` : 'No reference'} ·{' '}
+                        {watch?.serialNumber ? `S/N ${watch.serialNumber}` : 'No serial'} ·{' '}
                         {client?.budgetRange ?? 'No budget profile'}
                       </p>
                     </div>

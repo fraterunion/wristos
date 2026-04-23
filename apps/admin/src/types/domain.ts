@@ -73,7 +73,6 @@ export type Watch = {
   tenantId: string;
   brand: string;
   model: string;
-  reference: string | null;
   serialNumber: string | null;
   condition: string;
   cost: string;
