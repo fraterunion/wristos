@@ -14,6 +14,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { MatchingModule } from './modules/matching/matching.module';
 import { AutomationsModule } from './modules/automations/automations.module';
 import { HistoryModule } from './modules/history/history.module';
+import { ExpensesModule } from './modules/expenses/expenses.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { HistoryModule } from './modules/history/history.module';
     MatchingModule,
     AutomationsModule,
     HistoryModule,
+    ExpensesModule,
   ],
   controllers: [AppController],
 })

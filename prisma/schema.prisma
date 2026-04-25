@@ -83,6 +83,18 @@ enum WatchExpenseCategory {
   TRAVEL
 }
 
+enum OperatingExpenseCategory {
+  GASOLINE
+  TOLLS
+  WATCHMAKER
+  PARKING
+  MEALS
+  FLIGHTS
+  TRAVEL
+  MARKETING
+  COMMISSIONS
+}
+
 // --- Core (platform) ---
 
 model Tenant {
@@ -93,16 +105,17 @@ model Tenant {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  roles           Role[]
-  tenantUsers     TenantUser[]
-  clients         Client[]
-  clientPreferences ClientPreference[]
+  roles              Role[]
+  tenantUsers        TenantUser[]
+  clients            Client[]
+  clientPreferences  ClientPreference[]
   clientInteractions ClientInteraction[]
-  watches         Watch[]
-  watchExpenses   WatchExpense[]
-  deals           Deal[]
-  payments        Payment[]
-  automationRules AutomationRule[]
+  watches            Watch[]
+  watchExpenses      WatchExpense[]
+  operatingExpenses  OperatingExpense[]
+  deals              Deal[]
+  payments           Payment[]
+  automationRules    AutomationRule[]
   automationRuns  AutomationRun[]
   matchSuggestions MatchSuggestion[]
 
@@ -380,4 +393,22 @@ model AutomationRun {
   @@index([tenantId, createdAt])
   @@index([ruleId])
   @@map("automation_runs")
+}
+
+model OperatingExpense {
+  id          String                   @id @default(cuid())
+  tenantId    String
+  category    OperatingExpenseCategory
+  amount      Decimal                  @db.Decimal(12, 2)
+  notes       String?
+  expenseDate DateTime                 @db.Date
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, category])
+  @@index([tenantId, expenseDate])
+  @@map("operating_expenses")
 }

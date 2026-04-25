@@ -196,3 +196,42 @@ export type AutomationRule = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type OperatingExpenseCategory =
+  | 'GASOLINE'
+  | 'TOLLS'
+  | 'WATCHMAKER'
+  | 'PARKING'
+  | 'MEALS'
+  | 'FLIGHTS'
+  | 'TRAVEL'
+  | 'MARKETING'
+  | 'COMMISSIONS';
+
+export type OperatingExpense = {
+  id: string;
+  tenantId: string;
+  category: OperatingExpenseCategory;
+  amount: string;
+  notes: string | null;
+  expenseDate: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ExpenseCategorySummary = {
+  category: string;
+  total: string;
+  count: number;
+  percentage: string;
+  isCommission: boolean;
+};
+
+export type ExpensesSummary = {
+  totalOperatingExpenses: string;
+  totalCommissions: string;
+  totalSpend: string;
+  expenseCount: number;
+  biggestCategory: string | null;
+  byCategory: ExpenseCategorySummary[];
+};

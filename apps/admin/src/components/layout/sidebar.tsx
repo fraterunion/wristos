@@ -11,6 +11,7 @@ const navItems = [
   { href: '/matching', label: 'Matching' },
   { href: '/automations', label: 'Automations' },
   { href: '/history', label: 'History' },
+  { href: '/expenses', label: 'Expenses' },
 ];
 
 export function Sidebar() {
