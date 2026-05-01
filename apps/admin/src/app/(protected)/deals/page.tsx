@@ -130,6 +130,7 @@ export default function DealsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -172,6 +173,15 @@ export default function DealsPage() {
     return () => window.clearTimeout(timer);
   }, [flash]);
 
+  useEffect(() => {
+    if (!detailModalOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDetailModalOpen(false);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [detailModalOpen]);
+
   const clientsById = useMemo(
     () => new Map(clients.map((client) => [client.id, client])),
     [clients],
@@ -205,11 +215,6 @@ export default function DealsPage() {
       setDeals(dealsData);
       setClients(clientsData);
       setWatches(watchesData);
-      if (dealsData.length === 0) {
-        setSelectedDealId(null);
-      } else if (!selectedDealId || !dealsData.some((deal) => deal.id === selectedDealId)) {
-        setSelectedDealId(dealsData[0].id);
-      }
     } catch (caughtError) {
       setError(
         caughtError instanceof ApiError ? caughtError.message : 'Unable to load deals right now.',
@@ -217,7 +222,7 @@ export default function DealsPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedDealId]);
+  }, []);
 
   const loadSelectedDealData = useCallback(async (dealId: string) => {
     setDetailsLoading(true);
@@ -392,6 +397,8 @@ export default function DealsPage() {
       if (deleteTarget.kind === 'deal') {
         await apiDelete(`/deals/${deleteTarget.id}`, { authenticated: true });
         setFlash({ type: 'success', message: 'Deal deleted.' });
+        setDetailModalOpen(false);
+        setSelectedDealId(null);
         await loadDealsPageData();
       } else {
         await apiDelete(`/payments/${deleteTarget.id}`, { authenticated: true });
@@ -468,79 +475,83 @@ export default function DealsPage() {
           </button>
         </section>
       ) : (
-        <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <div className="ui-card min-w-0 overflow-x-auto p-3 sm:p-4">
-            <div className="grid min-w-[980px] grid-cols-6 gap-3">
-              {dealStages.map((stage) => (
-                <div key={stage} className="space-y-2 rounded-xl border border-white/10 bg-surface/40 p-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                      {readableStage(stage)}
-                    </h3>
-                    <span className="rounded-full border border-white/15 px-2 py-0.5 text-xs text-muted">
-                      {groupedDeals[stage].length}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {groupedDeals[stage].map((deal) => {
-                      const client = clientsById.get(deal.clientId);
-                      const watch = watchesById.get(deal.watchId);
-                      const active = deal.id === selectedDealId;
-                      return (
-                        <button
-                          type="button"
-                          key={deal.id}
-                          onClick={() => setSelectedDealId(deal.id)}
-                          className={`w-full rounded-lg border p-3 text-left transition ${
-                            active
-                              ? 'border-accent/45 bg-accent/10'
-                              : 'border-white/10 bg-panel hover:border-white/25'
-                          }`}
-                        >
-                          <p className="text-sm font-semibold">{client?.name ?? 'Unknown client'}</p>
-                          <p className="mt-1 text-xs text-muted">
-                            {watch ? `${watch.brand} ${watch.model}` : 'Unknown watch'}
-                          </p>
-                          <div className="mt-2 flex items-center justify-between text-xs">
-                            <span className="font-medium text-white">{currency(deal.agreedPrice)}</span>
-                            <span className="text-muted">{formatDate(deal.expectedCloseAt)}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+        <div className="ui-card overflow-x-auto p-3 sm:p-4">
+          <div className="grid min-w-[980px] grid-cols-6 gap-3">
+            {dealStages.map((stage) => (
+              <div key={stage} className="space-y-2 rounded-xl border border-white/10 bg-surface/40 p-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    {readableStage(stage)}
+                  </h3>
+                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-xs text-muted">
+                    {groupedDeals[stage].length}
+                  </span>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <aside className="ui-card min-w-0">
-            {!selectedDealId ? (
-              <p className="text-sm text-muted">Select a deal to view details.</p>
-            ) : detailsLoading ? (
-              <div className="space-y-3 animate-pulse">
-                <div className="h-8 rounded bg-white/10" />
-                <div className="h-24 rounded bg-white/10" />
-                <div className="h-24 rounded bg-white/10" />
-                <div className="h-36 rounded bg-white/10" />
+                <div className="space-y-2">
+                  {groupedDeals[stage].map((deal) => {
+                    const client = clientsById.get(deal.clientId);
+                    const watch = watchesById.get(deal.watchId);
+                    const active = detailModalOpen && deal.id === selectedDealId;
+                    return (
+                      <button
+                        type="button"
+                        key={deal.id}
+                        onClick={() => {
+                          setSelectedDealId(deal.id);
+                          setDetailModalOpen(true);
+                        }}
+                        className={`w-full rounded-lg border p-3 text-left transition ${
+                          active
+                            ? 'border-accent/45 bg-accent/10'
+                            : 'border-white/10 bg-panel hover:border-white/25'
+                        }`}
+                      >
+                        <p className="text-sm font-semibold">{client?.name ?? 'Unknown client'}</p>
+                        <p className="mt-1 text-xs text-muted">
+                          {watch ? `${watch.brand} ${watch.model}` : 'Unknown watch'}
+                        </p>
+                        <div className="mt-2 flex items-center justify-between text-xs">
+                          <span className="font-medium text-white">{currency(deal.agreedPrice)}</span>
+                          <span className="text-muted">{formatDate(deal.expectedCloseAt)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            ) : detailError ? (
-              <p className="text-sm text-rose-200">{detailError}</p>
-            ) : selectedDeal ? (
-              <div className="space-y-5">
-                <div className="flex items-start justify-between gap-2 border-b border-white/10 pb-4">
-                  <div>
-                    <h2 className="text-lg font-semibold">Deal Details</h2>
-                    <p className="mt-1 text-sm text-muted">
-                      {clientsById.get(selectedDeal.clientId)?.name ?? 'Unknown client'} ·{' '}
-                      {watchesById.get(selectedDeal.watchId)
-                        ? `${watchesById.get(selectedDeal.watchId)?.brand} ${
-                            watchesById.get(selectedDeal.watchId)?.model
-                          }`
-                        : 'Unknown watch'}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
+            ))}
+          </div>
+        </div>
+      )}
+
+      {detailModalOpen && selectedDealId ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={() => setDetailModalOpen(false)}
+        >
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
+          <div
+            className="relative z-10 flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-panel shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Fixed header */}
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-6 py-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold">Deal Details</h2>
+                {selectedDeal ? (
+                  <p className="mt-0.5 truncate text-sm text-muted">
+                    {clientsById.get(selectedDeal.clientId)?.name ?? 'Unknown client'}
+                    {' · '}
+                    {(() => {
+                      const w = watchesById.get(selectedDeal.watchId);
+                      return w ? `${w.brand} ${w.model}` : 'Unknown watch';
+                    })()}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {selectedDeal ? (
+                  <>
                     <button
                       type="button"
                       onClick={() => setEditOpen(true)}
@@ -554,177 +565,221 @@ export default function DealsPage() {
                         setDeleteTarget({
                           kind: 'deal',
                           id: selectedDeal.id,
-                          label: `${clientsById.get(selectedDeal.clientId)?.name ?? 'Deal'}`,
+                          label: clientsById.get(selectedDeal.clientId)?.name ?? 'Deal',
                         })
                       }
                       className="ui-btn-danger px-3 py-1.5 text-xs"
                     >
                       Delete
                     </button>
-                  </div>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setDetailModalOpen(false)}
+                  aria-label="Close"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition hover:bg-white/10 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {detailsLoading ? (
+                <div className="space-y-3 animate-pulse">
+                  <div className="h-8 rounded bg-white/10" />
+                  <div className="h-28 rounded bg-white/10" />
+                  <div className="h-28 rounded bg-white/10" />
+                  <div className="h-40 rounded bg-white/10" />
                 </div>
-
-                <section className="space-y-2 rounded-lg border border-white/10 bg-surface/40 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted">Stage</p>
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedDeal.stage}
-                      onChange={(event) => void updateDealStage(event.target.value as DealStage)}
-                      className="ui-input"
-                    >
-                      {dealStages.map((stage) => (
-                        <option key={stage} value={stage}>
-                          {readableStage(stage)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <p className="text-xs text-muted">Expected close: {formatDate(selectedDeal.expectedCloseAt)}</p>
-                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${dealStageTone(selectedDeal.stage)}`}>
-                    {readableStage(selectedDeal.stage)}
-                  </span>
-                  <p className="text-xs text-muted">Agreed price: {currency(selectedDeal.agreedPrice)}</p>
-                  <p className="text-xs text-muted">{selectedDeal.notes?.trim() || 'No notes.'}</p>
-                </section>
-
-                <section className="space-y-2 rounded-lg border border-white/10 bg-surface/40 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted">Payment Summary</p>
-                  <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
-                    <div className="rounded border border-white/10 p-2">
-                      <p className="text-muted">Agreed</p>
-                      <p className="mt-1 font-semibold">
-                        {currency(paymentSummary?.totalAgreedPrice ?? selectedDeal.agreedPrice)}
-                      </p>
-                    </div>
-                    <div className="rounded border border-white/10 p-2">
-                      <p className="text-muted">Paid</p>
-                      <p className="mt-1 font-semibold">{currency(paymentSummary?.totalPaid ?? 0)}</p>
-                    </div>
-                    <div className="rounded border border-white/10 p-2">
-                      <p className="text-muted">Pending</p>
-                      <p className="mt-1 font-semibold">{currency(paymentSummary?.pendingBalance ?? 0)}</p>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="space-y-3 rounded-lg border border-white/10 bg-surface/40 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted">Add Payment</p>
-                  <form onSubmit={createPayment} className="space-y-2">
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min={0}
-                        {...paymentForm.register('amount', { valueAsNumber: true })}
-                        placeholder="Amount"
-                        className="ui-input"
-                      />
+              ) : detailError ? (
+                <p className="text-sm text-rose-200">{detailError}</p>
+              ) : selectedDeal ? (
+                <div className="space-y-5">
+                  {/* Stage + meta */}
+                  <section className="space-y-3 rounded-xl border border-white/10 bg-surface/40 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Stage</p>
+                    <div className="flex flex-wrap items-center gap-3">
                       <select
-                        {...paymentForm.register('method')}
-                        className="ui-input"
+                        value={selectedDeal.stage}
+                        onChange={(e) => void updateDealStage(e.target.value as DealStage)}
+                        className="ui-input w-auto min-w-44"
                       >
-                        {paymentMethods.map((method) => (
-                          <option key={method} value={method}>
-                            {method}
+                        {dealStages.map((stage) => (
+                          <option key={stage} value={stage}>
+                            {readableStage(stage)}
                           </option>
                         ))}
                       </select>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <select
-                        {...paymentForm.register('status')}
-                        className="ui-input"
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${dealStageTone(selectedDeal.stage)}`}
                       >
-                        {paymentStatuses.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="datetime-local"
-                        {...paymentForm.register('dueDate')}
-                        className="ui-input"
-                      />
+                        {readableStage(selectedDeal.stage)}
+                      </span>
                     </div>
-                    <input
-                      type="datetime-local"
-                      {...paymentForm.register('paidAt')}
-                      className="ui-input"
-                    />
-                    <textarea
-                      rows={2}
-                      {...paymentForm.register('notes')}
-                      placeholder="Payment notes"
-                      className="ui-input"
-                    />
-                    {paymentForm.formState.errors.amount ? (
-                      <p className="text-xs text-rose-300">
-                        {paymentForm.formState.errors.amount.message}
-                      </p>
-                    ) : null}
-                    <button
-                      type="submit"
-                      className="ui-btn-secondary px-3 py-2"
-                    >
-                      Create payment
-                    </button>
-                  </form>
-                </section>
+                    <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+                      <div>
+                        <p className="text-xs text-muted">Expected close</p>
+                        <p className="mt-0.5 font-medium">{formatDate(selectedDeal.expectedCloseAt)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted">Agreed price</p>
+                        <p className="mt-0.5 font-medium">{currency(selectedDeal.agreedPrice)}</p>
+                      </div>
+                    </div>
+                    {selectedDeal.notes?.trim() ? (
+                      <p className="text-sm text-muted">{selectedDeal.notes}</p>
+                    ) : (
+                      <p className="text-xs text-white/25">No notes.</p>
+                    )}
+                  </section>
 
-                <section className="space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-muted">Payments</p>
-                  {payments.length === 0 ? (
-                    <p className="text-sm text-muted">No payments yet.</p>
-                  ) : (
-                    payments.map((payment) => (
-                      <div key={payment.id} className="rounded-lg border border-white/10 bg-surface/40 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-semibold">{currency(payment.amount)}</p>
-                          <span className="text-xs text-muted">{payment.method}</span>
-                        </div>
-                        <p className="mt-1 text-xs text-muted">
-                          <span className={`mr-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${paymentStatusTone(payment.status)}`}>
-                            {payment.status}
-                          </span>
-                          Due {formatDate(payment.dueDate)} · Paid {formatDate(payment.paidAt)}
+                  {/* Payment summary */}
+                  <section className="space-y-3 rounded-xl border border-white/10 bg-surface/40 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment Summary</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-lg border border-white/10 p-3">
+                        <p className="text-xs text-muted">Agreed</p>
+                        <p className="mt-1 text-base font-semibold">
+                          {currency(paymentSummary?.totalAgreedPrice ?? selectedDeal.agreedPrice)}
                         </p>
-                        {payment.notes ? (
-                          <p className="mt-1 text-xs text-muted">{payment.notes}</p>
-                        ) : null}
-                        <div className="mt-2 flex gap-2">
-                          {payment.status !== 'PAID' ? (
-                            <button
-                              type="button"
-                              onClick={() => void markPaymentPaid(payment.id)}
-                              className="ui-btn-secondary border-emerald-400/40 px-2 py-1 text-xs text-emerald-200"
-                            >
-                              Mark paid
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setDeleteTarget({
-                                kind: 'payment',
-                                id: payment.id,
-                                label: `payment ${currency(payment.amount)}`,
-                              })
-                            }
-                            className="ui-btn-danger px-2 py-1 text-xs"
-                          >
-                            Delete
-                          </button>
+                      </div>
+                      <div className="rounded-lg border border-white/10 p-3">
+                        <p className="text-xs text-muted">Paid</p>
+                        <p className="mt-1 text-base font-semibold text-emerald-300">
+                          {currency(paymentSummary?.totalPaid ?? 0)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-white/10 p-3">
+                        <p className="text-xs text-muted">Pending</p>
+                        <p className="mt-1 text-base font-semibold text-amber-300">
+                          {currency(paymentSummary?.pendingBalance ?? 0)}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Add payment */}
+                  <section className="space-y-3 rounded-xl border border-white/10 bg-surface/40 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Add Payment</p>
+                    <form onSubmit={createPayment} className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          {...paymentForm.register('amount', { valueAsNumber: true })}
+                          placeholder="Amount"
+                          className="ui-input"
+                        />
+                        <select {...paymentForm.register('method')} className="ui-input">
+                          {paymentMethods.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                        <select {...paymentForm.register('status')} className="ui-input">
+                          {paymentStatuses.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="mb-1 block text-xs text-muted">Due date</label>
+                          <input
+                            type="datetime-local"
+                            {...paymentForm.register('dueDate')}
+                            className="ui-input"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-muted">Paid at</label>
+                          <input
+                            type="datetime-local"
+                            {...paymentForm.register('paidAt')}
+                            className="ui-input"
+                          />
                         </div>
                       </div>
-                    ))
-                  )}
-                </section>
-              </div>
-            ) : null}
-          </aside>
-        </section>
-      )}
+                      <textarea
+                        rows={2}
+                        {...paymentForm.register('notes')}
+                        placeholder="Payment notes"
+                        className="ui-input"
+                      />
+                      {paymentForm.formState.errors.amount ? (
+                        <p className="text-xs text-rose-300">
+                          {paymentForm.formState.errors.amount.message}
+                        </p>
+                      ) : null}
+                      <button type="submit" className="ui-btn-secondary px-3 py-2 text-sm">
+                        Create payment
+                      </button>
+                    </form>
+                  </section>
+
+                  {/* Payments list */}
+                  <section className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payments</p>
+                    {payments.length === 0 ? (
+                      <p className="text-sm text-muted">No payments yet.</p>
+                    ) : (
+                      payments.map((payment) => (
+                        <div
+                          key={payment.id}
+                          className="rounded-xl border border-white/10 bg-surface/40 p-3"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold">{currency(payment.amount)}</p>
+                            <span className="text-xs text-muted">{payment.method}</span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted">
+                            <span
+                              className={`mr-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${paymentStatusTone(payment.status)}`}
+                            >
+                              {payment.status}
+                            </span>
+                            Due {formatDate(payment.dueDate)} · Paid {formatDate(payment.paidAt)}
+                          </p>
+                          {payment.notes ? (
+                            <p className="mt-1 text-xs text-muted">{payment.notes}</p>
+                          ) : null}
+                          <div className="mt-2 flex gap-2">
+                            {payment.status !== 'PAID' ? (
+                              <button
+                                type="button"
+                                onClick={() => void markPaymentPaid(payment.id)}
+                                className="ui-btn-secondary border-emerald-400/40 px-2 py-1 text-xs text-emerald-200"
+                              >
+                                Mark paid
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeleteTarget({
+                                  kind: 'payment',
+                                  id: payment.id,
+                                  label: `payment ${currency(payment.amount)}`,
+                                })
+                              }
+                              className="ui-btn-danger px-2 py-1 text-xs"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </section>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
