@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DeleteConfirmDialog } from '@/components/inventory/DeleteConfirmDialog';
 import { StatusBadge } from '@/components/inventory/StatusBadge';
 import { WatchFormModal } from '@/components/inventory/WatchFormModal';
+import { WatchImageLightbox } from '@/components/inventory/WatchImageLightbox';
 import { WATCH_STATUS_VALUES } from '@/components/inventory/watch-form-schema';
 import { apiDelete, apiGet, ApiError } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -55,6 +56,8 @@ export default function InventoryPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const [catalogLoading, setCatalogLoading] = useState(false);
+
+  const [lightboxWatch, setLightboxWatch] = useState<Watch | null>(null);
 
   const listQueryFilter = useMemo(() => {
     const q: Record<string, string> = {};
@@ -346,12 +349,19 @@ export default function InventoryPage() {
                   >
                     <td className="px-4 py-3">
                       {watch.imageUrl ? (
-                        <img
-                          src={watch.imageUrl}
-                          alt={`${watch.brand} ${watch.model}`}
-                          className="h-10 w-10 rounded object-cover ring-1 ring-white/10"
-                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                        />
+                        <button
+                          type="button"
+                          onClick={() => setLightboxWatch(watch)}
+                          className="group h-10 w-10 cursor-zoom-in overflow-hidden rounded ring-1 ring-white/10 transition duration-150 hover:ring-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                          aria-label={`View photo of ${watch.brand} ${watch.model}`}
+                        >
+                          <img
+                            src={watch.imageUrl}
+                            alt={`${watch.brand} ${watch.model}`}
+                            className="h-full w-full object-cover transition duration-150 group-hover:brightness-110"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        </button>
                       ) : (
                         <div className="h-10 w-10 rounded bg-white/5 ring-1 ring-white/10" />
                       )}
@@ -420,12 +430,17 @@ export default function InventoryPage() {
         title="Remove watch from inventory?"
         description={
           deleteTarget
-            ? `This will archive “${deleteTarget.brand} ${deleteTarget.model}” from your active inventory.`
+            ? `This will archive "${deleteTarget.brand} ${deleteTarget.model}" from your active inventory.`
             : ''
         }
         loading={deleteLoading}
         onCancel={() => !deleteLoading && setDeleteTarget(null)}
         onConfirm={confirmDelete}
+      />
+
+      <WatchImageLightbox
+        watch={lightboxWatch}
+        onClose={() => setLightboxWatch(null)}
       />
     </div>
   );
