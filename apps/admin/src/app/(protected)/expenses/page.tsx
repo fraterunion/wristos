@@ -169,6 +169,15 @@ export default function ExpensesPage() {
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportFlash, setExportFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!exportFlash) return;
+    const t = window.setTimeout(() => setExportFlash(null), 4500);
+    return () => window.clearTimeout(t);
+  }, [exportFlash]);
+
   const fetchData = useCallback(async (f: Filters) => {
     setIsLoading(true);
     setError(null);
@@ -251,6 +260,22 @@ export default function ExpensesPage() {
       setFormError(e instanceof Error ? e.message : 'Failed to save expense.');
     } finally {
       setFormLoading(false);
+    }
+  }
+
+  async function handleExport() {
+    if (!summary || expenses.length === 0) {
+      setExportFlash({ type: 'error', message: 'No expenses match the current filters.' });
+      return;
+    }
+    setExportLoading(true);
+    try {
+      const { generateExpensesPdf } = await import('./expenses-pdf');
+      await generateExpensesPdf(expenses, summary, appliedFilters);
+    } catch {
+      setExportFlash({ type: 'error', message: 'Could not generate PDF. Please try again.' });
+    } finally {
+      setExportLoading(false);
     }
   }
 
@@ -383,8 +408,29 @@ export default function ExpensesPage() {
           <button type="button" className="ui-btn-secondary px-4 py-2" onClick={resetFilters}>
             Reset
           </button>
+          <button
+            type="button"
+            className="ui-btn-secondary px-4 py-2 disabled:opacity-60"
+            disabled={exportLoading || isLoading || !!error}
+            onClick={() => void handleExport()}
+          >
+            {exportLoading ? 'Exporting…' : 'Export PDF'}
+          </button>
         </div>
       </section>
+
+      {exportFlash ? (
+        <div
+          role="status"
+          className={`rounded-xl border px-4 py-3 text-sm ${
+            exportFlash.type === 'success'
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+              : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+          }`}
+        >
+          {exportFlash.message}
+        </div>
+      ) : null}
 
       {/* Content */}
       {isLoading ? (
