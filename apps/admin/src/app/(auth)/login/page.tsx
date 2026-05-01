@@ -48,9 +48,9 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface px-6">
-      <div className="w-full max-w-md rounded-xl border border-white/10 bg-panel p-8 shadow-xl shadow-black/20">
-        <h1 className="text-2xl font-semibold">WristOS Admin</h1>
+    <div className="flex min-h-screen items-center justify-center bg-surface px-4 py-6 sm:px-6 sm:py-0">
+      <div className="w-full max-w-md rounded-xl border border-white/10 bg-panel p-5 shadow-xl shadow-black/20 sm:p-8">
+        <h1 className="text-xl font-semibold sm:text-2xl">WristOS Admin</h1>
         <p className="mt-2 text-sm text-muted">Sign in to continue</p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>

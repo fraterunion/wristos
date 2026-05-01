@@ -468,8 +468,8 @@ export default function DealsPage() {
           </button>
         </section>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <div className="ui-card overflow-x-auto p-4">
+        <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <div className="ui-card min-w-0 overflow-x-auto p-3 sm:p-4">
             <div className="grid min-w-[980px] grid-cols-6 gap-3">
               {dealStages.map((stage) => (
                 <div key={stage} className="space-y-2 rounded-xl border border-white/10 bg-surface/40 p-3">
@@ -514,7 +514,7 @@ export default function DealsPage() {
             </div>
           </div>
 
-          <aside className="ui-card">
+          <aside className="ui-card min-w-0">
             {!selectedDealId ? (
               <p className="text-sm text-muted">Select a deal to view details.</p>
             ) : detailsLoading ? (
@@ -540,7 +540,7 @@ export default function DealsPage() {
                         : 'Unknown watch'}
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => setEditOpen(true)}
@@ -589,7 +589,7 @@ export default function DealsPage() {
 
                 <section className="space-y-2 rounded-lg border border-white/10 bg-surface/40 p-3">
                   <p className="text-xs uppercase tracking-wide text-muted">Payment Summary</p>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
                     <div className="rounded border border-white/10 p-2">
                       <p className="text-muted">Agreed</p>
                       <p className="mt-1 font-semibold">
@@ -610,7 +610,7 @@ export default function DealsPage() {
                 <section className="space-y-3 rounded-lg border border-white/10 bg-surface/40 p-3">
                   <p className="text-xs uppercase tracking-wide text-muted">Add Payment</p>
                   <form onSubmit={createPayment} className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         type="number"
                         step="0.01"
@@ -630,7 +630,7 @@ export default function DealsPage() {
                         ))}
                       </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <select
                         {...paymentForm.register('status')}
                         className="ui-input"
@@ -727,7 +727,7 @@ export default function DealsPage() {
       )}
 
       {createOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
           <button
             type="button"
             onClick={() => setCreateOpen(false)}
@@ -736,9 +736,9 @@ export default function DealsPage() {
           />
           <form
             onSubmit={createDeal}
-            className="relative w-full max-w-2xl space-y-4 rounded-2xl border border-white/10 bg-panel/95 p-6 shadow-2xl backdrop-blur"
+            className="relative max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 p-4 shadow-2xl backdrop-blur sm:p-6"
           >
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold">Create Deal</h2>
                 <p className="mt-1 text-sm text-muted">Add a new sales opportunity to the pipeline.</p>
@@ -835,7 +835,7 @@ export default function DealsPage() {
       ) : null}
 
       {editOpen && selectedDeal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
           <button
             type="button"
             onClick={() => setEditOpen(false)}
@@ -844,9 +844,9 @@ export default function DealsPage() {
           />
           <form
             onSubmit={updateDeal}
-            className="relative w-full max-w-lg space-y-4 rounded-2xl border border-white/10 bg-panel/95 p-6 shadow-2xl backdrop-blur"
+            className="relative max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 p-4 shadow-2xl backdrop-blur sm:p-6"
           >
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold">Edit Deal</h2>
                 <p className="mt-1 text-sm text-muted">Update close date, value, and notes.</p>
