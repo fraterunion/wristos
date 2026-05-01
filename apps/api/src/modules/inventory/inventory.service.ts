@@ -23,6 +23,7 @@ export class InventoryService {
       brand: dto.brand,
       model: dto.model,
       serialNumber: dto.serialNumber,
+      imageUrl: dto.imageUrl ?? null,
       condition: dto.condition,
       cost: new Prisma.Decimal(dto.cost),
       priceMin: new Prisma.Decimal(dto.priceMin),
@@ -111,6 +112,7 @@ export class InventoryService {
     if (dto.brand !== undefined) data.brand = dto.brand;
     if (dto.model !== undefined) data.model = dto.model;
     if (dto.serialNumber !== undefined) data.serialNumber = dto.serialNumber;
+    if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
     if (dto.condition !== undefined) data.condition = dto.condition;
     if (dto.cost !== undefined) data.cost = new Prisma.Decimal(dto.cost);
     if (dto.priceMin !== undefined) data.priceMin = new Prisma.Decimal(dto.priceMin);
@@ -193,6 +195,7 @@ export class InventoryService {
       brand: watch.brand,
       model: watch.model,
       serialNumber: watch.serialNumber,
+      imageUrl: watch.imageUrl,
       condition: watch.condition,
       cost: watch.cost.toString(),
       priceMin: watch.priceMin.toString(),

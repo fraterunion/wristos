@@ -25,6 +25,7 @@ export const watchFormSchema = z
     brand: z.string().trim().min(1, 'Brand is required'),
     model: z.string().trim().min(1, 'Model is required'),
     serialNumber: z.string().optional(),
+    imageUrl: z.string().optional(),
     condition: z.string().trim().min(1, 'Condition is required'),
     cost: numericField('Base cost'),
     priceMin: numericField('Min price'),
@@ -63,6 +64,7 @@ export const defaultWatchFormValues: WatchFormValues = {
   brand: '',
   model: '',
   serialNumber: '',
+  imageUrl: '',
   condition: '',
   cost: 0,
   priceMin: 0,
@@ -78,6 +80,7 @@ export function watchToFormValues(watch: Watch): WatchFormValues {
     brand: watch.brand,
     model: watch.model,
     serialNumber: watch.serialNumber ?? '',
+    imageUrl: watch.imageUrl ?? '',
     condition: watch.condition,
     cost: Number(watch.cost),
     priceMin: Number(watch.priceMin),
@@ -107,6 +110,9 @@ export function buildCreateWatchBody(values: WatchFormValues) {
   const serial = values.serialNumber?.trim();
   if (serial) body.serialNumber = serial;
 
+  const imageUrl = values.imageUrl?.trim();
+  if (imageUrl) body.imageUrl = imageUrl;
+
   if (values.ownershipType === 'CONSIGNMENT') {
     const owner = values.consignmentOwnerName?.trim();
     if (owner) body.consignmentOwnerName = owner;
@@ -131,6 +137,9 @@ export function buildUpdateWatchBody(values: WatchFormValues) {
 
   const serial = values.serialNumber?.trim();
   body.serialNumber = serial || null;
+
+  const imageUrl = values.imageUrl?.trim();
+  body.imageUrl = imageUrl || null;
 
   if (values.ownershipType === 'CONSIGNMENT') {
     const owner = values.consignmentOwnerName?.trim();
