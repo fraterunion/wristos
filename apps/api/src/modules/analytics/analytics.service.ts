@@ -14,7 +14,7 @@ export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getRevenueOverTime(tenantId: string, period: AnalyticsPeriod) {
-    const { start, end, labels, bucket } = this.buildSeriesWindow(period);
+    const { start, end, labels, bucket, weekBuckets } = this.buildSeriesWindow(period);
     const rows = await this.prisma.payment.findMany({
       where: {
         tenantId,
@@ -35,7 +35,7 @@ export class AnalyticsService {
     const sums = new Map<string, number>();
     for (const row of rows) {
       if (!row.paidAt) continue;
-      const key = this.getBucketLabel(row.paidAt, bucket);
+      const key = this.getBucketLabel(row.paidAt, bucket, weekBuckets);
       const current = sums.get(key) ?? 0;
       sums.set(key, current + Number(row.amount));
     }
@@ -47,7 +47,7 @@ export class AnalyticsService {
   }
 
   async getSalesOverTime(tenantId: string, period: AnalyticsPeriod) {
-    const { start, end, labels, bucket } = this.buildSeriesWindow(period);
+    const { start, end, labels, bucket, weekBuckets } = this.buildSeriesWindow(period);
     const rows = await this.prisma.deal.findMany({
       where: {
         tenantId,
@@ -65,7 +65,7 @@ export class AnalyticsService {
 
     const counts = new Map<string, number>();
     for (const row of rows) {
-      const key = this.getBucketLabel(row.updatedAt, bucket);
+      const key = this.getBucketLabel(row.updatedAt, bucket, weekBuckets);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
@@ -273,35 +273,113 @@ export class AnalyticsService {
     return base;
   }
 
-  private buildSeriesWindow(period: AnalyticsPeriod) {
+  private buildSeriesWindow(period: AnalyticsPeriod): {
+    start: Date;
+    end: Date;
+    labels: string[];
+    bucket: 'day' | 'week' | 'month';
+    weekBuckets?: Array<{ label: string; from: Date; to: Date }>;
+  } {
     const now = new Date();
-    const end = this.startOfDayUtc(now);
+    const today = this.startOfDayUtc(now);
 
     if (period === AnalyticsPeriod.YEAR) {
+      const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 11, 1));
       const labels: string[] = [];
-      const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 11, 1));
-
       for (let i = 0; i < 12; i += 1) {
         const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1));
         labels.push(this.formatMonthUtc(d));
       }
-
-      return { start, end: now, labels, bucket: 'month' as const };
+      return { start, end: now, labels, bucket: 'month' };
     }
 
-    const days = period === AnalyticsPeriod.WEEK ? 7 : 30;
-    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (days - 1)));
+    if (period === AnalyticsPeriod.MONTH) {
+      // 30-day window split into up to 5 weekly buckets
+      const days = 30;
+      const start = new Date(Date.UTC(
+        today.getUTCFullYear(),
+        today.getUTCMonth(),
+        today.getUTCDate() - (days - 1),
+      ));
+
+      const weekBuckets: Array<{ label: string; from: Date; to: Date }> = [];
+      for (let w = 0; w < 5; w++) {
+        const fromDate = new Date(Date.UTC(
+          start.getUTCFullYear(),
+          start.getUTCMonth(),
+          start.getUTCDate() + w * 7,
+        ));
+        // Last week may be shorter than 7 days
+        const toRaw = new Date(Date.UTC(
+          start.getUTCFullYear(),
+          start.getUTCMonth(),
+          start.getUTCDate() + Math.min((w + 1) * 7 - 1, days - 1),
+        ));
+        // Cap to end of that day (inclusive)
+        const toDate = new Date(Date.UTC(
+          toRaw.getUTCFullYear(),
+          toRaw.getUTCMonth(),
+          toRaw.getUTCDate(),
+          23, 59, 59, 999,
+        ));
+
+        weekBuckets.push({
+          label: this.formatWeekLabel(fromDate, toRaw),
+          from: fromDate,
+          to: toDate,
+        });
+      }
+
+      return {
+        start,
+        end: now,
+        labels: weekBuckets.map((w) => w.label),
+        bucket: 'week',
+        weekBuckets,
+      };
+    }
+
+    // WEEK: last 7 days, one bucket per day
+    const start = new Date(Date.UTC(
+      today.getUTCFullYear(),
+      today.getUTCMonth(),
+      today.getUTCDate() - 6,
+    ));
     const labels: string[] = [];
-    for (let i = 0; i < days; i += 1) {
-      const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + i));
+    for (let i = 0; i < 7; i += 1) {
+      const d = new Date(Date.UTC(
+        start.getUTCFullYear(),
+        start.getUTCMonth(),
+        start.getUTCDate() + i,
+      ));
       labels.push(this.formatDayUtc(d));
     }
-
-    return { start, end: now, labels, bucket: 'day' as const };
+    return { start, end: now, labels, bucket: 'day' };
   }
 
-  private getBucketLabel(date: Date, bucket: 'day' | 'month') {
-    return bucket === 'day' ? this.formatDayUtc(date) : this.formatMonthUtc(date);
+  private getBucketLabel(
+    date: Date,
+    bucket: 'day' | 'week' | 'month',
+    weekBuckets?: Array<{ label: string; from: Date; to: Date }>,
+  ): string {
+    if (bucket === 'day') return this.formatDayUtc(date);
+    if (bucket === 'month') return this.formatMonthUtc(date);
+    // week: find which bucket this date falls into
+    const wb = weekBuckets?.find((w) => date >= w.from && date <= w.to);
+    return wb?.label ?? (weekBuckets?.[weekBuckets.length - 1]?.label ?? this.formatDayUtc(date));
+  }
+
+  private formatWeekLabel(from: Date, to: Date): string {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const fromMonth = MONTHS[from.getUTCMonth()];
+    const toMonth   = MONTHS[to.getUTCMonth()];
+    const fromDay   = from.getUTCDate();
+    const toDay     = to.getUTCDate();
+    if (fromMonth === toMonth) {
+      return `${fromMonth} ${fromDay}–${toDay}`;
+    }
+    return `${fromMonth} ${fromDay}–${toMonth} ${toDay}`;
   }
 
   private formatDayUtc(date: Date) {
