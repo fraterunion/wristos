@@ -1,8 +1,11 @@
+import { createHash } from 'crypto';
+
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma, Watch, WatchExpense, WatchOwnershipType } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -15,7 +18,10 @@ type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async create(tenantId: string, dto: CreateWatchDto) {
     const data: Prisma.WatchCreateInput = {
@@ -186,6 +192,28 @@ export class InventoryService {
     if (!expense) throw new NotFoundException('Expense not found');
 
     await this.prisma.watchExpense.delete({ where: { id: expenseId } });
+  }
+
+  generateUploadSignature(tenantId: string) {
+    const cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME');
+    const apiKey = this.configService.get<string>('CLOUDINARY_API_KEY');
+    const apiSecret = this.configService.get<string>('CLOUDINARY_API_SECRET');
+    const baseFolder =
+      this.configService.get<string>('CLOUDINARY_UPLOAD_FOLDER') ?? 'wristos/watches';
+
+    if (!cloudName || !apiKey || !apiSecret) {
+      throw new BadRequestException('Image upload is not configured on this server.');
+    }
+
+    const folder = `${baseFolder}/${tenantId}`;
+    const timestamp = Math.floor(Date.now() / 1000);
+    // Cloudinary signature: SHA-1 of alphabetically-sorted params joined with & + apiSecret
+    const paramString = `folder=${folder}&timestamp=${timestamp}`;
+    const signature = createHash('sha1')
+      .update(paramString + apiSecret)
+      .digest('hex');
+
+    return { signature, timestamp, cloudName, apiKey, folder };
   }
 
   private serializeWatch(watch: WatchWithExpenses) {

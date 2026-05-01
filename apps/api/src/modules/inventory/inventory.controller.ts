@@ -35,6 +35,11 @@ export class InventoryController {
     return this.inventoryService.list(user.tenantId, query);
   }
 
+  @Get('upload-signature')
+  getUploadSignature(@CurrentUser() user: CurrentUserType) {
+    return this.inventoryService.generateUploadSignature(user.tenantId);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
     return this.inventoryService.findOne(id, user.tenantId);
