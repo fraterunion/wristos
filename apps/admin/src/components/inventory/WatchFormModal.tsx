@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { apiDelete, apiPost, apiPatch, ApiError } from '@/lib/api-client';
 import type { Watch, WatchExpense, WatchExpenseCategory } from '@/types/domain';
 
+import { ImageUploader } from './ImageUploader';
 import {
   buildCreateWatchBody,
   buildUpdateWatchBody,
@@ -65,6 +66,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
 
   const { register, handleSubmit, reset, watch: watchForm, formState, setValue, clearErrors } = form;
   const ownershipType = watchForm('ownershipType');
+  const imageUrl = watchForm('imageUrl') ?? '';
 
   useEffect(() => {
     if (!open) return;
@@ -245,21 +247,19 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
           </div>
 
-          {/* Image URL */}
-          <label className="block text-sm">
-            <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-              Image URL
+          {/* Watch Image */}
+          <div className="block text-sm">
+            <span className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">
+              Watch Image
             </span>
-            <input
-              {...register('imageUrl')}
-              className="ui-input"
-              placeholder="https://… (optional)"
-              autoComplete="off"
+            <ImageUploader
+              value={imageUrl}
+              onChange={(url) => setValue('imageUrl', url, { shouldDirty: true })}
             />
-            <p className="mt-1 text-xs text-muted/70">
-              Used in the generated PDF catalog. Leave blank if no photo is available.
+            <p className="mt-1.5 text-xs text-muted/70">
+              Used in the generated PDF catalog. JPG, PNG, or WEBP up to 5 MB.
             </p>
-          </label>
+          </div>
 
           {/* Cost */}
           <label className="block text-sm">
