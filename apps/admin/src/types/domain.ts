@@ -74,6 +74,7 @@ export type Watch = {
   brand: string;
   model: string;
   serialNumber: string | null;
+  imageUrl?: string | null;
   condition: string;
   cost: string;
   priceMin: string;

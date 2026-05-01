@@ -30,6 +30,10 @@ export class CreateWatchDto {
   @IsString()
   serialNumber?: string;
 
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
   @IsString()
   @IsNotEmpty()
   condition!: string;

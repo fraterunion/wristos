@@ -392,7 +392,7 @@ export default function CrmPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <article className="ui-card p-4">
           {clientsLoading ? (
             <div className="space-y-3 animate-pulse">
@@ -600,7 +600,7 @@ export default function CrmPage() {
       </section>
 
       {clientModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
           <button
             type="button"
             aria-label="Close modal"
@@ -609,9 +609,9 @@ export default function CrmPage() {
           />
           <form
             onSubmit={submitClient}
-            className="relative w-full max-w-xl space-y-4 rounded-2xl border border-white/10 bg-panel/95 p-6 shadow-2xl backdrop-blur"
+            className="relative max-h-[90vh] w-full max-w-xl space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 p-4 shadow-2xl backdrop-blur sm:p-6"
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">
                   {clientModalMode === 'create' ? 'Create client' : 'Edit client'}

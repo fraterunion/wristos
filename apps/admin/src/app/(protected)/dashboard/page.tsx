@@ -318,7 +318,7 @@ export default function DashboardPage() {
             <h4 className="text-sm font-semibold uppercase tracking-wide text-muted">
               Revenue Over Time
             </h4>
-            <div className="mt-4 h-64 transition-opacity duration-200">
+            <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
                 <div className="h-full animate-pulse rounded-lg bg-white/10" />
               ) : (
@@ -370,7 +370,7 @@ export default function DashboardPage() {
             <h4 className="text-sm font-semibold uppercase tracking-wide text-muted">
               Watches Sold Over Time
             </h4>
-            <div className="mt-4 h-64 transition-opacity duration-200">
+            <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
                 <div className="h-full animate-pulse rounded-lg bg-white/10" />
               ) : (
@@ -409,7 +409,7 @@ export default function DashboardPage() {
             Deal movement and stage distribution for your active pipeline.
           </p>
 
-          <div className="mt-5 grid grid-cols-3 gap-3">
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-white/10 bg-surface p-3">
               <p className="text-xs uppercase tracking-wide text-muted">Open</p>
               <p className="mt-2 text-xl font-semibold">{data.pipeline.openDeals}</p>

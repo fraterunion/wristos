@@ -245,6 +245,22 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
           </div>
 
+          {/* Image URL */}
+          <label className="block text-sm">
+            <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+              Image URL
+            </span>
+            <input
+              {...register('imageUrl')}
+              className="ui-input"
+              placeholder="https://… (optional)"
+              autoComplete="off"
+            />
+            <p className="mt-1 text-xs text-muted/70">
+              Used in the generated PDF catalog. Leave blank if no photo is available.
+            </p>
+          </label>
+
           {/* Cost */}
           <label className="block text-sm">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">

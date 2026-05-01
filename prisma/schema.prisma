@@ -244,6 +244,7 @@ model Watch {
   model                      String
   reference                  String?
   serialNumber               String?
+  imageUrl                   String?
   condition                  String
   cost                       Decimal              @db.Decimal(12, 2)
   priceMin                   Decimal              @db.Decimal(12, 2)

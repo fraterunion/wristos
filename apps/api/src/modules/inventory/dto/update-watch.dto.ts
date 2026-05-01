@@ -35,6 +35,10 @@ export class UpdateWatchDto {
 
   @IsOptional()
   @IsString()
+  imageUrl?: string | null;
+
+  @IsOptional()
+  @IsString()
   @IsNotEmpty()
   condition?: string;
 

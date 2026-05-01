@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
+    "jspdf": "^4.2.1",
     "next": "^15.2.8",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",

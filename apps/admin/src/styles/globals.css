@@ -16,7 +16,7 @@ a {
 
 @layer components {
   .ui-page {
-    @apply space-y-6;
+    @apply space-y-4 md:space-y-6;
   }
 
   .ui-page-header {
@@ -24,7 +24,7 @@ a {
   }
 
   .ui-title {
-    @apply text-2xl font-semibold tracking-tight text-white;
+    @apply text-xl font-semibold tracking-tight text-white md:text-2xl;
   }
 
   .ui-subtitle {
@@ -32,11 +32,11 @@ a {
   }
 
   .ui-card {
-    @apply rounded-2xl border border-white/10 bg-panel p-5 shadow-sm shadow-black/20;
+    @apply rounded-2xl border border-white/10 bg-panel p-4 shadow-sm shadow-black/20 md:p-5;
   }
 
   .ui-card-soft {
-    @apply rounded-xl border border-white/10 bg-surface/40 p-4;
+    @apply rounded-xl border border-white/10 bg-surface/40 p-3 md:p-4;
   }
 
   .ui-btn {

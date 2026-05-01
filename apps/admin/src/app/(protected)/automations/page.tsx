@@ -308,7 +308,7 @@ export default function AutomationsPage() {
             </p>
           </div>
         ) : (
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <article className="ui-card-soft">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Stale Deals</h3>
               <p className="mt-1 text-xs text-muted">Open deals with no recent updates.</p>

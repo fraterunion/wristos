@@ -54,6 +54,8 @@ export default function InventoryPage() {
   const [deleteTarget, setDeleteTarget] = useState<Watch | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  const [catalogLoading, setCatalogLoading] = useState(false);
+
   const listQueryFilter = useMemo(() => {
     const q: Record<string, string> = {};
     if (appliedFilters.status) q.status = appliedFilters.status;
@@ -145,6 +147,23 @@ export default function InventoryPage() {
     }
   };
 
+  const handleGenerateCatalog = async () => {
+    const available = watches.filter((w) => w.status === 'AVAILABLE');
+    if (available.length === 0) {
+      setFlash({ type: 'error', message: 'No available watches to include in catalog.' });
+      return;
+    }
+    setCatalogLoading(true);
+    try {
+      const { generateCatalogPdf } = await import('@/components/inventory/catalog-pdf');
+      await generateCatalogPdf(available);
+    } catch {
+      setFlash({ type: 'error', message: 'Could not generate catalog. Please try again.' });
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
   const empty = !loading && !error && watches.length === 0;
 
   return (
@@ -156,13 +175,23 @@ export default function InventoryPage() {
             Manage your watch stock, ownership, and listing health in one place.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="ui-btn-primary px-5 py-2.5"
-        >
-          Add watch
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void handleGenerateCatalog()}
+            disabled={catalogLoading}
+            className="ui-btn-secondary px-5 py-2.5 disabled:opacity-60"
+          >
+            {catalogLoading ? 'Generating…' : 'Generate Catalog'}
+          </button>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="ui-btn-primary px-5 py-2.5"
+          >
+            Add watch
+          </button>
+        </div>
       </header>
 
       {flash ? (
@@ -298,6 +327,7 @@ export default function InventoryPage() {
             <table className="min-w-[860px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
+                  <th className="px-4 py-3 font-medium w-16">Photo</th>
                   <th className="px-4 py-3 font-medium">Brand / Model</th>
                   <th className="px-4 py-3 font-medium">Serial</th>
                   <th className="px-4 py-3 font-medium">Condition</th>
@@ -314,6 +344,18 @@ export default function InventoryPage() {
                     key={watch.id}
                     className="border-b border-white/5 transition duration-150 hover:bg-white/[0.05]"
                   >
+                    <td className="px-4 py-3">
+                      {watch.imageUrl ? (
+                        <img
+                          src={watch.imageUrl}
+                          alt={`${watch.brand} ${watch.model}`}
+                          className="h-10 w-10 rounded object-cover ring-1 ring-white/10"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded bg-white/5 ring-1 ring-white/10" />
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-white">{watch.brand}</div>
                       <div className="text-xs text-muted">{watch.model}</div>
