@@ -95,6 +95,63 @@ enum OperatingExpenseCategory {
   COMMISSIONS
 }
 
+// --- AI Market Radar ---
+
+enum ChannelType {
+  TELEGRAM
+  WHATSAPP
+  DISCORD
+  SLACK
+  EMAIL
+  RSS
+  OTHER
+}
+
+enum ImportStatus {
+  PENDING
+  PARSING
+  CLASSIFYING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+enum MarketListingIntent {
+  SELL_OFFER
+  BUY_REQUEST
+  PRICE_SIGNAL
+  GENERAL_INQUIRY
+}
+
+enum ReviewStatus {
+  PENDING_REVIEW
+  CONFIRMED
+  DISMISSED
+}
+
+enum CatalogDataSource {
+  MANUFACTURER_SPEC
+  AFTERMARKET_GUIDE
+  COMMUNITY_WIKI
+  DEALER_NOTE
+  AI_EXTRACTION
+  MANUAL_ENTRY
+}
+
+enum ExtractionSource {
+  EXPLICIT
+  INFERRED
+}
+
+enum ClassificationStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  SKIPPED_PREFILTER
+  SKIPPED_MEDIA
+  SKIPPED_SYSTEM
+}
+
 // --- Core (platform) ---
 
 model Tenant {
@@ -116,8 +173,13 @@ model Tenant {
   deals              Deal[]
   payments           Payment[]
   automationRules    AutomationRule[]
-  automationRuns  AutomationRun[]
-  matchSuggestions MatchSuggestion[]
+  automationRuns     AutomationRun[]
+  matchSuggestions   MatchSuggestion[]
+  channels           Channel[]
+  radarImports       RadarImport[]
+  channelMessages    ChannelMessage[]
+  contacts           Contact[]
+  marketListings     MarketListing[]
 
   @@index([slug])
   @@map("tenants")
@@ -174,7 +236,7 @@ model TenantUser {
 // --- WristOS domain (all tenant-scoped) ---
 
 model Client {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   tenantId    String
   name        String
   email       String?
@@ -183,14 +245,15 @@ model Client {
   tags        String[]
   budgetRange String?
   deletedAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  tenant           Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deals            Deal[]
   preferences      ClientPreference[]
   matchSuggestions MatchSuggestion[]
   interactions     ClientInteraction[]
+  radarContacts    Contact[]
 
   @@index([tenantId])
   @@index([tenantId, email])
@@ -213,9 +276,9 @@ model ClientPreference {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, clientId])
   @@index([tenantId])
   @@index([tenantId, clientId])
-  @@unique([tenantId, clientId])
   @@map("client_preferences")
 }
 
@@ -238,7 +301,7 @@ model ClientInteraction {
 }
 
 model Watch {
-  id                         String               @id @default(cuid())
+  id                         String             @id @default(cuid())
   tenantId                   String
   brand                      String
   model                      String
@@ -246,16 +309,16 @@ model Watch {
   serialNumber               String?
   imageUrl                   String?
   condition                  String
-  cost                       Decimal              @db.Decimal(12, 2)
-  priceMin                   Decimal              @db.Decimal(12, 2)
-  priceMax                   Decimal              @db.Decimal(12, 2)
-  ownershipType              WatchOwnershipType   @default(OWNED)
+  cost                       Decimal            @db.Decimal(12, 2)
+  priceMin                   Decimal            @db.Decimal(12, 2)
+  priceMax                   Decimal            @db.Decimal(12, 2)
+  ownershipType              WatchOwnershipType @default(OWNED)
   consignmentOwnerName       String?
-  consignmentSplitPercentage Decimal?             @db.Decimal(5, 2)
-  status                     WatchStatus          @default(AVAILABLE)
+  consignmentSplitPercentage Decimal?           @db.Decimal(5, 2)
+  status                     WatchStatus        @default(AVAILABLE)
   deletedAt                  DateTime?
-  createdAt                  DateTime             @default(now())
-  updatedAt                  DateTime             @updatedAt
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
 
   tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deals            Deal[]
@@ -298,9 +361,9 @@ model Deal {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  client   Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  watch    Watch    @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client   Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  watch    Watch     @relation(fields: [watchId], references: [id], onDelete: Restrict)
   payments Payment[]
 
   @@index([tenantId])
@@ -312,18 +375,18 @@ model Deal {
 }
 
 model Payment {
-  id        String         @id @default(cuid())
+  id        String        @id @default(cuid())
   tenantId  String
   dealId    String
-  amount    Decimal        @db.Decimal(12, 2)
+  amount    Decimal       @db.Decimal(12, 2)
   method    PaymentMethod
-  status    PaymentStatus  @default(PENDING)
+  status    PaymentStatus @default(PENDING)
   dueDate   DateTime?
   paidAt    DateTime?
   notes     String?
   deletedAt DateTime?
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Restrict)
@@ -337,25 +400,25 @@ model Payment {
 }
 
 model MatchSuggestion {
-  id        String   @id @default(cuid())
-  tenantId  String
-  clientId  String
-  watchId   String
-  reason    String
-  score     Int
+  id          String    @id @default(cuid())
+  tenantId    String
+  clientId    String
+  watchId     String
+  reason      String
+  score       Int
   dismissedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   watch  Watch  @relation(fields: [watchId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, clientId, watchId])
   @@index([tenantId])
   @@index([clientId])
   @@index([watchId])
   @@index([tenantId, dismissedAt])
-  @@unique([tenantId, clientId, watchId])
   @@map("match_suggestions")
 }
 
@@ -371,10 +434,10 @@ model AutomationRule {
   tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   runs   AutomationRun[]
 
+  @@unique([tenantId, type])
   @@index([tenantId])
   @@index([tenantId, type])
   @@index([tenantId, isEnabled])
-  @@unique([tenantId, type])
   @@map("automation_rules")
 }
 
@@ -412,4 +475,201 @@ model OperatingExpense {
   @@index([tenantId, category])
   @@index([tenantId, expenseDate])
   @@map("operating_expenses")
+}
+
+// --- AI Market Radar (tenant-scoped ingest + listings) ---
+
+model Channel {
+  id                String      @id @default(cuid())
+  tenantId          String
+  type              ChannelType
+  name              String?
+  externalChannelId String?
+  isActive          Boolean     @default(true)
+  metadata          Json?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  radarImports RadarImport[]
+  messages     ChannelMessage[]
+
+  @@unique([tenantId, externalChannelId])
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, isActive])
+  @@map("radar_channels")
+}
+
+model RadarImport {
+  id               String       @id @default(cuid())
+  tenantId         String
+  channelId        String
+  status           ImportStatus @default(PENDING)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  errorMessage     String?
+  stats            Json?
+  originalFileName String?
+  fileSizeBytes    Int?
+  sourceGroupName  String?
+  dateRangeStart   DateTime?
+  dateRangeEnd     DateTime?
+  listingsCreated  Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel  Channel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  messages ChannelMessage[]
+
+  @@index([tenantId])
+  @@index([tenantId, channelId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("radar_imports")
+}
+
+model ChannelMessage {
+  id                   String               @id @default(cuid())
+  tenantId             String
+  channelId            String
+  importId             String
+  externalMessageId    String?
+  content              String               @db.Text
+  contentHash          String
+  postedAt             DateTime?
+  /// Reserved for live-channel ingestion (WhatsApp user ID, Telegram user ID, etc.). For .txt imports, use senderRaw instead. Null during V1.
+  authorExternalId     String?
+  rawPayload           Json?
+  classificationStatus ClassificationStatus @default(PENDING)
+  processedAt          DateTime?
+  hasMedia             Boolean              @default(false)
+  isSystemMessage      Boolean              @default(false)
+  senderRaw            String
+  createdAt            DateTime             @default(now())
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel       Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  import        RadarImport    @relation(fields: [importId], references: [id], onDelete: Cascade)
+  marketListing MarketListing?
+
+  @@unique([tenantId, contentHash])
+  @@index([tenantId])
+  @@index([tenantId, channelId])
+  @@index([tenantId, importId])
+  @@index([tenantId, postedAt])
+  @@index([tenantId, channelId, postedAt])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, classificationStatus])
+  @@map("radar_channel_messages")
+}
+
+model Contact {
+  id               String    @id @default(cuid())
+  tenantId         String
+  clientId         String?
+  displayName      String?
+  phone            String?
+  email            String?
+  telegramUsername String?
+  telegramUserId   String?
+  whatsappId       String?
+  notes            String?
+  metadata         Json?
+  firstSeenAt      DateTime?
+  lastSeenAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client         Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  marketListings MarketListing[]
+
+  @@index([tenantId])
+  @@index([tenantId, clientId])
+  @@index([tenantId, phone])
+  @@index([tenantId, email])
+  @@index([tenantId, telegramUserId])
+  @@index([tenantId, createdAt])
+  @@map("radar_contacts")
+}
+
+model MarketListing {
+  id                      String              @id @default(cuid())
+  tenantId                String
+  messageId               String              @unique
+  contactId               String?
+  watchReferenceId        String?
+  intent                  MarketListingIntent @default(GENERAL_INQUIRY)
+  reviewStatus            ReviewStatus        @default(PENDING_REVIEW)
+  referenceSource         ExtractionSource?
+  brand                   String?
+  feedConfidence          Float?
+  initialConfidence       Float?
+  rawModelMention         String?
+  referenceNumberExplicit String?
+  aiSummary               String?
+  urgencyDetected         Boolean             @default(false)
+  conditionNotes          String?
+  hasBox                  Boolean?
+  hasPapers               Boolean?
+  year                    Int?
+  dealerNotes             String?
+  confirmedBy             String?
+  confirmedAt             DateTime?
+  dismissedBy             String?
+  dismissedAt             DateTime?
+  deletedAt               DateTime?
+  aiRawResponse           Json?
+  title                   String?
+  description             String?             @db.Text
+  priceAmount             Decimal?            @db.Decimal(14, 2)
+  priceCurrency           String?
+  location                String?
+  metadata                Json?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  message        ChannelMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  contact        Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  watchReference WatchReference? @relation(fields: [watchReferenceId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, reviewStatus])
+  @@index([tenantId, intent])
+  @@index([tenantId, watchReferenceId])
+  @@index([tenantId, contactId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, reviewStatus, createdAt])
+  @@index([tenantId, reviewStatus, feedConfidence, createdAt])
+  @@index([tenantId, brand, createdAt])
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, priceAmount, intent])
+  @@map("radar_market_listings")
+}
+
+/// Global watch reference catalog (not tenant-scoped).
+model WatchReference {
+  id                   String            @id @default(cuid())
+  brand                String
+  model                String
+  reference            String
+  catalogSource        CatalogDataSource @default(MANUAL_ENTRY)
+  aliases              Json
+  line                 String?
+  approximateRetailUsd Decimal?          @db.Decimal(12, 2)
+  discontinued         Boolean           @default(false)
+  metadata             Json?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  marketListings MarketListing[]
+
+  @@unique([brand, model, reference])
+  @@index([brand])
+  @@index([reference])
+  @@index([brand, model])
+  @@map("radar_watch_references")
 }
