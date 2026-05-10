@@ -7,6 +7,7 @@ import { ChannelType, ClassificationStatus, ImportStatus } from '@prisma/client'
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ImportSummary } from '../types/import-summary.type';
 import { computeContentHash } from '../utils/content-hash.util';
+import { RadarClassifierService } from './radar-classifier.service';
 import { RadarContactsService } from './radar-contacts.service';
 import { RadarParserService } from './radar-parser.service';
 
@@ -29,6 +30,7 @@ export class RadarImportsService {
     private readonly prisma: PrismaService,
     private readonly parser: RadarParserService,
     private readonly contacts: RadarContactsService,
+    private readonly classifier: RadarClassifierService,
   ) {}
 
   async createImport(tenantId: string, file: MulterFile): Promise<ImportSummary> {
@@ -62,6 +64,73 @@ export class RadarImportsService {
     }
   }
 
+  async classifyImport(tenantId: string, importId: string): Promise<ImportSummary> {
+    const imp = await this.prisma.radarImport.findFirst({
+      where: { id: importId, tenantId },
+    });
+
+    if (!imp) throw new NotFoundException('Import not found');
+
+    const hasPending = await this.prisma.channelMessage.findFirst({
+      where: {
+        importId,
+        tenantId,
+        classificationStatus: { in: [ClassificationStatus.PENDING, ClassificationStatus.FAILED] },
+      },
+    });
+
+    if (!hasPending) {
+      // Nothing to classify — return current summary
+      return this.getImport(tenantId, importId);
+    }
+
+    await this.prisma.radarImport.updateMany({
+      where: { id: importId, tenantId },
+      data: { status: ImportStatus.CLASSIFYING },
+    });
+
+    try {
+      const { classified, skippedPrefilter, failed } =
+        await this.classifier.classifyImportMessages(tenantId, importId);
+
+      const newStatus = failed > 0 ? ImportStatus.PARTIAL : ImportStatus.COMPLETED;
+
+      const existing = await this.prisma.radarImport.findFirst({
+        where: { id: importId, tenantId },
+        select: { stats: true, listingsCreated: true },
+      });
+
+      const existingStats = (existing?.stats as Record<string, number> | null) ?? {};
+
+      await this.prisma.radarImport.updateMany({
+        where: { id: importId, tenantId },
+        data: {
+          status: newStatus,
+          completedAt: new Date(),
+          stats: {
+            ...existingStats,
+            classified,
+            skippedPrefilter,
+            classificationFailed: failed,
+          },
+        },
+      });
+
+      return this.getImport(tenantId, importId);
+    } catch (error) {
+      await this.prisma.radarImport.updateMany({
+        where: { id: importId, tenantId },
+        data: {
+          status: ImportStatus.FAILED,
+          errorMessage:
+            error instanceof Error ? error.message : 'Unexpected error during classification',
+          completedAt: new Date(),
+        },
+      });
+      throw error;
+    }
+  }
+
   async getImport(tenantId: string, importId: string): Promise<ImportSummary> {
     const imp = await this.prisma.radarImport.findFirst({
       where: { id: importId, tenantId },
@@ -86,6 +155,10 @@ export class RadarImportsService {
       mediaMessagesSkipped: stats['media'] ?? 0,
       parseErrors: stats['parseErrors'] ?? 0,
       uniqueSenders: stats['uniqueSenders'] ?? 0,
+      listingsCreated: imp.listingsCreated,
+      classified: stats['classified'] ?? 0,
+      skippedPrefilter: stats['skippedPrefilter'] ?? 0,
+      classificationFailed: stats['classificationFailed'] ?? 0,
     };
   }
 
@@ -173,11 +246,11 @@ export class RadarImportsService {
       uniqueSenders,
     };
 
+    // Transition to CLASSIFYING and run classification inline
     await this.prisma.radarImport.updateMany({
       where: { id: importId, tenantId },
       data: {
-        status: ImportStatus.COMPLETED,
-        completedAt: new Date(),
+        status: ImportStatus.CLASSIFYING,
         sourceGroupName,
         dateRangeStart,
         dateRangeEnd,
@@ -185,9 +258,35 @@ export class RadarImportsService {
       },
     });
 
+    const { classified, skippedPrefilter, failed } =
+      await this.classifier.classifyImportMessages(tenantId, importId);
+
+    const finalStatus = failed > 0 ? ImportStatus.PARTIAL : ImportStatus.COMPLETED;
+
+    const finalStats = {
+      ...statsPayload,
+      classified,
+      skippedPrefilter,
+      classificationFailed: failed,
+    };
+
+    const updatedImport = await this.prisma.radarImport.findFirst({
+      where: { id: importId, tenantId },
+      select: { listingsCreated: true },
+    });
+
+    await this.prisma.radarImport.updateMany({
+      where: { id: importId, tenantId },
+      data: {
+        status: finalStatus,
+        completedAt: new Date(),
+        stats: finalStats,
+      },
+    });
+
     return {
       importId,
-      status: ImportStatus.COMPLETED,
+      status: finalStatus,
       sourceGroupName,
       dateRangeStart,
       dateRangeEnd,
@@ -198,6 +297,10 @@ export class RadarImportsService {
       mediaMessagesSkipped: mediaMessages.length,
       parseErrors,
       uniqueSenders,
+      listingsCreated: updatedImport?.listingsCreated ?? 0,
+      classified,
+      skippedPrefilter,
+      classificationFailed: failed,
     };
   }
 

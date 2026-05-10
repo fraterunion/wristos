@@ -35,4 +35,9 @@ export class RadarImportsController {
   getImport(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
     return this.importsService.getImport(user.tenantId, id);
   }
+
+  @Post('imports/:id/classify')
+  classifyImport(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
+    return this.importsService.classifyImport(user.tenantId, id);
+  }
 }

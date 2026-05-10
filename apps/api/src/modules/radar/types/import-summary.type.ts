@@ -11,4 +11,8 @@ export type ImportSummary = {
   mediaMessagesSkipped: number;
   parseErrors: number;
   uniqueSenders: number;
+  listingsCreated: number;
+  classified: number;
+  skippedPrefilter: number;
+  classificationFailed: number;
 };
