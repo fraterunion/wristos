@@ -15,6 +15,7 @@ import {
   WatchStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { seedWatchReferences } from './seeds/watch-references';
 
 const prisma = new PrismaClient();
 
@@ -2029,6 +2030,8 @@ async function main() {
   const earliestDate = new Date(Math.min(...timelineCoverageDates.map((d) => d.getTime())));
   const latestDate = new Date(Math.max(...timelineCoverageDates.map((d) => d.getTime())));
 
+  const watchReferenceCount = await seedWatchReferences(prisma);
+
   console.log('Seed complete');
   console.log({
     tenantId: tenant.id,
@@ -2047,6 +2050,7 @@ async function main() {
       operatingExpenses: operatingExpenseCount,
       automationRules: 3,
       automationRuns: 3,
+      watchReferences: watchReferenceCount,
     },
     coverage: {
       earliest: earliestDate.toISOString(),
