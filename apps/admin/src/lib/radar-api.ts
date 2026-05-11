@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost, getApiBaseUrl } from '@/lib/api-client';
+import { ApiError, apiGet, apiPatch, apiPost, getApiBaseUrl } from '@/lib/api-client';
 import { readSession } from '@/lib/auth-storage';
 import type {
   ListRadarListingsParams,
@@ -7,6 +7,7 @@ import type {
   RadarListingDetail,
   RadarListingsResponse,
   RadarReviewQueueResponse,
+  RadarReviewStatus,
   SearchRadarReferencesParams,
   UpdateRadarListingPayload,
   WatchReference,
@@ -20,6 +21,8 @@ export async function uploadRadarImport(file: File): Promise<RadarImportSummary>
   const form = new FormData();
   form.append('file', file);
   const session = readSession();
+  // TODO: 401 responses here bypass the token-refresh flow in apiRequest. If uploads
+  // fail with 401 after expiry, call refreshAccessToken() here before retrying.
   const response = await fetch(`${getApiBaseUrl()}/radar/imports`, {
     method: 'POST',
     headers: session?.accessToken
@@ -29,7 +32,7 @@ export async function uploadRadarImport(file: File): Promise<RadarImportSummary>
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { message?: string } | null;
-    throw new Error(payload?.message ?? `Upload failed (${response.status})`);
+    throw new ApiError(payload?.message ?? `Upload failed (${response.status})`, response.status, payload);
   }
   return response.json() as Promise<RadarImportSummary>;
 }
@@ -70,7 +73,7 @@ export function confirmRadarListing(
 export function dismissRadarListing(
   id: string,
   reason?: string,
-): Promise<{ id: string; reviewStatus: string; dismissedAt: string }> {
+): Promise<{ id: string; reviewStatus: RadarReviewStatus; dismissedAt: string }> {
   return apiPost(
     `/radar/listings/${id}/dismiss`,
     reason !== undefined ? { reason } : {},
