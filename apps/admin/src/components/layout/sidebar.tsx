@@ -12,6 +12,7 @@ const navItems = [
   { href: '/automations', label: 'Automations' },
   { href: '/history', label: 'History' },
   { href: '/expenses', label: 'Expenses' },
+  { href: '/radar', label: 'Radar' },
 ];
 
 export function Sidebar() {
@@ -24,7 +25,7 @@ export function Sidebar() {
       </div>
       <nav className="-mx-1 flex flex-row gap-1 overflow-x-auto pb-1 lg:mx-0 lg:flex-col lg:space-y-1.5 lg:overflow-visible lg:pb-0">
         {navItems.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
           return (
             <Link
               key={item.href}

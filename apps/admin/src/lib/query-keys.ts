@@ -40,4 +40,14 @@ export const queryKeys = {
   automations: {
     rules: ['automations', 'rules'] as const,
   },
+  radar: {
+    listings: (filters?: Record<string, string | number | boolean | undefined>) =>
+      ['radar', 'listings', filters ?? {}] as const,
+    listing: (id: string) => ['radar', 'listings', id] as const,
+    reviewQueue: (page?: number) => ['radar', 'review', page ?? 1] as const,
+    imports: ['radar', 'imports'] as const,
+    import: (id: string) => ['radar', 'imports', id] as const,
+    contact: (id: string) => ['radar', 'contacts', id] as const,
+    references: (q?: string) => ['radar', 'references', q ?? ''] as const,
+  },
 };
