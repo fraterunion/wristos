@@ -33,6 +33,44 @@ export class RadarReferencesService {
     return this.cache;
   }
 
+  async search(q: string | undefined, brand: string | undefined, limit: number) {
+    const where: {
+      brand?: { contains: string; mode: 'insensitive' };
+      OR?: Array<Record<string, unknown>>;
+    } = {};
+
+    if (brand) {
+      where.brand = { contains: brand, mode: 'insensitive' };
+    }
+
+    if (q) {
+      where.OR = [
+        { brand: { contains: q, mode: 'insensitive' } },
+        { model: { contains: q, mode: 'insensitive' } },
+        { reference: { contains: q, mode: 'insensitive' } },
+        { line: { contains: q, mode: 'insensitive' } },
+        // JSON string_contains searches within the serialized aliases array
+        { aliases: { string_contains: q } },
+      ];
+    }
+
+    return this.prisma.watchReference.findMany({
+      where,
+      select: {
+        id: true,
+        brand: true,
+        model: true,
+        reference: true,
+        line: true,
+        aliases: true,
+        approximateRetailUsd: true,
+        discontinued: true,
+      },
+      orderBy: [{ brand: 'asc' }, { model: 'asc' }],
+      take: limit,
+    });
+  }
+
   // Call this if the catalog is updated at runtime so the next getAll() re-fetches
   invalidateCache(): void {
     this.cache = null;
