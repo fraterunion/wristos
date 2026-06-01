@@ -434,9 +434,9 @@ export default function RadarListingDetailPage({
               <div>
                 <p className="text-xs uppercase tracking-wide text-muted">Sender</p>
                 <p className="mt-1 text-sm text-white">
-                  {listing.contact.displayName ?? listing.message.senderRaw}
+                  {listing.contact?.displayName ?? listing.message.senderRaw}
                 </p>
-                {listing.contact.displayName && (
+                {listing.contact?.displayName && (
                   <p className="text-xs text-muted">{listing.message.senderRaw}</p>
                 )}
               </div>
@@ -487,12 +487,12 @@ export default function RadarListingDetailPage({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-white">
-                  {listing.contact.displayName ??
-                    listing.contact.phone ??
-                    listing.contact.whatsappId ??
+                  {listing.contact?.displayName ??
+                    listing.contact?.phone ??
+                    listing.contact?.whatsappId ??
                     'Unknown'}
                 </p>
-                {listing.contact.phone && listing.contact.displayName && (
+                {listing.contact?.phone && listing.contact?.displayName && (
                   <p className="mt-0.5 text-xs text-muted">{listing.contact.phone}</p>
                 )}
               </div>

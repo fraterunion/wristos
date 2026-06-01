@@ -140,7 +140,7 @@ function ListingCard({
           )}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
-          <span>{listing.contact.displayName ?? 'Unknown contact'}</span>
+          <span>{listing.contact?.displayName ?? 'Unknown contact'}</span>
           {listing.message.import.sourceGroupName && (
             <span>{listing.message.import.sourceGroupName}</span>
           )}

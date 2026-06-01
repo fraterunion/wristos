@@ -171,7 +171,7 @@ function ReviewCard({
         <p className="text-xs uppercase tracking-wide text-muted">
           Original message ·{' '}
           <span className="normal-case text-white/60">
-            {listing.contact.displayName ?? listing.message.senderRaw}
+            {listing.contact?.displayName ?? listing.message.senderRaw}
           </span>{' '}
           · {formatDate(listing.message.postedAt)}
           {listing.message.import.sourceGroupName && (

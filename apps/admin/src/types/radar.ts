@@ -35,7 +35,7 @@ export type RadarListingCard = {
   urgencyDetected: boolean;
   aiSummary: string;
   createdAt: string;
-  contact: { id: string; displayName: string | null };
+  contact: { id: string; displayName: string | null } | null;
   message: {
     importId: string;
     postedAt: string;
@@ -79,7 +79,7 @@ export type RadarListingDetail = {
     displayName: string | null;
     phone: string | null;
     whatsappId: string | null;
-  };
+  } | null;
   watchReference: WatchReference | null;
   message: {
     id: string;
