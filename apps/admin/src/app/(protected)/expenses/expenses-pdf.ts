@@ -16,16 +16,16 @@ export type ExportFilters = {
 
 // ─── palette ────────────────────────────────────────────────────────────────
 const C = {
-  NAVY:        [13,  22,  33]  as RGB,
-  GOLD:        [201, 168, 76]  as RGB,
-  DARK:        [26,  37,  55]  as RGB,
-  MUTED:       [100, 116, 139] as RGB,
-  LIGHT_MUTED: [180, 188, 200] as RGB,
+  NAVY:        [10,  10,  10]  as RGB,
+  GOLD:        [120, 120, 120] as RGB,
+  DARK:        [26,  26,  26]  as RGB,
+  MUTED:       [100, 100, 100] as RGB,
+  LIGHT_MUTED: [160, 160, 160] as RGB,
   WHITE:       [255, 255, 255] as RGB,
-  BG:          [247, 249, 252] as RGB,
-  BORDER:      [218, 224, 232] as RGB,
-  ROW_ALT:     [240, 243, 248] as RGB,
-  COMM_TINT:   [255, 252, 235] as RGB,
+  BG:          [247, 247, 247] as RGB,
+  BORDER:      [220, 220, 220] as RGB,
+  ROW_ALT:     [242, 242, 242] as RGB,
+  COMM_TINT:   [242, 242, 242] as RGB,
 };
 
 const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {

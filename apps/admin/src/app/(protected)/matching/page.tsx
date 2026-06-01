@@ -9,7 +9,7 @@ type Mode = 'watch' | 'client';
 
 function scoreTone(score: number) {
   if (score >= 85) return 'text-emerald-300 border-emerald-500/35 bg-emerald-500/10';
-  if (score >= 70) return 'text-sky-300 border-sky-500/35 bg-sky-500/10';
+  if (score >= 70) return 'text-white/80 border-white/25 bg-white/8';
   if (score >= 55) return 'text-amber-200 border-amber-500/35 bg-amber-500/10';
   return 'text-muted border-white/15 bg-white/5';
 }

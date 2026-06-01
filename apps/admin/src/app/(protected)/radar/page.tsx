@@ -59,7 +59,7 @@ function importStatusColor(status: RadarImportStatus): string {
   if (status === 'COMPLETED') return 'text-emerald-300';
   if (status === 'PARTIAL') return 'text-amber-300';
   if (status === 'FAILED') return 'text-rose-300';
-  if (status === 'CLASSIFYING' || status === 'PARSING') return 'text-sky-300';
+  if (status === 'CLASSIFYING' || status === 'PARSING') return 'text-white/60';
   return 'text-muted';
 }
 

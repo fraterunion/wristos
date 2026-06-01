@@ -6,15 +6,15 @@ type Doc = InstanceType<typeof JsPDFClass>;
 type RGB = [number, number, number];
 
 const C = {
-  NAVY: [13, 22, 33] as RGB,
-  GOLD: [201, 168, 76] as RGB,
-  DARK: [26, 37, 55] as RGB,
-  MUTED: [100, 116, 139] as RGB,
-  LIGHT_MUTED: [180, 188, 200] as RGB,
-  CARD_BG: [247, 249, 252] as RGB,
-  CARD_BORDER: [218, 224, 232] as RGB,
-  PLACEHOLDER_BG: [232, 236, 242] as RGB,
-  PLACEHOLDER_TEXT: [175, 182, 193] as RGB,
+  NAVY: [10, 10, 10] as RGB,
+  GOLD: [120, 120, 120] as RGB,
+  DARK: [26, 26, 26] as RGB,
+  MUTED: [100, 100, 100] as RGB,
+  LIGHT_MUTED: [160, 160, 160] as RGB,
+  CARD_BG: [247, 247, 247] as RGB,
+  CARD_BORDER: [220, 220, 220] as RGB,
+  PLACEHOLDER_BG: [232, 232, 232] as RGB,
+  PLACEHOLDER_TEXT: [170, 170, 170] as RGB,
   WHITE: [255, 255, 255] as RGB,
 };
 

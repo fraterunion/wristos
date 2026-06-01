@@ -141,8 +141,8 @@ function ReviewCard({
 
       {/* Watch reference match */}
       {listing.watchReference && (
-        <div className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-violet-300">Catalog match</p>
+        <div className="rounded-lg border border-white/15 bg-white/5 px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-white/50">Catalog match</p>
           <p className="mt-1 text-sm text-white">
             {listing.watchReference.brand} {listing.watchReference.model}{' '}
             <span className="font-mono text-white/70">{listing.watchReference.reference}</span>

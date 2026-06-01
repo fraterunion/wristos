@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ChannelType, ClassificationStatus, ImportStatus } from '@prisma/client';
@@ -26,6 +27,8 @@ export interface MulterFile {
 
 @Injectable()
 export class RadarImportsService {
+  private readonly logger = new Logger(RadarImportsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly parser: RadarParserService,
@@ -198,6 +201,24 @@ export class RadarImportsService {
     });
 
     // Three separate createMany calls to get accurate per-category counts
+    // DEBUG: bucket sizes before DB insert
+    this.logger.log(
+      `[DBG-IMPORT] importId=${importId} ` +
+      `parsed=${messages.length} pending=${pendingMessages.length} ` +
+      `system=${systemMessages.length} media=${mediaMessages.length}`,
+    );
+
+    // DEBUG: sample first 3 pending hashes + timestamp ISO strings to detect collisions/invalid dates
+    for (const msg of pendingMessages.slice(0, 3)) {
+      const hash = computeContentHash(tenantId, msg.senderRaw, msg.timestamp, msg.content);
+      this.logger.log(
+        `[DBG-IMPORT] sample-pending sender="${msg.senderRaw}" ` +
+        `ts="${msg.timestamp.toISOString()}" ` +
+        `hash=${hash.slice(0, 16)} ` +
+        `content="${msg.content.slice(0, 60).replace(/\n/g, '↵')}"`,
+      );
+    }
+
     const [pendingResult, systemResult, mediaResult] = await Promise.all([
       this.prisma.channelMessage.createMany({
         data: pendingMessages.map(buildRow),
@@ -212,6 +233,19 @@ export class RadarImportsService {
         skipDuplicates: true,
       }),
     ]);
+
+    // DEBUG: DB insert results — count=0 with candidates>0 means all were duplicates
+    this.logger.log(
+      `[DBG-IMPORT] createMany results importId=${importId} ` +
+      `pendingInserted=${pendingResult.count}/${pendingMessages.length} ` +
+      `systemInserted=${systemResult.count}/${systemMessages.length} ` +
+      `mediaInserted=${mediaResult.count}/${mediaMessages.length} ` +
+      `duplicatesEstimate=${
+        (pendingMessages.length - pendingResult.count) +
+        (systemMessages.length - systemResult.count) +
+        (mediaMessages.length - mediaResult.count)
+      }`,
+    );
 
     const validMessagesStored = pendingResult.count;
     const duplicatesSkipped =

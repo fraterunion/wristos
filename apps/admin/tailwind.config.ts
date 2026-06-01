@@ -10,10 +10,10 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        surface: '#0f1115',
-        panel: '#171a20',
-        muted: '#8c95a3',
-        accent: '#d4af37',
+        surface: '#0A0A0A',
+        panel: '#171717',
+        muted: '#737373',
+        accent: '#FFFFFF',
       },
     },
   },

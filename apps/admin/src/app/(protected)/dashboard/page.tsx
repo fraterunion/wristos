@@ -326,38 +326,38 @@ export default function DashboardPage() {
                   <AreaChart data={revenueSeries}>
                     <defs>
                       <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#d4af37" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="#d4af37" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#FFFFFF" stopOpacity={0.20} />
+                        <stop offset="95%" stopColor="#FFFFFF" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                     <XAxis
                       dataKey="label"
-                      stroke="#8c95a3"
+                      stroke="#737373"
                       tickLine={false}
                       axisLine={false}
                       minTickGap={24}
                     />
                     <YAxis
-                      stroke="#8c95a3"
+                      stroke="#737373"
                       tickLine={false}
                       axisLine={false}
                       tickFormatter={(value) => `$${Number(value) / 1000}k`}
                     />
                     <Tooltip
                       contentStyle={{
-                        background: '#171a20',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 10,
-                        color: '#fff',
+                        background: '#171717',
+                        border: '1px solid rgba(255,255,255,0.10)',
+                        borderRadius: 8,
+                        color: '#FAFAFA',
                       }}
                       formatter={(value) => formatCurrency(Number(value))}
                     />
                     <Area
                       type="monotone"
                       dataKey="revenue"
-                      stroke="#d4af37"
-                      strokeWidth={2.5}
+                      stroke="#FFFFFF"
+                      strokeWidth={1.5}
                       fill="url(#revenueGradient)"
                     />
                   </AreaChart>
@@ -376,21 +376,21 @@ export default function DashboardPage() {
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={salesSeries}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                     <XAxis
                       dataKey="label"
-                      stroke="#8c95a3"
+                      stroke="#737373"
                       tickLine={false}
                       axisLine={false}
                       minTickGap={24}
                     />
-                    <YAxis stroke="#8c95a3" tickLine={false} axisLine={false} />
+                    <YAxis stroke="#737373" tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{
-                        background: '#171a20',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 10,
-                        color: '#fff',
+                        background: '#171717',
+                        border: '1px solid rgba(255,255,255,0.10)',
+                        borderRadius: 8,
+                        color: '#FAFAFA',
                       }}
                     />
                     <Bar dataKey="count" fill="#22c55e" radius={[8, 8, 0, 0]} barSize={22} />

@@ -3,9 +3,9 @@ import type { WatchStatus } from '@/types/domain';
 const STYLES: Record<WatchStatus, string> = {
   AVAILABLE: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200',
   RESERVED: 'border-amber-500/40 bg-amber-500/15 text-amber-100',
-  SOLD: 'border-slate-400/30 bg-slate-500/15 text-slate-200',
-  IN_TRANSIT: 'border-sky-500/40 bg-sky-500/15 text-sky-100',
-  IN_SERVICE: 'border-violet-500/40 bg-violet-500/15 text-violet-100',
+  SOLD: 'border-white/15 bg-white/5 text-white/50',
+  IN_TRANSIT: 'border-white/20 bg-white/8 text-white/70',
+  IN_SERVICE: 'border-white/20 bg-white/8 text-white/70',
 };
 
 export function StatusBadge({ status }: { status: WatchStatus }) {

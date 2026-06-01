@@ -101,10 +101,10 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 const STAGE_COLORS: Record<string, string> = {
-  LEAD: 'bg-zinc-500/20 text-zinc-300',
-  INTERESTED: 'bg-blue-500/20 text-blue-300',
+  LEAD: 'bg-white/8 text-white/50',
+  INTERESTED: 'bg-white/8 text-white/60',
   NEGOTIATING: 'bg-amber-500/20 text-amber-300',
-  PENDING_PAYMENT: 'bg-orange-500/20 text-orange-300',
+  PENDING_PAYMENT: 'bg-amber-500/20 text-amber-300',
   CLOSED_WON: 'bg-emerald-500/20 text-emerald-300',
   CLOSED_LOST: 'bg-rose-500/20 text-rose-300',
 };
@@ -112,9 +112,9 @@ const STAGE_COLORS: Record<string, string> = {
 const STATUS_COLORS: Record<WatchStatus, string> = {
   AVAILABLE: 'bg-emerald-500/20 text-emerald-300',
   RESERVED: 'bg-amber-500/20 text-amber-300',
-  SOLD: 'bg-zinc-500/20 text-zinc-400',
-  IN_TRANSIT: 'bg-blue-500/20 text-blue-300',
-  IN_SERVICE: 'bg-purple-500/20 text-purple-300',
+  SOLD: 'bg-white/8 text-white/50',
+  IN_TRANSIT: 'bg-white/8 text-white/60',
+  IN_SERVICE: 'bg-white/8 text-white/60',
 };
 
 type Tab = 'movements' | 'sold' | 'stock' | 'acquired';
