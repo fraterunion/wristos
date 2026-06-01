@@ -50,7 +50,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Expense state (edit mode only)
+  // Expense state — persisted via API in edit mode, held locally in create mode
   const [expenses, setExpenses] = useState<WatchExpense[]>([]);
   const [expenseCategory, setExpenseCategory] = useState<WatchExpenseCategory>('REPAIR');
   const [expenseAmount, setExpenseAmount] = useState('');
@@ -97,9 +97,20 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
     setSubmitError(null);
     try {
       if (mode === 'create') {
-        await apiPost<Watch>('/inventory', buildCreateWatchBody(values), {
+        const newWatch = await apiPost<Watch>('/inventory', buildCreateWatchBody(values), {
           authenticated: true,
         });
+        for (const expense of expenses) {
+          await apiPost<WatchExpense>(
+            `/inventory/${newWatch.id}/expenses`,
+            {
+              category: expense.category,
+              amount: Number(expense.amount),
+              notes: expense.notes ?? undefined,
+            },
+            { authenticated: true },
+          );
+        }
       } else if (watch) {
         await apiPatch<Watch>(`/inventory/${watch.id}`, buildUpdateWatchBody(values), {
           authenticated: true,
@@ -117,12 +128,31 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   });
 
   const handleAddExpense = async () => {
-    if (!watch || !expenseAmount.trim()) return;
+    if (!expenseAmount.trim()) return;
     const amount = Number(expenseAmount);
     if (!Number.isFinite(amount) || amount < 0) {
       setExpenseError('Enter a valid amount.');
       return;
     }
+
+    if (mode === 'create') {
+      setExpenses((prev) => [
+        ...prev,
+        {
+          id: `__local__${Date.now()}`,
+          watchId: '',
+          category: expenseCategory,
+          amount: String(amount),
+          notes: expenseNotes.trim() || null,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      setExpenseAmount('');
+      setExpenseNotes('');
+      return;
+    }
+
+    if (!watch) return;
     setExpenseAdding(true);
     setExpenseError(null);
     try {
@@ -142,6 +172,11 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   };
 
   const handleRemoveExpense = async (expenseId: string) => {
+    if (mode === 'create') {
+      setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+      return;
+    }
+
     if (!watch) return;
     setExpenseRemoving(expenseId);
     setExpenseError(null);
@@ -376,13 +411,19 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </div>
           ) : null}
 
-          {/* Additional Costs (edit mode only) */}
-          {mode === 'edit' && watch ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          {/* Additional Costs */}
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                  Additional Costs
-                </p>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                    Additional Costs
+                  </p>
+                  {mode === 'create' && expenses.length === 0 ? (
+                    <p className="mt-0.5 text-xs text-muted/60">
+                      Repair, shipping, authentication, etc. Saved with the watch.
+                    </p>
+                  ) : null}
+                </div>
                 {totalExpenses > 0 ? (
                   <span className="text-xs tabular-nums text-white/70">
                     Total{' '}
@@ -482,7 +523,6 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                 </button>
               </div>
             </div>
-          ) : null}
 
           <div className="flex justify-end gap-3 border-t border-white/10 pt-5">
             <button
