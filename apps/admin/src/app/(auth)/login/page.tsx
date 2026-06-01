@@ -10,8 +10,8 @@ export default function LoginPage() {
   const { login } = useAuthContext();
   const router = useRouter();
 
-  const [email, setEmail] = useState('owner@wristos.local');
-  const [password, setPassword] = useState('ChangeMe123!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
