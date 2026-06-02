@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { PaymentsService } from '../payments/payments.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
+import { RegisterSaleDto } from './dto/register-sale.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { UpdateDealStageDto } from './dto/update-deal-stage.dto';
 import { DealsService } from './deals.service';
@@ -32,6 +33,14 @@ export class DealsController {
   @Post()
   create(@CurrentUser() user: CurrentUserType, @Body() dto: CreateDealDto) {
     return this.dealsService.create(user.tenantId, dto);
+  }
+
+  @Post('register-sale')
+  registerSale(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: RegisterSaleDto,
+  ) {
+    return this.dealsService.registerSale(user.tenantId, dto);
   }
 
   @Get()

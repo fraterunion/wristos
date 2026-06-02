@@ -3,10 +3,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Deal, DealStage, Prisma, WatchStatus } from '@prisma/client';
+import {
+  Deal,
+  DealStage,
+  OperatingExpenseCategory,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  WatchStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
+import { RegisterSaleDto } from './dto/register-sale.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { UpdateDealStageDto } from './dto/update-deal-stage.dto';
 
@@ -173,6 +182,104 @@ export class DealsService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+  }
+
+  async registerSale(tenantId: string, dto: RegisterSaleDto) {
+    // --- Pre-transaction validation ---
+
+    const watch = await this.prisma.watch.findFirst({
+      where: { id: dto.watchId, tenantId, deletedAt: null },
+      select: { id: true, status: true },
+    });
+    if (!watch) {
+      throw new BadRequestException('Watch not found or does not belong to this tenant');
+    }
+    if (watch.status === WatchStatus.SOLD) {
+      throw new BadRequestException('Watch is already sold');
+    }
+
+    await this.ensureClientInTenant(dto.clientId, tenantId);
+    await this.ensureNoOtherWonDealForWatch(dto.watchId, tenantId);
+
+    const soldAt = dto.saleDate ? new Date(dto.saleDate) : new Date();
+
+    const BANK_RATES: Record<'JOSE' | 'MAYTE', number> = {
+      JOSE: 0.02,
+      MAYTE: 0.01,
+    };
+
+    // --- Atomic transaction ---
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Create Deal with stage CLOSED_WON
+      const deal = await tx.deal.create({
+        data: {
+          tenant: { connect: { id: tenantId } },
+          client: { connect: { id: dto.clientId } },
+          watch: { connect: { id: dto.watchId } },
+          stage: DealStage.CLOSED_WON,
+          agreedPrice: new Prisma.Decimal(dto.salePrice),
+          notes: dto.notes,
+          expectedCloseAt: soldAt,
+        },
+      });
+
+      // 2. Create Payment as already PAID
+      const payment = await tx.payment.create({
+        data: {
+          tenant: { connect: { id: tenantId } },
+          deal: { connect: { id: deal.id } },
+          amount: new Prisma.Decimal(dto.salePrice),
+          method: dto.paymentMethod as PaymentMethod,
+          status: PaymentStatus.PAID,
+          paidAt: soldAt,
+        },
+      });
+
+      // 3. Create bank fee expense (BANCOS only)
+      let bankFeeExpense: { amount: Prisma.Decimal } | null = null;
+      if (dto.paymentMethod === 'BANCOS' && dto.bankChannel) {
+        const rate = BANK_RATES[dto.bankChannel];
+        const feeAmount = new Prisma.Decimal(dto.salePrice).mul(
+          new Prisma.Decimal(rate),
+        );
+        const pct = (rate * 100).toFixed(0);
+        bankFeeExpense = await tx.operatingExpense.create({
+          data: {
+            tenant: { connect: { id: tenantId } },
+            category: OperatingExpenseCategory.BANK_FEES,
+            amount: feeAmount,
+            expenseDate: soldAt,
+            notes: `Comisión ${dto.bankChannel} ${pct}% — venta ${deal.id}`,
+          },
+        });
+      }
+
+      // 4. Mark watch as SOLD
+      await tx.watch.update({
+        where: { id: dto.watchId },
+        data: { status: WatchStatus.SOLD },
+      });
+
+      return { deal, payment, bankFeeExpense };
+    });
+
+    const { deal, payment, bankFeeExpense } = result;
+    const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
+    const netReceived = new Prisma.Decimal(dto.salePrice).minus(bankFeeDecimal);
+
+    return {
+      id: deal.id,
+      watchId: deal.watchId,
+      clientId: deal.clientId,
+      salePrice: deal.agreedPrice.toString(),
+      paymentMethod: payment.method,
+      bankChannel: dto.bankChannel ?? null,
+      bankFee: bankFeeExpense ? bankFeeDecimal.toString() : null,
+      netReceived: netReceived.toString(),
+      paidAt: payment.paidAt?.toISOString() ?? null,
+      notes: deal.notes,
+      createdAt: deal.createdAt.toISOString(),
+    };
   }
 
   private async ensureClientInTenant(clientId: string, tenantId: string) {
