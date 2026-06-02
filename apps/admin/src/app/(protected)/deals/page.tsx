@@ -34,22 +34,22 @@ const PAYMENT_STATUS_VALUES = ['PENDING', 'PAID', 'OVERDUE'] as const;
 const paymentStatuses: PaymentStatus[] = [...PAYMENT_STATUS_VALUES];
 
 const createDealSchema = z.object({
-  clientId: z.string().min(1, 'Client is required'),
-  watchId: z.string().min(1, 'Watch is required'),
+  clientId: z.string().min(1, 'El cliente es obligatorio'),
+  watchId: z.string().min(1, 'El reloj es obligatorio'),
   stage: z.enum(DEAL_STAGE_VALUES),
   expectedCloseAt: z.string().optional(),
-  agreedPrice: z.coerce.number().min(0, 'Agreed price must be at least 0'),
+  agreedPrice: z.coerce.number().min(0, 'El precio acordado debe ser mayor o igual a 0'),
   notes: z.string().optional(),
 });
 
 const editDealSchema = z.object({
   expectedCloseAt: z.string().optional(),
-  agreedPrice: z.coerce.number().min(0, 'Agreed price must be at least 0'),
+  agreedPrice: z.coerce.number().min(0, 'El precio acordado debe ser mayor o igual a 0'),
   notes: z.string().optional(),
 });
 
 const paymentSchema = z.object({
-  amount: z.coerce.number().min(0, 'Amount must be at least 0'),
+  amount: z.coerce.number().min(0, 'El monto debe ser mayor o igual a 0'),
   method: z.enum(PAYMENT_METHOD_VALUES),
   status: z.enum(PAYMENT_STATUS_VALUES),
   dueDate: z.string().optional(),
@@ -316,7 +316,7 @@ export default function DealsPage() {
     } catch (caughtError) {
       setFlash({
         type: 'error',
-        message: caughtError instanceof ApiError ? caughtError.message : 'Failed to create deal.',
+        message: caughtError instanceof ApiError ? caughtError.message : 'No se pudo crear la oportunidad.',
       });
     }
   });
@@ -869,7 +869,7 @@ export default function DealsPage() {
                 step="0.01"
                 min={0}
                 {...createDealForm.register('agreedPrice', { valueAsNumber: true })}
-                placeholder="Agreed price"
+                placeholder="Precio acordado"
                 className="ui-input sm:col-span-2"
               />
               <textarea

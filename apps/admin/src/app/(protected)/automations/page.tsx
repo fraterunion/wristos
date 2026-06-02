@@ -238,7 +238,7 @@ export default function AutomationsPage() {
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
                       <p className="text-sm font-semibold">{prettyRuleType(rule.type)}</p>
-                      <p className="mt-1 text-xs text-muted">Type: {rule.type}</p>
+                      <p className="mt-1 text-xs text-muted">Tipo: {prettyRuleType(rule.type)}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <label className="inline-flex items-center gap-2 text-sm text-muted">

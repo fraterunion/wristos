@@ -19,16 +19,16 @@ const INTERACTION_TYPE_LABELS: Record<typeof interactionTypes[number], string> =
 };
 
 const clientSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required'),
+  name: z.string().trim().min(1, 'El nombre es obligatorio'),
   email: z.string().trim().optional().refine((value) => !value || z.string().email().safeParse(value).success, {
-    message: 'Enter a valid email',
+    message: 'Ingresa un email válido',
   }),
   phone: z
     .string()
     .trim()
     .optional()
     .refine((value) => !value || /^[0-9+()\-\s]{7,20}$/.test(value), {
-      message: 'Enter a valid phone-like format',
+      message: 'Ingresa un teléfono válido',
     }),
   notes: z.string().optional(),
   tagsInput: z.string().optional(),
@@ -37,8 +37,8 @@ const clientSchema = z.object({
 
 const interactionSchema = z.object({
   type: z.enum(interactionTypes),
-  notes: z.string().trim().min(1, 'Notes are required'),
-  occurredAt: z.string().min(1, 'Date/time is required'),
+  notes: z.string().trim().min(1, 'Las notas son obligatorias'),
+  occurredAt: z.string().min(1, 'La fecha y hora son obligatorias'),
 });
 
 const preferenceSchema = z
@@ -53,13 +53,13 @@ const preferenceSchema = z
     const min = value.budgetMin?.trim();
     const max = value.budgetMax?.trim();
     if (min && Number.isNaN(Number(min))) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Min must be numeric', path: ['budgetMin'] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El mínimo debe ser numérico', path: ['budgetMin'] });
     }
     if (max && Number.isNaN(Number(max))) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Max must be numeric', path: ['budgetMax'] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El máximo debe ser numérico', path: ['budgetMax'] });
     }
     if (min && max && Number(min) > Number(max)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Min must be <= Max', path: ['budgetMax'] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El mínimo debe ser menor o igual al máximo', path: ['budgetMax'] });
     }
   });
 
@@ -187,7 +187,7 @@ export default function CrmPage() {
         notes: preferenceData?.notes ?? '',
       });
     } catch (error) {
-      setDetailError(error instanceof ApiError ? error.message : 'Unable to load client details.');
+      setDetailError(error instanceof ApiError ? error.message : 'No se pudieron cargar los detalles del cliente.');
     } finally {
       setDetailLoading(false);
     }
@@ -488,7 +488,7 @@ export default function CrmPage() {
                 <div>
                   <h2 className="text-lg font-semibold">{selectedClient.name}</h2>
                   <p className="mt-1 text-sm text-muted">{selectedClient.email ?? 'Sin correo'} · {selectedClient.phone ?? 'Sin teléfono'}</p>
-                  <p className="mt-1 text-xs text-muted">Budget: {selectedClient.budgetRange ?? 'Sin especificar'}</p>
+                  <p className="mt-1 text-xs text-muted">Presupuesto: {selectedClient.budgetRange ?? 'Sin especificar'}</p>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={openEditModal} className="ui-btn-secondary px-3 py-2 text-xs">
@@ -596,7 +596,7 @@ export default function CrmPage() {
                   </button>
                 </form>
                 {preference ? (
-                  <p className="text-xs text-muted">Last updated {formatDateTime(preference.updatedAt)}</p>
+                  <p className="text-xs text-muted">Última actualización: {formatDateTime(preference.updatedAt)}</p>
                 ) : (
                   <p className="text-xs text-muted">Aún no hay preferencia guardada.</p>
                 )}
