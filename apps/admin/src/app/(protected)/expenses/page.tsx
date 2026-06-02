@@ -31,6 +31,7 @@ const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
   TRAVEL: 'Viaje',
   MARKETING: 'Marketing',
   COMMISSIONS: 'Comisiones',
+  BANK_FEES: 'Comisiones de bancos',
 };
 
 type Filters = {

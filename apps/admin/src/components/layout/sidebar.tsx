@@ -7,7 +7,7 @@ const navItems = [
   { href: '/dashboard', label: 'Panel' },
   { href: '/inventory', label: 'Inventario' },
   { href: '/crm', label: 'CRM' },
-  { href: '/deals', label: 'Oportunidades' },
+  { href: '/ventas', label: 'Ventas' },
   { href: '/matching', label: 'Coincidencias' },
   { href: '/automations', label: 'Automatizaciones' },
   { href: '/history', label: 'Historial' },

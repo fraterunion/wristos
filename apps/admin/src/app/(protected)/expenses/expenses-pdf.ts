@@ -37,7 +37,8 @@ const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
   FLIGHTS:     'Flights',
   TRAVEL:      'Travel / Per Diem',
   MARKETING:   'Instagram Ads / Marketing',
-  COMMISSIONS: 'Commissions',
+  COMMISSIONS: 'Comisiones',
+  BANK_FEES:   'Comisiones de bancos',
 };
 
 const MONTHS = [
