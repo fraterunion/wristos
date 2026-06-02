@@ -19,6 +19,7 @@ const ALL_CATEGORIES: OperatingExpenseCategory[] = [
   'TRAVEL',
   'MARKETING',
   'COMMISSIONS',
+  'BANK_FEES',
 ];
 
 const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
@@ -629,7 +630,7 @@ export default function ExpensesPage() {
                   }
                 >
                   <option value="">Selecciona una categoría…</option>
-                  {ALL_CATEGORIES.filter((c) => c !== 'COMMISSIONS').map((c) => (
+                  {ALL_CATEGORIES.filter((c) => c !== 'COMMISSIONS' && c !== 'BANK_FEES').map((c) => (
                     <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
                   ))}
                   <optgroup label="────────────────">

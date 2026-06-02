@@ -92,6 +92,8 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   CRYPTO: 'Cripto',
   CHECK: 'Cheque',
   OTHER: 'Otro',
+  BANCOS: 'Bancos',
+  CESAR: 'César',
 };
 
 function readableStage(stage: DealStage) {
