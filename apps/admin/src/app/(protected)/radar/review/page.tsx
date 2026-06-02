@@ -85,8 +85,8 @@ function ReviewCard({
     listing.year;
 
   const boxPapers = [
-    listing.hasBox === true ? 'Box ✓' : listing.hasBox === false ? 'No box' : null,
-    listing.hasPapers === true ? 'Papers ✓' : listing.hasPapers === false ? 'No papers' : null,
+    listing.hasBox === true ? 'Estuche ✓' : listing.hasBox === false ? 'Sin estuche' : null,
+    listing.hasPapers === true ? 'Documentos ✓' : listing.hasPapers === false ? 'Sin documentos' : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -99,7 +99,7 @@ function ReviewCard({
           <IntentBadge intent={listing.intent} />
           {listing.urgencyDetected && (
             <span className="inline-flex items-center rounded-full border border-rose-500/40 bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-200">
-              Urgent
+              Urgente
             </span>
           )}
         </div>
@@ -114,42 +114,42 @@ function ReviewCard({
       {/* AI extraction fields */}
       {hasExtraction && (
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-          {listing.brand && <Field label="Brand" value={listing.brand} />}
+          {listing.brand && <Field label="Marca" value={listing.brand} />}
           {listing.rawModelMention && (
-            <Field label="Model mention" value={listing.rawModelMention} />
+            <Field label="Modelo" value={listing.rawModelMention} />
           )}
           {listing.referenceNumberExplicit && (
             <Field
-              label="Reference"
+              label="Referencia"
               value={listing.referenceNumberExplicit}
               badge={<SourceBadge source={listing.referenceSource} />}
             />
           )}
           {listing.priceAmount && (
             <Field
-              label="Price"
+              label="Precio"
               value={formatPrice(listing.priceAmount, listing.priceCurrency)}
             />
           )}
           {listing.conditionNotes && (
-            <Field label="Condition" value={listing.conditionNotes} />
+            <Field label="Condición" value={listing.conditionNotes} />
           )}
-          {boxPapers && <Field label="Box / Papers" value={boxPapers} />}
-          {listing.year && <Field label="Year" value={String(listing.year)} />}
+          {boxPapers && <Field label="Estuche / Documentos" value={boxPapers} />}
+          {listing.year && <Field label="Año" value={String(listing.year)} />}
         </div>
       )}
 
       {/* Watch reference match */}
       {listing.watchReference && (
         <div className="rounded-lg border border-white/15 bg-white/5 px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-white/50">Catalog match</p>
+          <p className="text-xs uppercase tracking-wide text-white/50">Coincidencia en catálogo</p>
           <p className="mt-1 text-sm text-white">
             {listing.watchReference.brand} {listing.watchReference.model}{' '}
             <span className="font-mono text-white/70">{listing.watchReference.reference}</span>
           </p>
           {listing.watchReference.approximateRetailUsd && (
             <p className="mt-0.5 text-xs text-muted">
-              Approx. retail{' '}
+              Precio aprox.{' '}
               {formatPrice(listing.watchReference.approximateRetailUsd, 'USD')}
             </p>
           )}
@@ -159,7 +159,7 @@ function ReviewCard({
       {/* AI summary */}
       {listing.aiSummary && (
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted">AI Summary</p>
+          <p className="text-xs uppercase tracking-wide text-muted">Resumen IA</p>
           <p className="mt-2 rounded-lg border border-white/10 bg-surface/40 px-3 py-2 text-sm text-white/80 leading-relaxed">
             {listing.aiSummary}
           </p>
@@ -169,7 +169,7 @@ function ReviewCard({
       {/* Original message */}
       <div>
         <p className="text-xs uppercase tracking-wide text-muted">
-          Original message ·{' '}
+          Mensaje original ·{' '}
           <span className="normal-case text-white/60">
             {listing.contact?.displayName ?? listing.message.senderRaw}
           </span>{' '}
@@ -186,7 +186,7 @@ function ReviewCard({
       {/* Dealer notes (if any) */}
       {listing.dealerNotes && (
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted">Dealer notes</p>
+          <p className="text-xs uppercase tracking-wide text-muted">Notas del operador</p>
           <p className="mt-1 text-sm text-white/70">{listing.dealerNotes}</p>
         </div>
       )}
@@ -197,7 +197,7 @@ function ReviewCard({
           href={`/radar/listings/${listing.id}`}
           className="ui-btn-ghost px-3 py-1.5 text-xs"
         >
-          View full detail
+          Ver detalle completo
         </Link>
         <div className="flex gap-2">
           <button
@@ -206,7 +206,7 @@ function ReviewCard({
             disabled={dismissLoading}
             className="ui-btn-danger px-3 py-1.5 text-xs disabled:opacity-50"
           >
-            Dismiss
+            Descartar
           </button>
           <button
             type="button"
@@ -214,7 +214,7 @@ function ReviewCard({
             disabled={confirmLoading}
             className="ui-btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
           >
-            {confirmLoading ? 'Confirming…' : 'Confirm'}
+            {confirmLoading ? 'Confirmando…' : 'Confirmar'}
           </button>
         </div>
       </div>
@@ -244,7 +244,7 @@ export default function RadarReviewPage() {
       setListings(data.listings);
       setTotal(data.total);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load review queue.');
+      setError(err instanceof ApiError ? err.message : 'No se pudo cargar la cola de revisión.');
     } finally {
       setLoading(false);
     }
@@ -264,10 +264,10 @@ export default function RadarReviewPage() {
     setConfirmLoading(id);
     try {
       await confirmRadarListing(id);
-      setFlash({ type: 'success', message: 'Listing confirmed.' });
+      setFlash({ type: 'success', message: 'Listado confirmado.' });
       void loadQueue();
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Confirm failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al confirmar.' });
     } finally {
       setConfirmLoading(null);
     }
@@ -278,11 +278,11 @@ export default function RadarReviewPage() {
     setDismissLoading(true);
     try {
       await dismissRadarListing(dismissTarget, reason || undefined);
-      setFlash({ type: 'success', message: 'Listing dismissed.' });
+      setFlash({ type: 'success', message: 'Listado descartado.' });
       setDismissTarget(null);
       void loadQueue();
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Dismiss failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al descartar.' });
     } finally {
       setDismissLoading(false);
     }
@@ -305,17 +305,17 @@ export default function RadarReviewPage() {
 
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">Review Queue</h1>
+          <h1 className="ui-title">Cola de revisión</h1>
           <p className="ui-subtitle">
             {loading
-              ? 'Loading…'
+              ? 'Cargando…'
               : total > 0
-              ? `${total} listing${total === 1 ? '' : 's'} pending review — sorted by confidence.`
-              : 'AI-detected listings awaiting human confirmation.'}
+              ? `${total} listado${total === 1 ? '' : 's'} pendiente${total === 1 ? '' : 's'} de revisión — ordenados por confianza.`
+              : 'Listados detectados por IA pendientes de confirmación.'}
           </p>
         </div>
         <Link href="/radar" className="ui-btn-secondary px-3 py-2">
-          Back to Radar
+          Volver al radar
         </Link>
       </header>
 
@@ -338,13 +338,13 @@ export default function RadarReviewPage() {
         </section>
       ) : listings.length === 0 ? (
         <article className="rounded-2xl border border-dashed border-white/15 bg-panel/60 px-6 py-16 text-center">
-          <p className="text-base font-medium text-white/80">No listings pending review.</p>
+          <p className="text-base font-medium text-white/80">No hay listados pendientes de revisión.</p>
           <p className="mt-2 text-sm text-muted">
-            Upload a WhatsApp export and classify it to populate the queue.
+            Sube una exportación de WhatsApp y clasifícala para llenar la cola.
           </p>
           <div className="mt-6">
             <Link href="/radar" className="ui-btn-primary px-5 py-2.5">
-              Go to Radar
+              Ir al radar
             </Link>
           </div>
         </article>
@@ -362,7 +362,7 @@ export default function RadarReviewPage() {
           ))}
           {total > listings.length && (
             <p className="pt-2 text-center text-xs text-muted">
-              Showing {listings.length} of {total} — confirm or dismiss to work through the queue.
+              Mostrando {listings.length} de {total} — confirma o descarta para avanzar en la cola.
             </p>
           )}
         </section>

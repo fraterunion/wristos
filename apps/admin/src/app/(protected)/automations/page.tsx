@@ -27,9 +27,9 @@ type AutomationRunResult = {
 
 function prettyRuleType(type: AutomationRuleType) {
   const labels: Record<AutomationRuleType, string> = {
-    STALE_DEAL: 'Stale Deals',
-    OVERDUE_PAYMENT: 'Overdue Payments',
-    AGING_INVENTORY: 'Aging Inventory',
+    STALE_DEAL: 'Alerta de oportunidades sin actividad',
+    OVERDUE_PAYMENT: 'Alerta de pagos vencidos',
+    AGING_INVENTORY: 'Alerta de inventario añejo',
   };
   return labels[type];
 }
@@ -93,7 +93,7 @@ export default function AutomationsPage() {
       setRules(data);
       hydrateDrafts(data);
     } catch (caughtError) {
-      setError(caughtError instanceof ApiError ? caughtError.message : 'Could not load automation rules.');
+      setError(caughtError instanceof ApiError ? caughtError.message : 'No se pudieron cargar las reglas de automatización.');
     } finally {
       setLoading(false);
     }
@@ -126,7 +126,7 @@ export default function AutomationsPage() {
     if (!Number.isFinite(threshold) || threshold < 1 || !Number.isInteger(threshold)) {
       setFlash({
         type: 'error',
-        message: `${prettyRuleType(rule.type)} threshold must be an integer >= 1.`,
+        message: `${prettyRuleType(rule.type)} el umbral debe ser un número entero mayor o igual a 1.`,
       });
       return;
     }
@@ -141,12 +141,12 @@ export default function AutomationsPage() {
         },
         { authenticated: true },
       );
-      setFlash({ type: 'success', message: `${prettyRuleType(rule.type)} rule updated.` });
+      setFlash({ type: 'success', message: `${prettyRuleType(rule.type)} regla actualizada.` });
       await loadRules();
     } catch (caughtError) {
       setFlash({
         type: 'error',
-        message: caughtError instanceof ApiError ? caughtError.message : 'Could not update rule.',
+        message: caughtError instanceof ApiError ? caughtError.message : 'No se pudo actualizar la regla.',
       });
     } finally {
       setSavingRuleId(null);
@@ -158,11 +158,11 @@ export default function AutomationsPage() {
     try {
       const result = await apiPost<AutomationRunResult>('/automations/run', {}, { authenticated: true });
       setRunResult(result);
-      setFlash({ type: 'success', message: 'Automations run completed.' });
+      setFlash({ type: 'success', message: 'Ciclo de automatización completado.' });
     } catch (caughtError) {
       setFlash({
         type: 'error',
-        message: caughtError instanceof ApiError ? caughtError.message : 'Automation run failed.',
+        message: caughtError instanceof ApiError ? caughtError.message : 'El ciclo de automatización falló.',
       });
     } finally {
       setRunning(false);
@@ -173,9 +173,9 @@ export default function AutomationsPage() {
     <div className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">Automations</h1>
+          <h1 className="ui-title">Automatizaciones</h1>
           <p className="ui-subtitle">
-            Configure operational alerts and execute a manual intelligence sweep.
+            Configura alertas operativas y ejecuta un barrido manual de inteligencia.
           </p>
         </div>
         <button
@@ -184,7 +184,7 @@ export default function AutomationsPage() {
           disabled={running}
           className="ui-btn-primary px-4 py-2"
         >
-          {running ? 'Running…' : 'Run Automations'}
+          {running ? 'Ejecutando…' : 'Ejecutar automatizaciones'}
         </button>
       </header>
 
@@ -201,9 +201,9 @@ export default function AutomationsPage() {
       ) : null}
 
       <section className="ui-card">
-        <h2 className="text-lg font-semibold">Rule Configuration</h2>
+        <h2 className="text-lg font-semibold">Configuración de reglas</h2>
         <p className="mt-1 text-sm text-muted">
-          Tune thresholds and toggles for stale deals, overdue payments, and aging inventory.
+          Ajusta umbrales y opciones para oportunidades sin actividad, pagos vencidos e inventario añejo.
         </p>
 
         {loading ? (
@@ -221,9 +221,9 @@ export default function AutomationsPage() {
           </div>
         ) : rules.length === 0 ? (
           <div className="mt-4 rounded-xl border border-dashed border-white/15 p-10 text-center">
-            <p className="text-lg font-medium">No automation rules found</p>
+            <p className="text-lg font-medium">No se encontraron reglas de automatización</p>
             <p className="mt-2 text-sm text-muted">
-              Seeded demo data normally includes all V1 rules. Verify your seed run if this is empty.
+              Los datos de demostración incluyen todas las reglas V1. Verifica tu seed si esto está vacío.
             </p>
           </div>
         ) : (
@@ -250,10 +250,10 @@ export default function AutomationsPage() {
                           }
                           className="h-4 w-4 rounded border-white/30 bg-surface"
                         />
-                        Enabled
+                        Habilitada
                       </label>
                       <label className="inline-flex items-center gap-2 text-sm text-muted">
-                        Threshold days
+                        Días umbral
                         <input
                           type="number"
                           min={1}
@@ -271,7 +271,7 @@ export default function AutomationsPage() {
                         disabled={savingRuleId === rule.id}
                         className="ui-btn-secondary px-3 py-2"
                       >
-                        {savingRuleId === rule.id ? 'Saving…' : 'Save'}
+                        {savingRuleId === rule.id ? 'Guardando…' : 'Guardar'}
                       </button>
                     </div>
                   </div>
@@ -285,9 +285,9 @@ export default function AutomationsPage() {
       <section className="ui-card">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">Latest Run Results</h2>
+            <h2 className="text-lg font-semibold">Resultados del último ciclo</h2>
             <p className="mt-1 text-sm text-muted">
-              Execute a manual run to surface immediate operational alerts.
+              Ejecuta un ciclo manual para ver alertas operativas actuales.
             </p>
           </div>
           {runResult ? (
@@ -301,26 +301,25 @@ export default function AutomationsPage() {
 
         {!runResult ? (
           <div className="mt-4 rounded-xl border border-dashed border-white/15 p-10 text-center">
-            <p className="text-lg font-medium">No run results yet</p>
+            <p className="text-lg font-medium">Aún no hay resultados</p>
             <p className="mt-2 text-sm text-muted">
-              Click <span className="font-medium text-white">Run Automations</span> to generate
-              the latest operational signals.
+              Haz clic en <span className="font-medium text-white">Ejecutar automatizaciones</span> para generar las últimas señales operativas.
             </p>
           </div>
         ) : (
           <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <article className="ui-card-soft">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Stale Deals</h3>
-              <p className="mt-1 text-xs text-muted">Open deals with no recent updates.</p>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Oportunidades sin actividad</h3>
+              <p className="mt-1 text-xs text-muted">Oportunidades abiertas sin actualizaciones recientes.</p>
               <div className="mt-3 space-y-2">
                 {runResult.staleDeals.length === 0 ? (
-                  <p className="text-sm text-muted">No stale deals detected.</p>
+                  <p className="text-sm text-muted">No se detectaron oportunidades sin actividad.</p>
                 ) : (
                   runResult.staleDeals.map((item) => (
                     <div key={item.id} className="rounded-lg border border-white/10 p-3">
                       <p className="text-sm font-medium">{item.stage.replaceAll('_', ' ')}</p>
                       <p className="mt-1 text-xs text-muted">
-                        {item.daysSinceUpdate} days since update · {formatDate(item.updatedAt)}
+                        {item.daysSinceUpdate} días sin actualización · {formatDate(item.updatedAt)}
                       </p>
                     </div>
                   ))
@@ -330,18 +329,18 @@ export default function AutomationsPage() {
 
             <article className="ui-card-soft">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-                Overdue Payments
+                Pagos vencidos
               </h3>
-              <p className="mt-1 text-xs text-muted">Pending payments past due date.</p>
+              <p className="mt-1 text-xs text-muted">Pagos pendientes con fecha vencida.</p>
               <div className="mt-3 space-y-2">
                 {runResult.overduePayments.length === 0 ? (
-                  <p className="text-sm text-muted">No overdue payments detected.</p>
+                  <p className="text-sm text-muted">No se detectaron pagos vencidos.</p>
                 ) : (
                   runResult.overduePayments.map((item) => (
                     <div key={item.id} className="rounded-lg border border-white/10 p-3">
                       <p className="text-sm font-medium">{money(item.amount)}</p>
                       <p className="mt-1 text-xs text-muted">
-                        Deal {item.dealId.slice(0, 8)} · Due {formatDate(item.dueDate)}
+                        Oportunidad {item.dealId.slice(0, 8)} · Vence {formatDate(item.dueDate)}
                       </p>
                     </div>
                   ))
@@ -351,12 +350,12 @@ export default function AutomationsPage() {
 
             <article className="ui-card-soft">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-                Aging Inventory
+                Inventario añejo
               </h3>
-              <p className="mt-1 text-xs text-muted">Unsold watches beyond threshold.</p>
+              <p className="mt-1 text-xs text-muted">Relojes sin vender más allá del umbral.</p>
               <div className="mt-3 space-y-2">
                 {runResult.agingInventory.length === 0 ? (
-                  <p className="text-sm text-muted">No aging inventory detected.</p>
+                  <p className="text-sm text-muted">No se detectó inventario añejo.</p>
                 ) : (
                   runResult.agingInventory.map((item) => (
                     <div key={item.id} className="rounded-lg border border-white/10 p-3">
@@ -364,7 +363,7 @@ export default function AutomationsPage() {
                         {item.brand} {item.model}
                       </p>
                       <p className="mt-1 text-xs text-muted">
-                        {item.ageDays} days old · {item.status.replaceAll('_', ' ')}
+                        {item.ageDays} días en inventario · {item.status.replaceAll('_', ' ')}
                       </p>
                     </div>
                   ))

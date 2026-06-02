@@ -20,13 +20,13 @@ import {
 } from './watch-form-schema';
 
 const EXPENSE_CATEGORIES: { value: WatchExpenseCategory; label: string }[] = [
-  { value: 'POLISHING', label: 'Polishing' },
-  { value: 'REPAIR', label: 'Repair' },
-  { value: 'LINKS', label: 'Links' },
-  { value: 'SHIPPING', label: 'Shipping' },
-  { value: 'PARTS', label: 'Parts' },
-  { value: 'COMMISSIONS', label: 'Commissions' },
-  { value: 'TRAVEL', label: 'Travel' },
+  { value: 'POLISHING', label: 'Pulido' },
+  { value: 'REPAIR', label: 'Reparación' },
+  { value: 'LINKS', label: 'Eslabones' },
+  { value: 'SHIPPING', label: 'Envío' },
+  { value: 'PARTS', label: 'Partes' },
+  { value: 'COMMISSIONS', label: 'Comisiones' },
+  { value: 'TRAVEL', label: 'Viaje' },
 ];
 
 type Props = {
@@ -194,7 +194,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
 
   if (!open) return null;
 
-  const title = mode === 'create' ? 'Add watch to inventory' : 'Edit watch';
+  const title = mode === 'create' ? 'Agregar reloj al inventario' : 'Editar reloj';
 
   const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
@@ -212,8 +212,8 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
             <p className="mt-0.5 text-sm text-muted">
               {mode === 'create'
-                ? 'Capture core listing details. You can refine later.'
-                : 'Update listing details for this timepiece.'}
+                ? 'Captura los detalles del listado. Puedes refinar después.'
+                : 'Actualiza los detalles del listado para esta pieza.'}
             </p>
           </div>
           <button
@@ -237,7 +237,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Brand
+                Marca
               </span>
               <input {...register('brand')} className="ui-input" autoComplete="off" />
               {formState.errors.brand ? (
@@ -246,7 +246,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Model
+                Modelo
               </span>
               <input {...register('model')} className="ui-input" autoComplete="off" />
               {formState.errors.model ? (
@@ -259,22 +259,22 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Serial number
+                Número de serie
               </span>
               <input
                 {...register('serialNumber')}
                 className="ui-input"
-                placeholder="Optional"
+                placeholder="Opcional"
               />
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Condition
+                Condición
               </span>
               <input
                 {...register('condition')}
                 className="ui-input"
-                placeholder="e.g. Excellent, Full set"
+                placeholder="ej. Excelente, set completo"
               />
               {formState.errors.condition ? (
                 <p className="ui-error">{formState.errors.condition.message}</p>
@@ -285,21 +285,21 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           {/* Watch Image */}
           <div className="block text-sm">
             <span className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">
-              Watch Image
+              Imagen del reloj
             </span>
             <ImageUploader
               value={imageUrl}
               onChange={(url) => setValue('imageUrl', url, { shouldDirty: true })}
             />
             <p className="mt-1.5 text-xs text-muted/70">
-              Used in the generated PDF catalog. JPG, PNG, or WEBP up to 5 MB.
+              Se usa en el catálogo PDF generado. JPG, PNG o WEBP hasta 5 MB.
             </p>
           </div>
 
           {/* Cost */}
           <label className="block text-sm">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-              Base Cost (USD)
+              Costo base (USD)
             </span>
             <input
               type="number"
@@ -317,7 +317,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Min Price (USD)
+                Precio mínimo (USD)
               </span>
               <input
                 type="number"
@@ -332,7 +332,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Max Price (USD)
+                Precio máximo (USD)
               </span>
               <input
                 type="number"
@@ -351,7 +351,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Status
+                Estado
               </span>
               <select {...register('status')} className="ui-input">
                 {WATCH_STATUS_VALUES.map((s) => (
@@ -363,12 +363,12 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Ownership
+                Propiedad
               </span>
               <select {...register('ownershipType')} className="ui-input">
                 {WATCH_OWNERSHIP_VALUES.map((o) => (
                   <option key={o} value={o}>
-                    {o === 'OWNED' ? 'Owned' : 'Consignment'}
+                    {o === 'OWNED' ? 'Propio' : 'Consignación'}
                   </option>
                 ))}
               </select>
@@ -378,15 +378,15 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           {ownershipType === 'CONSIGNMENT' ? (
             <div className="rounded-xl border border-accent/25 bg-accent/5 p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-accent">
-                Consignment details
+                Detalles de consignación
               </p>
               <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <label className="block text-sm">
-                  <span className="mb-1.5 block text-xs text-muted">Owner name</span>
+                  <span className="mb-1.5 block text-xs text-muted">Nombre del propietario</span>
                   <input
                     {...register('consignmentOwnerName')}
                     className="ui-input"
-                    placeholder="Consignor name"
+                    placeholder="Nombre del consignatario"
                   />
                   {formState.errors.consignmentOwnerName ? (
                     <p className="ui-error">
@@ -395,7 +395,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                   ) : null}
                 </label>
                 <label className="block text-sm">
-                  <span className="mb-1.5 block text-xs text-muted">Split %</span>
+                  <span className="mb-1.5 block text-xs text-muted">% de reparto</span>
                   <input
                     {...register('consignmentSplitPercentage')}
                     className="ui-input"
@@ -416,11 +416,11 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                    Additional Costs
+                    Costos adicionales
                   </p>
                   {mode === 'create' && expenses.length === 0 ? (
                     <p className="mt-0.5 text-xs text-muted/60">
-                      Repair, shipping, authentication, etc. Saved with the watch.
+                      Reparación, envío, autenticación, etc. Se guardan con el reloj.
                     </p>
                   ) : null}
                 </div>
@@ -469,7 +469,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                             onClick={() => void handleRemoveExpense(expense.id)}
                             className="text-xs text-rose-300 hover:text-rose-200 disabled:opacity-40"
                           >
-                            {expenseRemoving === expense.id ? '…' : 'Remove'}
+                            {expenseRemoving === expense.id ? '…' : 'Quitar'}
                           </button>
                         </div>
                       </li>
@@ -477,7 +477,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                   })}
                 </ul>
               ) : (
-                <p className="mt-3 text-xs text-muted/70">No additional costs recorded.</p>
+                <p className="mt-3 text-xs text-muted/70">Sin costos adicionales registrados.</p>
               )}
 
               {expenseError ? (
@@ -501,14 +501,14 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                   type="number"
                   step="0.01"
                   min={0}
-                  placeholder="Amount"
+                  placeholder="Monto"
                   value={expenseAmount}
                   onChange={(e) => setExpenseAmount(e.target.value)}
                   className="ui-input text-sm"
                 />
                 <input
                   type="text"
-                  placeholder="Notes (optional)"
+                  placeholder="Notas (opcional)"
                   value={expenseNotes}
                   onChange={(e) => setExpenseNotes(e.target.value)}
                   className="ui-input text-sm"
@@ -519,7 +519,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                   onClick={() => void handleAddExpense()}
                   className="ui-btn-secondary px-3 py-2 text-sm disabled:opacity-50"
                 >
-                  {expenseAdding ? '…' : 'Add'}
+                  {expenseAdding ? '…' : 'Agregar'}
                 </button>
               </div>
             </div>
@@ -531,14 +531,14 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
               disabled={submitting}
               className="ui-btn-ghost px-4 py-2"
             >
-              Cancel
+              Cancelar
             </button>
             <button
               type="submit"
               disabled={submitting}
               className="ui-btn-primary px-5 py-2"
             >
-              {submitting ? 'Saving…' : mode === 'create' ? 'Create watch' : 'Save changes'}
+              {submitting ? 'Guardando…' : mode === 'create' ? 'Crear reloj' : 'Guardar cambios'}
             </button>
           </div>
         </form>

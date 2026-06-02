@@ -65,7 +65,7 @@ export default function RadarContactPage({
       const data = await getRadarContact(id);
       setContact(data);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load contact.');
+      setError(err instanceof ApiError ? err.message : 'No se pudo cargar el contacto.');
     } finally {
       setLoading(false);
     }
@@ -81,11 +81,11 @@ export default function RadarContactPage({
     <section className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">{loading ? 'Contact' : displayName}</h1>
-          <p className="ui-subtitle">Radar contact profile</p>
+          <h1 className="ui-title">{loading ? 'Contacto' : displayName}</h1>
+          <p className="ui-subtitle">Perfil de contacto en radar</p>
         </div>
         <Link href="/radar" className="ui-btn-secondary px-3 py-2">
-          Back to Radar
+          Volver al radar
         </Link>
       </header>
 
@@ -103,7 +103,7 @@ export default function RadarContactPage({
             onClick={() => void loadContact()}
             className="mt-3 text-sm underline text-rose-200"
           >
-            Retry
+            Reintentar
           </button>
         </section>
       ) : contact ? (
@@ -112,10 +112,10 @@ export default function RadarContactPage({
           <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {(
               [
-                { label: 'Messages', value: String(contact.messageCount) },
-                { label: 'Listings', value: String(contact.listingCount) },
-                { label: 'First seen', value: formatDate(contact.firstSeenAt) },
-                { label: 'Last seen', value: formatDate(contact.lastSeenAt) },
+                { label: 'Mensajes', value: String(contact.messageCount) },
+                { label: 'Listados', value: String(contact.listingCount) },
+                { label: 'Primera vez visto', value: formatDate(contact.firstSeenAt) },
+                { label: 'Última vez visto', value: formatDate(contact.lastSeenAt) },
               ] as const
             ).map(({ label, value }) => (
               <article key={label} className="rounded-xl border border-white/10 bg-panel p-5">
@@ -127,29 +127,29 @@ export default function RadarContactPage({
 
           {/* Identity */}
           <article className="ui-card space-y-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Identity</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Identidad</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {contact.displayName && (
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted">Display name</p>
+                  <p className="text-xs uppercase tracking-wide text-muted">Nombre para mostrar</p>
                   <p className="mt-1 text-sm text-white">{contact.displayName}</p>
                 </div>
               )}
               {contact.phone && (
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted">Phone</p>
+                  <p className="text-xs uppercase tracking-wide text-muted">Teléfono</p>
                   <p className="mt-1 font-mono text-sm text-white">{contact.phone}</p>
                 </div>
               )}
               {contact.clientId && (
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted">Client ID</p>
+                  <p className="text-xs uppercase tracking-wide text-muted">ID de cliente</p>
                   <p className="mt-1 font-mono text-sm text-white">{contact.clientId}</p>
                 </div>
               )}
               {Object.keys(contact.rawIdentifiers).length > 0 && (
                 <div className="sm:col-span-2">
-                  <p className="text-xs uppercase tracking-wide text-muted">Raw identifiers</p>
+                  <p className="text-xs uppercase tracking-wide text-muted">Identificadores raw</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {Object.entries(contact.rawIdentifiers).map(([key, val]) => (
                       <span
@@ -168,10 +168,10 @@ export default function RadarContactPage({
           {/* Recent listings */}
           <article className="ui-card space-y-4">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Recent Listings
+              Listados recientes
             </h2>
             {contact.recentListings.length === 0 ? (
-              <p className="text-sm text-muted">No listings from this contact.</p>
+              <p className="text-sm text-muted">No hay listados de este contacto.</p>
             ) : (
               <div className="space-y-2">
                 {contact.recentListings.map((l) => (
@@ -184,10 +184,10 @@ export default function RadarContactPage({
           {/* Recent buy requests */}
           <article className="ui-card space-y-4">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Recent Requests
+              Solicitudes recientes
             </h2>
             {contact.recentRequests.length === 0 ? (
-              <p className="text-sm text-muted">No buy requests from this contact.</p>
+              <p className="text-sm text-muted">No hay solicitudes de compra de este contacto.</p>
             ) : (
               <div className="space-y-2">
                 {contact.recentRequests.map((l) => (

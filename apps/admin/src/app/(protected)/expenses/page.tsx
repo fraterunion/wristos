@@ -22,15 +22,15 @@ const ALL_CATEGORIES: OperatingExpenseCategory[] = [
 ];
 
 const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
-  GASOLINE: 'Gasoline',
-  TOLLS: 'Tolls',
-  WATCHMAKER: 'Watchmaker',
-  PARKING: 'Parking',
-  MEALS: 'Meals',
-  FLIGHTS: 'Flights',
-  TRAVEL: 'Travel / Per Diem',
-  MARKETING: 'Instagram Ads / Marketing',
-  COMMISSIONS: 'Commissions',
+  GASOLINE: 'Gasolina',
+  TOLLS: 'Casetas',
+  WATCHMAKER: 'Relojero',
+  PARKING: 'Estacionamiento',
+  MEALS: 'Comidas',
+  FLIGHTS: 'Vuelos',
+  TRAVEL: 'Viaje',
+  MARKETING: 'Marketing',
+  COMMISSIONS: 'Comisiones',
 };
 
 type Filters = {
@@ -129,7 +129,7 @@ function CategoryBar({ row, maxTotal }: { row: ExpenseCategorySummary; maxTotal:
         </span>
         {row.isCommission && (
           <span className="ml-1.5 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-            commission
+            comisión
           </span>
         )}
       </div>
@@ -190,7 +190,7 @@ export default function ExpensesPage() {
       setSummary(sum);
       setExpenses(list);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load expenses.');
+      setError(e instanceof Error ? e.message : 'No se pudieron cargar los gastos.');
     } finally {
       setIsLoading(false);
     }
@@ -231,12 +231,12 @@ export default function ExpensesPage() {
   }
 
   async function submitForm() {
-    if (!form.category) { setFormError('Category is required.'); return; }
+    if (!form.category) { setFormError('La categoría es obligatoria.'); return; }
     if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) < 0) {
-      setFormError('Enter a valid amount.');
+      setFormError('Ingresa un monto válido.');
       return;
     }
-    if (!form.expenseDate) { setFormError('Date is required.'); return; }
+    if (!form.expenseDate) { setFormError('La fecha es obligatoria.'); return; }
 
     setFormLoading(true);
     setFormError(null);
@@ -257,7 +257,7 @@ export default function ExpensesPage() {
       setModalOpen(false);
       void fetchData(appliedFilters);
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : 'Failed to save expense.');
+      setFormError(e instanceof Error ? e.message : 'Error al guardar el gasto.');
     } finally {
       setFormLoading(false);
     }
@@ -265,7 +265,7 @@ export default function ExpensesPage() {
 
   async function handleExport() {
     if (!summary || expenses.length === 0) {
-      setExportFlash({ type: 'error', message: 'No expenses match the current filters.' });
+      setExportFlash({ type: 'error', message: 'No hay gastos que coincidan con los filtros actuales.' });
       return;
     }
     setExportLoading(true);
@@ -273,7 +273,7 @@ export default function ExpensesPage() {
       const { generateExpensesPdf } = await import('./expenses-pdf');
       await generateExpensesPdf(expenses, summary, appliedFilters);
     } catch {
-      setExportFlash({ type: 'error', message: 'Could not generate PDF. Please try again.' });
+      setExportFlash({ type: 'error', message: 'No se pudo generar el PDF. Intenta de nuevo.' });
     } finally {
       setExportLoading(false);
     }
@@ -318,13 +318,13 @@ export default function ExpensesPage() {
       {/* Header */}
       <header className="ui-page-header">
         <div>
-          <h2 className="ui-title">Expenses</h2>
+          <h2 className="ui-title">Gastos</h2>
           <p className="ui-subtitle">
-            Track operating costs, commissions, and business spend.
+            Registra costos operativos, comisiones y gastos del negocio.
           </p>
         </div>
         <button type="button" className="ui-btn-primary px-4 py-2" onClick={openAdd}>
-          + Add Expense
+          + Agregar gasto
         </button>
       </header>
 
@@ -332,34 +332,34 @@ export default function ExpensesPage() {
       <section className="rounded-xl border border-white/10 bg-panel p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted">Year</label>
+            <label className="text-xs text-muted">Año</label>
             <select
               className="ui-select w-28"
               value={filters.year}
               onChange={(e) => setFilters((f) => ({ ...f, year: e.target.value, startDate: '', endDate: '' }))}
             >
-              <option value="">All years</option>
+              <option value="">Todos los años</option>
               {years.map((y) => (
                 <option key={y} value={String(y)}>{y}</option>
               ))}
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted">Month</label>
+            <label className="text-xs text-muted">Mes</label>
             <select
               className="ui-select w-36"
               value={filters.month}
               onChange={(e) => setFilters((f) => ({ ...f, month: e.target.value }))}
               disabled={!filters.year}
             >
-              <option value="">All months</option>
+              <option value="">Todos los meses</option>
               {months.map((m) => (
                 <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted">Day</label>
+            <label className="text-xs text-muted">Día</label>
             <input
               type="number"
               min={1}
@@ -372,7 +372,7 @@ export default function ExpensesPage() {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted">From</label>
+            <label className="text-xs text-muted">Desde</label>
             <input
               type="date"
               className="ui-input w-36"
@@ -381,7 +381,7 @@ export default function ExpensesPage() {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted">To</label>
+            <label className="text-xs text-muted">Hasta</label>
             <input
               type="date"
               className="ui-input w-36"
@@ -390,23 +390,23 @@ export default function ExpensesPage() {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted">Category</label>
+            <label className="text-xs text-muted">Categoría</label>
             <select
               className="ui-select w-48"
               value={filters.category}
               onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
             >
-              <option value="">All categories</option>
+              <option value="">Todas las categorías</option>
               {ALL_CATEGORIES.map((c) => (
                 <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
               ))}
             </select>
           </div>
           <button type="button" className="ui-btn-primary px-4 py-2" onClick={applyFilters}>
-            Apply
+            Aplicar
           </button>
           <button type="button" className="ui-btn-secondary px-4 py-2" onClick={resetFilters}>
-            Reset
+            Restablecer
           </button>
           <button
             type="button"
@@ -414,7 +414,7 @@ export default function ExpensesPage() {
             disabled={exportLoading || isLoading || !!error}
             onClick={() => void handleExport()}
           >
-            {exportLoading ? 'Exporting…' : 'Export PDF'}
+            {exportLoading ? 'Exportando…' : 'Exportar PDF'}
           </button>
         </div>
       </section>
@@ -445,7 +445,7 @@ export default function ExpensesPage() {
         </div>
       ) : error ? (
         <section className="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
-          <h3 className="font-semibold text-red-100">Failed to load expenses</h3>
+          <h3 className="font-semibold text-red-100">No se pudieron cargar los gastos</h3>
           <p className="mt-1 text-sm text-red-200/80">{error}</p>
           <button
             type="button"
@@ -461,23 +461,23 @@ export default function ExpensesPage() {
           {summary && (
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
               <SummaryCard
-                label="Total Operating"
+                label="Total operativo"
                 value={formatCurrency(summary.totalOperatingExpenses)}
                 tone="default"
               />
               <SummaryCard
-                label="Commissions"
+                label="Comisiones"
                 value={formatCurrency(summary.totalCommissions)}
                 tone="gold"
-                sub="Tracked separately"
+                sub="Rastreadas por separado"
               />
               <SummaryCard
-                label="Total Spend"
+                label="Gasto total"
                 value={formatCurrency(summary.totalSpend)}
                 tone="red"
               />
               <SummaryCard
-                label="Biggest Category"
+                label="Categoría principal"
                 value={
                   summary.biggestCategory
                     ? (CATEGORY_LABELS[summary.biggestCategory as OperatingExpenseCategory] ??
@@ -487,7 +487,7 @@ export default function ExpensesPage() {
                 tone="muted"
               />
               <SummaryCard
-                label="Total Records"
+                label="Total de registros"
                 value={String(summary.expenseCount)}
                 tone="muted"
               />
@@ -498,9 +498,9 @@ export default function ExpensesPage() {
           {summary && summary.byCategory.length > 0 && (
             <section className="ui-card">
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-base font-semibold">Spend by Category</h3>
+                <h3 className="text-base font-semibold">Gasto por categoría</h3>
                 <span className="text-xs text-muted">
-                  Commissions tracked separately below
+                  Comisiones rastreadas por separado abajo
                 </span>
               </div>
 
@@ -519,7 +519,7 @@ export default function ExpensesPage() {
                   <div className="my-4 flex items-center gap-3">
                     <div className="flex-1 border-t border-amber-400/20" />
                     <span className="text-xs font-semibold uppercase tracking-wide text-amber-300">
-                      Commissions
+                      Comisiones
                     </span>
                     <div className="flex-1 border-t border-amber-400/20" />
                   </div>
@@ -537,21 +537,21 @@ export default function ExpensesPage() {
 
           {/* Records table */}
           <section className="ui-card">
-            <h3 className="mb-4 text-base font-semibold">Expense Records</h3>
+            <h3 className="mb-4 text-base font-semibold">Registros de gastos</h3>
             {expenses.length === 0 ? (
               <p className="text-sm text-muted">
-                No expenses found. Add one with the button above.
+                No hay gastos registrados. Agrega uno con el botón de arriba.
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10 text-xs uppercase tracking-wide text-muted">
-                      <th className="pb-2 text-left font-medium">Date</th>
-                      <th className="pb-2 text-left font-medium">Category</th>
-                      <th className="pb-2 text-right font-medium">Amount</th>
-                      <th className="pb-2 text-left font-medium pl-4">Notes</th>
-                      <th className="pb-2 text-right font-medium">Actions</th>
+                      <th className="pb-2 text-left font-medium">Fecha</th>
+                      <th className="pb-2 text-left font-medium">Categoría</th>
+                      <th className="pb-2 text-right font-medium">Monto</th>
+                      <th className="pb-2 text-left font-medium pl-4">Notas</th>
+                      <th className="pb-2 text-right font-medium">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -570,7 +570,7 @@ export default function ExpensesPage() {
                           </span>
                           {exp.category === 'COMMISSIONS' && (
                             <span className="ml-2 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                              commission
+                              comisión
                             </span>
                           )}
                         </td>
@@ -587,7 +587,7 @@ export default function ExpensesPage() {
                               className="rounded-md px-2 py-1 text-xs text-muted hover:bg-white/10 hover:text-white"
                               onClick={() => openEdit(exp)}
                             >
-                              Edit
+                              Editar
                             </button>
                             <button
                               type="button"
@@ -595,7 +595,7 @@ export default function ExpensesPage() {
                               disabled={deletingId === exp.id}
                               onClick={() => void deleteExpense(exp.id)}
                             >
-                              {deletingId === exp.id ? '…' : 'Delete'}
+                              {deletingId === exp.id ? '…' : 'Eliminar'}
                             </button>
                           </div>
                         </td>
@@ -614,12 +614,12 @@ export default function ExpensesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-panel p-6 shadow-2xl">
             <h3 className="text-lg font-semibold">
-              {modalMode === 'add' ? 'Add Expense' : 'Edit Expense'}
+              {modalMode === 'add' ? 'Agregar gasto' : 'Editar gasto'}
             </h3>
 
             <div className="mt-5 space-y-4">
               <div>
-                <label className="block text-xs text-muted mb-1.5">Category</label>
+                <label className="block text-xs text-muted mb-1.5">Categoría</label>
                 <select
                   className="ui-select w-full"
                   value={form.category}
@@ -627,7 +627,7 @@ export default function ExpensesPage() {
                     setForm((f) => ({ ...f, category: e.target.value as OperatingExpenseCategory }))
                   }
                 >
-                  <option value="">Select category…</option>
+                  <option value="">Selecciona una categoría…</option>
                   {ALL_CATEGORIES.filter((c) => c !== 'COMMISSIONS').map((c) => (
                     <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
                   ))}
@@ -638,7 +638,7 @@ export default function ExpensesPage() {
               </div>
 
               <div>
-                <label className="block text-xs text-muted mb-1.5">Amount (USD)</label>
+                <label className="block text-xs text-muted mb-1.5">Monto (USD)</label>
                 <input
                   type="number"
                   min={0}
@@ -651,7 +651,7 @@ export default function ExpensesPage() {
               </div>
 
               <div>
-                <label className="block text-xs text-muted mb-1.5">Date</label>
+                <label className="block text-xs text-muted mb-1.5">Fecha</label>
                 <input
                   type="date"
                   className="ui-input w-full"
@@ -661,10 +661,10 @@ export default function ExpensesPage() {
               </div>
 
               <div>
-                <label className="block text-xs text-muted mb-1.5">Notes (optional)</label>
+                <label className="block text-xs text-muted mb-1.5">Notas (opcional)</label>
                 <textarea
                   rows={2}
-                  placeholder="Description or notes…"
+                  placeholder="Descripción o notas…"
                   className="ui-input w-full resize-none"
                   value={form.notes}
                   onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -685,7 +685,7 @@ export default function ExpensesPage() {
                 onClick={() => setModalOpen(false)}
                 disabled={formLoading}
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 type="button"
@@ -693,7 +693,7 @@ export default function ExpensesPage() {
                 onClick={() => void submitForm()}
                 disabled={formLoading}
               >
-                {formLoading ? 'Saving…' : modalMode === 'add' ? 'Add Expense' : 'Save Changes'}
+                {formLoading ? 'Guardando…' : modalMode === 'add' ? 'Agregar gasto' : 'Guardar cambios'}
               </button>
             </div>
           </div>

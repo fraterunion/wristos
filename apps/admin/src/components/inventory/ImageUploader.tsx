@@ -52,11 +52,11 @@ export function ImageUploader({ value, onChange }: Props) {
     setError(null);
 
     if (!(ALLOWED_TYPES as readonly string[]).includes(file.type)) {
-      setError('Only JPG, PNG, and WEBP images are accepted.');
+      setError('Solo se aceptan imágenes JPG, PNG y WEBP.');
       return;
     }
     if (file.size > MAX_BYTES) {
-      setError('Image must be smaller than 5 MB.');
+      setError('La imagen debe ser menor a 5 MB.');
       return;
     }
 
@@ -73,7 +73,7 @@ export function ImageUploader({ value, onChange }: Props) {
           ? err.message
           : err instanceof Error
             ? err.message
-            : 'Upload failed. Please try again.';
+            : 'Error al subir. Intenta de nuevo.';
       setError(msg);
     } finally {
       setUploading(false);
@@ -123,7 +123,7 @@ export function ImageUploader({ value, onChange }: Props) {
               disabled={uploading}
               className="ui-btn-secondary px-3 py-1.5 text-xs disabled:opacity-50"
             >
-              {uploading ? 'Uploading…' : 'Replace'}
+              {uploading ? 'Subiendo…' : 'Reemplazar'}
             </button>
             <button
               type="button"
@@ -131,7 +131,7 @@ export function ImageUploader({ value, onChange }: Props) {
               disabled={uploading}
               className="text-xs text-rose-300 hover:text-rose-200 disabled:opacity-50"
             >
-              Remove
+              Quitar
             </button>
           </div>
         </div>
@@ -156,7 +156,7 @@ export function ImageUploader({ value, onChange }: Props) {
           {uploading ? (
             <>
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-              <p className="text-sm text-muted">Uploading…</p>
+              <p className="text-sm text-muted">Subiendo…</p>
             </>
           ) : (
             <>
@@ -176,10 +176,10 @@ export function ImageUploader({ value, onChange }: Props) {
               </svg>
               <div>
                 <p className="text-sm font-medium text-white">
-                  Drop image or{' '}
-                  <span className="text-accent underline underline-offset-2">click to select</span>
+                  Arrastra una imagen o{' '}
+                  <span className="text-accent underline underline-offset-2">selecciona un archivo</span>
                 </p>
-                <p className="mt-0.5 text-xs text-muted">JPG, PNG, WEBP · Max 5 MB</p>
+                <p className="mt-0.5 text-xs text-muted">JPG, PNG, WEBP · Máx 5 MB</p>
               </div>
             </>
           )}

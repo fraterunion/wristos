@@ -4,14 +4,14 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const navItems = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/inventory', label: 'Inventory' },
+  { href: '/dashboard', label: 'Panel' },
+  { href: '/inventory', label: 'Inventario' },
   { href: '/crm', label: 'CRM' },
-  { href: '/deals', label: 'Deals' },
-  { href: '/matching', label: 'Matching' },
-  { href: '/automations', label: 'Automations' },
-  { href: '/history', label: 'History' },
-  { href: '/expenses', label: 'Expenses' },
+  { href: '/deals', label: 'Oportunidades' },
+  { href: '/matching', label: 'Coincidencias' },
+  { href: '/automations', label: 'Automatizaciones' },
+  { href: '/history', label: 'Historial' },
+  { href: '/expenses', label: 'Gastos' },
   { href: '/radar', label: 'Radar' },
 ];
 

@@ -81,7 +81,7 @@ export default function InventoryPage() {
       setWatches(data);
     } catch (caught) {
       setError(
-        caught instanceof ApiError ? caught.message : 'Unable to load inventory right now.',
+        caught instanceof ApiError ? caught.message : 'No se pudo cargar el inventario.',
       );
     } finally {
       setLoading(false);
@@ -126,8 +126,8 @@ export default function InventoryPage() {
       type: 'success',
       message:
         payload.mode === 'create'
-          ? 'Watch added to inventory.'
-          : 'Watch updated successfully.',
+          ? 'Reloj agregado al inventario.'
+          : 'Reloj actualizado correctamente.',
     });
   };
 
@@ -138,12 +138,12 @@ export default function InventoryPage() {
       await apiDelete(`/inventory/${deleteTarget.id}`, { authenticated: true });
       setDeleteTarget(null);
       void loadWatches();
-      setFlash({ type: 'success', message: 'Watch removed from inventory.' });
+      setFlash({ type: 'success', message: 'Reloj eliminado del inventario.' });
     } catch (caught) {
       setFlash({
         type: 'error',
         message:
-          caught instanceof ApiError ? caught.message : 'Could not delete this watch.',
+          caught instanceof ApiError ? caught.message : 'No se pudo eliminar este reloj.',
       });
     } finally {
       setDeleteLoading(false);
@@ -153,7 +153,7 @@ export default function InventoryPage() {
   const handleGenerateCatalog = async () => {
     const available = watches.filter((w) => w.status === 'AVAILABLE');
     if (available.length === 0) {
-      setFlash({ type: 'error', message: 'No available watches to include in catalog.' });
+      setFlash({ type: 'error', message: 'No hay relojes disponibles para el catálogo.' });
       return;
     }
     setCatalogLoading(true);
@@ -161,7 +161,7 @@ export default function InventoryPage() {
       const { generateCatalogPdf } = await import('@/components/inventory/catalog-pdf');
       await generateCatalogPdf(available);
     } catch {
-      setFlash({ type: 'error', message: 'Could not generate catalog. Please try again.' });
+      setFlash({ type: 'error', message: 'No se pudo generar el catálogo. Intenta de nuevo.' });
     } finally {
       setCatalogLoading(false);
     }
@@ -173,9 +173,9 @@ export default function InventoryPage() {
     <div className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">Inventory</h1>
+          <h1 className="ui-title">Inventario</h1>
           <p className="ui-subtitle max-w-2xl">
-            Manage your watch stock, ownership, and listing health in one place.
+            Administra tu stock de relojes, propiedad y estado de los listados en un solo lugar.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -185,14 +185,14 @@ export default function InventoryPage() {
             disabled={catalogLoading}
             className="ui-btn-secondary px-5 py-2.5 disabled:opacity-60"
           >
-            {catalogLoading ? 'Generating…' : 'Generate Catalog'}
+            {catalogLoading ? 'Generando…' : 'Generar catálogo'}
           </button>
           <button
             type="button"
             onClick={openCreate}
             className="ui-btn-primary px-5 py-2.5"
           >
-            Add watch
+            Agregar reloj
           </button>
         </div>
       </header>
@@ -214,9 +214,9 @@ export default function InventoryPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Filters
+              Filtros
             </h2>
-            <p className="mt-1 text-xs text-muted/90">Refine the list by status, brand, or model.</p>
+            <p className="mt-1 text-xs text-muted/90">Refina la lista por estado, marca o modelo.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -224,14 +224,14 @@ export default function InventoryPage() {
               onClick={resetFilters}
               className="ui-btn-ghost px-3 py-2"
             >
-              Reset
+              Restablecer
             </button>
             <button
               type="button"
               onClick={applyFilters}
               className="ui-btn-secondary px-4 py-2"
             >
-              Apply filters
+              Aplicar filtros
             </button>
           </div>
         </div>
@@ -239,7 +239,7 @@ export default function InventoryPage() {
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
           <label className="block text-sm">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-              Status
+              Estado
             </span>
             <select
               value={draftFilters.status}
@@ -251,7 +251,7 @@ export default function InventoryPage() {
               }
               className="ui-input"
             >
-              <option value="">All statuses</option>
+              <option value="">Todos los estados</option>
               {WATCH_STATUS_VALUES.map((s) => (
                 <option key={s} value={s}>
                   {s.replaceAll('_', ' ')}
@@ -261,23 +261,23 @@ export default function InventoryPage() {
           </label>
           <label className="block text-sm">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-              Brand contains
+              Marca contiene
             </span>
             <input
               value={draftFilters.brand}
               onChange={(e) => setDraftFilters((f) => ({ ...f, brand: e.target.value }))}
-              placeholder="e.g. Rolex"
+              placeholder="ej. Rolex"
               className="ui-input"
             />
           </label>
           <label className="block text-sm">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-              Model contains
+              Modelo contiene
             </span>
             <input
               value={draftFilters.model}
               onChange={(e) => setDraftFilters((f) => ({ ...f, model: e.target.value }))}
-              placeholder="e.g. Submariner"
+              placeholder="ej. Submariner"
               className="ui-input"
             />
           </label>
@@ -286,14 +286,14 @@ export default function InventoryPage() {
 
       {error ? (
         <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-6">
-          <h3 className="text-sm font-semibold text-rose-100">Could not load inventory</h3>
+          <h3 className="text-sm font-semibold text-rose-100">No se pudo cargar el inventario</h3>
           <p className="mt-2 text-sm text-rose-100/90">{error}</p>
           <button
             type="button"
             onClick={() => void loadWatches()}
             className="ui-btn-danger mt-4 px-4 py-2 text-rose-50"
           >
-            Try again
+            Intentar de nuevo
           </button>
         </div>
       ) : null}
@@ -309,17 +309,16 @@ export default function InventoryPage() {
 
       {empty ? (
         <div className="rounded-2xl border border-dashed border-white/15 bg-panel/50 px-4 py-12 text-center sm:px-8 sm:py-16">
-          <p className="text-lg font-medium text-white">No watches in inventory yet</p>
+          <p className="text-lg font-medium text-white">Aún no hay relojes en el inventario</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted">
-            Start by adding your first piece. You can track cost, price, status, and consignment in
-            one record.
+            Comienza agregando tu primera pieza. Registra costo, precio, estado y consignación en un solo registro.
           </p>
           <button
             type="button"
             onClick={openCreate}
             className="ui-btn-primary mt-6 px-5 py-2.5"
           >
-            Add your first watch
+            Agregar tu primer reloj
           </button>
         </div>
       ) : null}
@@ -330,15 +329,15 @@ export default function InventoryPage() {
             <table className="min-w-[860px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium w-16">Photo</th>
-                  <th className="px-4 py-3 font-medium">Brand / Model</th>
-                  <th className="px-4 py-3 font-medium">Serial</th>
-                  <th className="px-4 py-3 font-medium">Condition</th>
-                  <th className="px-4 py-3 font-medium text-right">Price Range</th>
-                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Actions</th>
+                  <th className="px-4 py-3 font-medium w-16">Foto</th>
+                  <th className="px-4 py-3 font-medium">Marca / Modelo</th>
+                  <th className="px-4 py-3 font-medium">Serie</th>
+                  <th className="px-4 py-3 font-medium">Condición</th>
+                  <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
+                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                  <th className="px-4 py-3 font-medium">Estado</th>
+                  <th className="px-4 py-3 font-medium">Propiedad</th>
+                  <th className="px-4 py-3 font-medium text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -390,7 +389,7 @@ export default function InventoryPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs font-medium uppercase tracking-wide text-muted">
-                        {watch.ownershipType === 'CONSIGNMENT' ? 'Consignment' : 'Owned'}
+                        {watch.ownershipType === 'CONSIGNMENT' ? 'Consignación' : 'Propio'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -399,14 +398,14 @@ export default function InventoryPage() {
                         onClick={() => openEdit(watch)}
                         className="mr-2 text-xs font-medium text-accent hover:underline"
                       >
-                        Edit
+                        Editar
                       </button>
                       <button
                         type="button"
                         onClick={() => setDeleteTarget(watch)}
                         className="text-xs font-medium text-rose-300 hover:text-rose-200 hover:underline"
                       >
-                        Delete
+                        Eliminar
                       </button>
                     </td>
                   </tr>
@@ -427,10 +426,10 @@ export default function InventoryPage() {
 
       <DeleteConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Remove watch from inventory?"
+        title="¿Quitar reloj del inventario?"
         description={
           deleteTarget
-            ? `This will archive "${deleteTarget.brand} ${deleteTarget.model}" from your active inventory.`
+            ? `Esto archivará "${deleteTarget.brand} ${deleteTarget.model}" y lo quitará de los listados activos.`
             : ''
         }
         loading={deleteLoading}

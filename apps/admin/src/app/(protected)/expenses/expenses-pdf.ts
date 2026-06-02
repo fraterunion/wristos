@@ -102,7 +102,7 @@ function buildFilterLabel(filters: ExportFilters): string {
     parts.push(`Category: ${label}`);
   }
 
-  return parts.length > 0 ? parts.join(' · ') : 'All Expenses';
+  return parts.length > 0 ? parts.join(' · ') : 'Todos los gastos';
 }
 
 // ─── page chrome ──────────────────────────────────────────────────────────────

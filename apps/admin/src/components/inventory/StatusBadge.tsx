@@ -8,13 +8,20 @@ const STYLES: Record<WatchStatus, string> = {
   IN_SERVICE: 'border-white/20 bg-white/8 text-white/70',
 };
 
+const LABELS: Record<WatchStatus, string> = {
+  AVAILABLE: 'Disponible',
+  RESERVED: 'Reservado',
+  SOLD: 'Vendido',
+  IN_TRANSIT: 'En tránsito',
+  IN_SERVICE: 'En servicio',
+};
+
 export function StatusBadge({ status }: { status: WatchStatus }) {
-  const label = status.replaceAll('_', ' ');
   return (
     <span
       className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide ${STYLES[status]}`}
     >
-      {label}
+      {LABELS[status]}
     </span>
   );
 }

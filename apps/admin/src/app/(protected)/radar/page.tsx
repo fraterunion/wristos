@@ -103,7 +103,7 @@ function ListingCard({
           <ReviewStatusBadge status={listing.reviewStatus} />
           {listing.urgencyDetected && (
             <span className="inline-flex items-center rounded-full border border-rose-500/40 bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-200">
-              Urgent
+              Urgente
             </span>
           )}
         </div>
@@ -140,7 +140,7 @@ function ListingCard({
           )}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
-          <span>{listing.contact?.displayName ?? 'Unknown contact'}</span>
+          <span>{listing.contact?.displayName ?? 'Contacto desconocido'}</span>
           {listing.message.import.sourceGroupName && (
             <span>{listing.message.import.sourceGroupName}</span>
           )}
@@ -159,7 +159,7 @@ function ListingCard({
           href={`/radar/listings/${listing.id}`}
           className="ui-btn-ghost px-3 py-1.5 text-xs"
         >
-          View
+          Ver
         </Link>
         {listing.reviewStatus !== 'DISMISSED' && (
           <button
@@ -167,7 +167,7 @@ function ListingCard({
             onClick={onDismiss}
             className="ui-btn-danger px-3 py-1.5 text-xs"
           >
-            Dismiss
+            Descartar
           </button>
         )}
         {listing.reviewStatus !== 'CONFIRMED' && (
@@ -177,7 +177,7 @@ function ListingCard({
             disabled={confirmLoading}
             className="ui-btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
           >
-            {confirmLoading ? 'Confirming…' : 'Confirm'}
+            {confirmLoading ? 'Confirmando…' : 'Confirmar'}
           </button>
         )}
       </div>
@@ -235,7 +235,7 @@ export default function RadarPage() {
       setListings(data.listings);
       setListingsTotal(data.total);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load listings.');
+      setError(err instanceof ApiError ? err.message : 'No se pudieron cargar los listados.');
     } finally {
       setLoading(false);
     }
@@ -300,10 +300,10 @@ export default function RadarPage() {
       if (fileInputRef.current) fileInputRef.current.value = '';
       setFlash({
         type: 'success',
-        message: `Uploaded ${summary.validMessagesStored} messages from "${summary.sourceGroupName ?? 'group'}". Ready to classify.`,
+        message: `Se cargaron ${summary.validMessagesStored} mensajes de "${summary.sourceGroupName ?? 'grupo'}". Listos para clasificar.`,
       });
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Upload failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al subir el archivo.' });
     } finally {
       setUploading(false);
     }
@@ -318,14 +318,14 @@ export default function RadarPage() {
       setLastImport(result);
       setFlash({
         type: 'success',
-        message: `Classification complete — ${result.listingsCreated} listings created.`,
+        message: `Clasificación completa — ${result.listingsCreated} listados creados.`,
       });
       void loadListings();
       void loadPendingCount();
     } catch (err) {
       setFlash({
         type: 'error',
-        message: err instanceof ApiError ? err.message : 'Classification failed.',
+        message: err instanceof ApiError ? err.message : 'La clasificación falló.',
       });
     } finally {
       setClassifying(false);
@@ -338,11 +338,11 @@ export default function RadarPage() {
     setConfirmLoading(id);
     try {
       await confirmRadarListing(id);
-      setFlash({ type: 'success', message: 'Listing confirmed.' });
+      setFlash({ type: 'success', message: 'Listado confirmado.' });
       void loadListings();
       void loadPendingCount();
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Confirm failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al confirmar.' });
     } finally {
       setConfirmLoading(null);
     }
@@ -353,12 +353,12 @@ export default function RadarPage() {
     setDismissLoading(true);
     try {
       await dismissRadarListing(dismissTarget, reason || undefined);
-      setFlash({ type: 'success', message: 'Listing dismissed.' });
+      setFlash({ type: 'success', message: 'Listado descartado.' });
       setDismissTarget(null);
       void loadListings();
       void loadPendingCount();
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Dismiss failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al descartar.' });
     } finally {
       setDismissLoading(false);
     }
@@ -384,21 +384,21 @@ export default function RadarPage() {
       {/* Header */}
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">AI Market Radar</h1>
-          <p className="ui-subtitle">Market memory from WhatsApp conversations.</p>
+          <h1 className="ui-title">Radar de mercado IA</h1>
+          <p className="ui-subtitle">Memoria de mercado a partir de conversaciones de WhatsApp.</p>
         </div>
         <Link
           href="/radar/review"
           className="ui-btn-secondary px-3 py-2"
         >
-          Review Queue{pendingCount !== null && pendingCount > 0 ? ` (${pendingCount})` : ''}
+          Cola de revisión{pendingCount !== null && pendingCount > 0 ? ` (${pendingCount})` : ''}
         </Link>
       </header>
 
       {/* Upload card */}
       <article className="ui-card">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-          Upload WhatsApp Export
+          Subir exportación de WhatsApp
         </h2>
 
         <div
@@ -409,9 +409,9 @@ export default function RadarPage() {
             isDragging ? 'border-accent bg-accent/5' : 'border-white/15'
           }`}
         >
-          <p className="text-sm text-muted">Drop a .txt file here, or</p>
+          <p className="text-sm text-muted">Arrastra un archivo .txt aquí, o</p>
           <label className="mt-3 cursor-pointer">
-            <span className="ui-btn-secondary px-4 py-2 text-sm">Choose file</span>
+            <span className="ui-btn-secondary px-4 py-2 text-sm">Seleccionar archivo</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -441,7 +441,7 @@ export default function RadarPage() {
         )}
 
         {uploading && (
-          <p className="mt-4 text-center text-sm text-muted">Uploading…</p>
+          <p className="mt-4 text-center text-sm text-muted">Subiendo…</p>
         )}
 
         {/* Import summary */}
@@ -456,7 +456,7 @@ export default function RadarPage() {
                   </span>
                 </p>
                 <p className="mt-1 text-xs text-muted">
-                  {lastImport.totalMessagesParsed} parsed · {lastImport.validMessagesStored} stored
+                  {lastImport.totalMessagesParsed} procesados · {lastImport.validMessagesStored} almacenados
                   {lastImport.mediaMessagesSkipped > 0 &&
                     ` · ${lastImport.mediaMessagesSkipped} media skipped`}
                   {lastImport.systemMessagesSkipped > 0 &&
@@ -464,14 +464,14 @@ export default function RadarPage() {
                 </p>
                 {lastImport.listingsCreated > 0 && (
                   <p className="mt-1 text-xs text-emerald-300">
-                    {lastImport.listingsCreated} listings created
+                    {lastImport.listingsCreated} listados creados
                     {lastImport.skippedPrefilter > 0 &&
                       ` · ${lastImport.skippedPrefilter} pre-filtered`}
                   </p>
                 )}
                 {lastImport.classificationFailed > 0 && (
                   <p className="mt-1 text-xs text-rose-300">
-                    {lastImport.classificationFailed} failed — retry classification
+                    {lastImport.classificationFailed} fallidos — reintenta la clasificación
                   </p>
                 )}
               </div>
@@ -482,10 +482,10 @@ export default function RadarPage() {
                 className="ui-btn-primary px-4 py-2 text-sm disabled:opacity-50"
               >
                 {classifying
-                  ? 'Classifying…'
+                  ? 'Clasificando…'
                   : lastImport.listingsCreated > 0
-                  ? 'Re-classify'
-                  : 'Classify with AI'}
+                  ? 'Reclasificar'
+                  : 'Clasificar con IA'}
               </button>
             </div>
           </div>
@@ -494,16 +494,16 @@ export default function RadarPage() {
 
       {/* Stats */}
       <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCard label="Listings" value={loading ? '…' : String(listingsTotal)} />
+        <StatCard label="Listados" value={loading ? '…' : String(listingsTotal)} />
         <StatCard
-          label="Pending Review"
+          label="Pendiente de revisión"
           value={pendingCount !== null ? String(pendingCount) : '—'}
         />
         <StatCard
-          label="Last Import"
+          label="Última importación"
           value={lastImport?.status ?? '—'}
         />
-        <StatCard label="Confirmed" value="—" />
+        <StatCard label="Confirmados" value="—" />
       </section>
 
       {/* Filters */}
@@ -515,7 +515,7 @@ export default function RadarPage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') setQ(draftQ.trim());
             }}
-            placeholder="Search listings…"
+            placeholder="Buscar listados…"
             className="ui-input flex-1"
           />
           <button
@@ -523,7 +523,7 @@ export default function RadarPage() {
             onClick={() => setQ(draftQ.trim())}
             className="ui-btn-secondary shrink-0 px-3 py-2 text-xs"
           >
-            Search
+            Buscar
           </button>
           {q && (
             <button
@@ -531,7 +531,7 @@ export default function RadarPage() {
               onClick={() => { setQ(''); setDraftQ(''); }}
               className="ui-btn-ghost shrink-0 px-3 py-2 text-xs"
             >
-              Clear
+              Limpiar
             </button>
           )}
         </div>
@@ -541,11 +541,11 @@ export default function RadarPage() {
           onChange={(e) => setIntent(e.target.value as RadarIntent | '')}
           className="ui-input w-auto"
         >
-          <option value="">All intents</option>
-          <option value="SELL_OFFER">Sell</option>
-          <option value="BUY_REQUEST">Buy</option>
-          <option value="PRICE_SIGNAL">Price Signal</option>
-          <option value="GENERAL_INQUIRY">Inquiry</option>
+          <option value="">Todos los tipos</option>
+          <option value="SELL_OFFER">Venta</option>
+          <option value="BUY_REQUEST">Compra</option>
+          <option value="PRICE_SIGNAL">Señal de precio</option>
+          <option value="GENERAL_INQUIRY">Consulta</option>
         </select>
 
         <select
@@ -553,10 +553,10 @@ export default function RadarPage() {
           onChange={(e) => setReviewStatus(e.target.value as RadarReviewStatus | '')}
           className="ui-input w-auto"
         >
-          <option value="">All statuses</option>
-          <option value="PENDING_REVIEW">Pending</option>
-          <option value="CONFIRMED">Confirmed</option>
-          <option value="DISMISSED">Dismissed</option>
+          <option value="">Todos los estados</option>
+          <option value="PENDING_REVIEW">Pendiente</option>
+          <option value="CONFIRMED">Confirmado</option>
+          <option value="DISMISSED">Descartado</option>
         </select>
 
         <select
@@ -564,9 +564,9 @@ export default function RadarPage() {
           onChange={(e) => setSort(e.target.value as 'newest' | 'confidence' | 'price')}
           className="ui-input w-auto"
         >
-          <option value="newest">Newest first</option>
-          <option value="confidence">By confidence</option>
-          <option value="price">By price</option>
+          <option value="newest">Más recientes</option>
+          <option value="confidence">Por confianza</option>
+          <option value="price">Por precio</option>
         </select>
       </div>
 
@@ -587,12 +587,12 @@ export default function RadarPage() {
       ) : listings.length === 0 ? (
         <article className="rounded-2xl border border-dashed border-white/15 bg-panel/60 px-6 py-16 text-center">
           <p className="text-base font-medium text-white/80">
-            {hasFilters ? 'No listings match your filters.' : 'No radar data yet.'}
+            {hasFilters ? 'Ningún listado coincide con los filtros.' : 'Aún no hay datos en el radar.'}
           </p>
           <p className="mt-2 text-sm text-muted">
             {hasFilters
-              ? 'Try adjusting your search or clearing the filters.'
-              : 'Upload a WhatsApp .txt export above to start building your market memory.'}
+              ? 'Intenta ajustar tu búsqueda o limpiar los filtros.'
+              : 'Sube una exportación .txt de WhatsApp para comenzar a construir tu memoria de mercado.'}
           </p>
         </article>
       ) : (
@@ -608,7 +608,7 @@ export default function RadarPage() {
           ))}
           {listingsTotal > listings.length && (
             <p className="pt-2 text-center text-xs text-muted">
-              Showing {listings.length} of {listingsTotal} listings
+              Mostrando {listings.length} de {listingsTotal} listados
             </p>
           )}
         </section>

@@ -75,8 +75,27 @@ function currency(value: string | number) {
   }).format(Number.isFinite(n) ? n : 0);
 }
 
+const DEAL_STAGE_LABELS: Record<DealStage, string> = {
+  LEAD: 'Prospecto',
+  INTERESTED: 'Interesado',
+  NEGOTIATING: 'Negociando',
+  PENDING_PAYMENT: 'Pago pendiente',
+  CLOSED_WON: 'Cerrado ganado',
+  CLOSED_LOST: 'Cerrado perdido',
+};
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  CASH: 'Efectivo',
+  WIRE: 'Transferencia',
+  TRANSFER: 'Transferencia',
+  CARD: 'Tarjeta',
+  CRYPTO: 'Cripto',
+  CHECK: 'Cheque',
+  OTHER: 'Otro',
+};
+
 function readableStage(stage: DealStage) {
-  return stage.replaceAll('_', ' ');
+  return DEAL_STAGE_LABELS[stage] ?? stage.replaceAll('_', ' ');
 }
 
 function dealStageTone(stage: DealStage) {
@@ -217,7 +236,7 @@ export default function DealsPage() {
       setWatches(watchesData);
     } catch (caughtError) {
       setError(
-        caughtError instanceof ApiError ? caughtError.message : 'Unable to load deals right now.',
+        caughtError instanceof ApiError ? caughtError.message : 'No se pudieron cargar las oportunidades.',
       );
     } finally {
       setLoading(false);
@@ -256,7 +275,7 @@ export default function DealsPage() {
       setDetailError(
         caughtError instanceof ApiError
           ? caughtError.message
-          : 'Unable to load selected deal details.',
+          : 'No se pudieron cargar los detalles de la oportunidad.',
       );
     } finally {
       setDetailsLoading(false);
@@ -291,7 +310,7 @@ export default function DealsPage() {
       };
       const created = await apiPost<Deal>('/deals', payload, { authenticated: true });
       setCreateOpen(false);
-      setFlash({ type: 'success', message: 'Deal created successfully.' });
+      setFlash({ type: 'success', message: 'Oportunidad creada correctamente.' });
       await loadDealsPageData();
       setSelectedDealId(created.id);
     } catch (caughtError) {
@@ -317,13 +336,13 @@ export default function DealsPage() {
         { authenticated: true },
       );
       setEditOpen(false);
-      setFlash({ type: 'success', message: 'Deal updated successfully.' });
+      setFlash({ type: 'success', message: 'Oportunidad actualizada correctamente.' });
       await loadDealsPageData();
       await loadSelectedDealData(selectedDealId);
     } catch (caughtError) {
       setFlash({
         type: 'error',
-        message: caughtError instanceof ApiError ? caughtError.message : 'Failed to update deal.',
+        message: caughtError instanceof ApiError ? caughtError.message : 'Error al actualizar la oportunidad.',
       });
     }
   });
@@ -332,14 +351,14 @@ export default function DealsPage() {
     if (!selectedDealId) return;
     try {
       await apiPatch<Deal>(`/deals/${selectedDealId}/stage`, { stage }, { authenticated: true });
-      setFlash({ type: 'success', message: `Stage updated to ${readableStage(stage)}.` });
+      setFlash({ type: 'success', message: `Etapa actualizada a ${readableStage(stage)}.` });
       await loadDealsPageData();
       await loadSelectedDealData(selectedDealId);
     } catch (caughtError) {
       setFlash({
         type: 'error',
         message:
-          caughtError instanceof ApiError ? caughtError.message : 'Could not update deal stage.',
+          caughtError instanceof ApiError ? caughtError.message : 'No se pudo actualizar la etapa.',
       });
     }
   };
@@ -360,13 +379,13 @@ export default function DealsPage() {
         },
         { authenticated: true },
       );
-      setFlash({ type: 'success', message: 'Payment created.' });
+      setFlash({ type: 'success', message: 'Pago creado.' });
       await loadSelectedDealData(selectedDealId);
     } catch (caughtError) {
       setFlash({
         type: 'error',
         message:
-          caughtError instanceof ApiError ? caughtError.message : 'Could not create payment.',
+          caughtError instanceof ApiError ? caughtError.message : 'No se pudo crear el pago.',
       });
     }
   });
@@ -379,13 +398,13 @@ export default function DealsPage() {
         { paidAt: new Date().toISOString() },
         { authenticated: true },
       );
-      setFlash({ type: 'success', message: 'Payment marked as paid.' });
+      setFlash({ type: 'success', message: 'Pago marcado como pagado.' });
       await loadSelectedDealData(selectedDealId);
     } catch (caughtError) {
       setFlash({
         type: 'error',
         message:
-          caughtError instanceof ApiError ? caughtError.message : 'Could not mark payment paid.',
+          caughtError instanceof ApiError ? caughtError.message : 'No se pudo marcar el pago.',
       });
     }
   };
@@ -396,13 +415,13 @@ export default function DealsPage() {
     try {
       if (deleteTarget.kind === 'deal') {
         await apiDelete(`/deals/${deleteTarget.id}`, { authenticated: true });
-        setFlash({ type: 'success', message: 'Deal deleted.' });
+        setFlash({ type: 'success', message: 'Oportunidad eliminada.' });
         setDetailModalOpen(false);
         setSelectedDealId(null);
         await loadDealsPageData();
       } else {
         await apiDelete(`/payments/${deleteTarget.id}`, { authenticated: true });
-        setFlash({ type: 'success', message: 'Payment deleted.' });
+        setFlash({ type: 'success', message: 'Pago eliminado.' });
         if (selectedDealId) {
           await loadSelectedDealData(selectedDealId);
         }
@@ -411,7 +430,7 @@ export default function DealsPage() {
     } catch (caughtError) {
       setFlash({
         type: 'error',
-        message: caughtError instanceof ApiError ? caughtError.message : 'Delete failed.',
+        message: caughtError instanceof ApiError ? caughtError.message : 'Error al eliminar.',
       });
     } finally {
       setDeleteLoading(false);
@@ -422,9 +441,9 @@ export default function DealsPage() {
     <div className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">Deals</h1>
+          <h1 className="ui-title">Oportunidades</h1>
           <p className="ui-subtitle">
-            Manage your sales pipeline, stage movement, and payment tracking.
+            Administra tu pipeline de ventas, movimiento de etapas y seguimiento de pagos.
           </p>
         </div>
         <button
@@ -432,7 +451,7 @@ export default function DealsPage() {
           onClick={() => setCreateOpen(true)}
           className="ui-btn-primary px-4 py-2"
         >
-          Create deal
+          Crear oportunidad
         </button>
       </header>
 
@@ -462,16 +481,16 @@ export default function DealsPage() {
         </section>
       ) : deals.length === 0 ? (
         <section className="rounded-xl border border-dashed border-white/15 bg-panel/60 p-12 text-center">
-          <h2 className="text-lg font-semibold">No deals yet</h2>
+          <h2 className="text-lg font-semibold">Aún no hay oportunidades</h2>
           <p className="mt-2 text-sm text-muted">
-            Create your first deal to start tracking your sales pipeline.
+            Crea tu primera oportunidad para comenzar a rastrear tu pipeline de ventas.
           </p>
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
             className="ui-btn-primary mt-5 px-4 py-2"
           >
-            Create first deal
+            Crear primera oportunidad
           </button>
         </section>
       ) : (
@@ -506,9 +525,9 @@ export default function DealsPage() {
                             : 'border-white/10 bg-panel hover:border-white/25'
                         }`}
                       >
-                        <p className="text-sm font-semibold">{client?.name ?? 'Unknown client'}</p>
+                        <p className="text-sm font-semibold">{client?.name ?? 'Cliente desconocido'}</p>
                         <p className="mt-1 text-xs text-muted">
-                          {watch ? `${watch.brand} ${watch.model}` : 'Unknown watch'}
+                          {watch ? `${watch.brand} ${watch.model}` : 'Reloj desconocido'}
                         </p>
                         <div className="mt-2 flex items-center justify-between text-xs">
                           <span className="font-medium text-white">{currency(deal.agreedPrice)}</span>
@@ -537,14 +556,14 @@ export default function DealsPage() {
             {/* Fixed header */}
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-6 py-4">
               <div className="min-w-0">
-                <h2 className="text-lg font-semibold">Deal Details</h2>
+                <h2 className="text-lg font-semibold">Detalles de la oportunidad</h2>
                 {selectedDeal ? (
                   <p className="mt-0.5 truncate text-sm text-muted">
-                    {clientsById.get(selectedDeal.clientId)?.name ?? 'Unknown client'}
+                    {clientsById.get(selectedDeal.clientId)?.name ?? 'Cliente desconocido'}
                     {' · '}
                     {(() => {
                       const w = watchesById.get(selectedDeal.watchId);
-                      return w ? `${w.brand} ${w.model}` : 'Unknown watch';
+                      return w ? `${w.brand} ${w.model}` : 'Reloj desconocido';
                     })()}
                   </p>
                 ) : null}
@@ -557,7 +576,7 @@ export default function DealsPage() {
                       onClick={() => setEditOpen(true)}
                       className="ui-btn-secondary px-3 py-1.5 text-xs"
                     >
-                      Edit
+                      Editar
                     </button>
                     <button
                       type="button"
@@ -570,7 +589,7 @@ export default function DealsPage() {
                       }
                       className="ui-btn-danger px-3 py-1.5 text-xs"
                     >
-                      Delete
+                      Eliminar
                     </button>
                   </>
                 ) : null}
@@ -600,7 +619,7 @@ export default function DealsPage() {
                 <div className="space-y-5">
                   {/* Stage + meta */}
                   <section className="space-y-3 rounded-xl border border-white/10 bg-surface/40 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Stage</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Etapa</p>
                     <div className="flex flex-wrap items-center gap-3">
                       <select
                         value={selectedDeal.stage}
@@ -621,39 +640,39 @@ export default function DealsPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
                       <div>
-                        <p className="text-xs text-muted">Expected close</p>
+                        <p className="text-xs text-muted">Cierre esperado</p>
                         <p className="mt-0.5 font-medium">{formatDate(selectedDeal.expectedCloseAt)}</p>
                       </div>
                       <div>
-                        <p className="text-xs text-muted">Agreed price</p>
+                        <p className="text-xs text-muted">Precio acordado</p>
                         <p className="mt-0.5 font-medium">{currency(selectedDeal.agreedPrice)}</p>
                       </div>
                     </div>
                     {selectedDeal.notes?.trim() ? (
                       <p className="text-sm text-muted">{selectedDeal.notes}</p>
                     ) : (
-                      <p className="text-xs text-white/25">No notes.</p>
+                      <p className="text-xs text-white/25">Sin notas.</p>
                     )}
                   </section>
 
                   {/* Payment summary */}
                   <section className="space-y-3 rounded-xl border border-white/10 bg-surface/40 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment Summary</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Resumen de pagos</p>
                     <div className="grid grid-cols-3 gap-3">
                       <div className="rounded-lg border border-white/10 p-3">
-                        <p className="text-xs text-muted">Agreed</p>
+                        <p className="text-xs text-muted">Acordado</p>
                         <p className="mt-1 text-base font-semibold">
                           {currency(paymentSummary?.totalAgreedPrice ?? selectedDeal.agreedPrice)}
                         </p>
                       </div>
                       <div className="rounded-lg border border-white/10 p-3">
-                        <p className="text-xs text-muted">Paid</p>
+                        <p className="text-xs text-muted">Pagado</p>
                         <p className="mt-1 text-base font-semibold text-emerald-300">
                           {currency(paymentSummary?.totalPaid ?? 0)}
                         </p>
                       </div>
                       <div className="rounded-lg border border-white/10 p-3">
-                        <p className="text-xs text-muted">Pending</p>
+                        <p className="text-xs text-muted">Pendiente</p>
                         <p className="mt-1 text-base font-semibold text-amber-300">
                           {currency(paymentSummary?.pendingBalance ?? 0)}
                         </p>
@@ -663,7 +682,7 @@ export default function DealsPage() {
 
                   {/* Add payment */}
                   <section className="space-y-3 rounded-xl border border-white/10 bg-surface/40 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Add Payment</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Agregar pago</p>
                     <form onSubmit={createPayment} className="space-y-3">
                       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                         <input
@@ -671,12 +690,12 @@ export default function DealsPage() {
                           step="0.01"
                           min={0}
                           {...paymentForm.register('amount', { valueAsNumber: true })}
-                          placeholder="Amount"
+                          placeholder="Monto"
                           className="ui-input"
                         />
                         <select {...paymentForm.register('method')} className="ui-input">
                           {paymentMethods.map((m) => (
-                            <option key={m} value={m}>{m}</option>
+                            <option key={m} value={m}>{PAYMENT_METHOD_LABELS[m] ?? m}</option>
                           ))}
                         </select>
                         <select {...paymentForm.register('status')} className="ui-input">
@@ -687,7 +706,7 @@ export default function DealsPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="mb-1 block text-xs text-muted">Due date</label>
+                          <label className="mb-1 block text-xs text-muted">Fecha de vencimiento</label>
                           <input
                             type="datetime-local"
                             {...paymentForm.register('dueDate')}
@@ -695,7 +714,7 @@ export default function DealsPage() {
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-muted">Paid at</label>
+                          <label className="mb-1 block text-xs text-muted">Pagado el</label>
                           <input
                             type="datetime-local"
                             {...paymentForm.register('paidAt')}
@@ -706,7 +725,7 @@ export default function DealsPage() {
                       <textarea
                         rows={2}
                         {...paymentForm.register('notes')}
-                        placeholder="Payment notes"
+                        placeholder="Notas del pago"
                         className="ui-input"
                       />
                       {paymentForm.formState.errors.amount ? (
@@ -715,16 +734,16 @@ export default function DealsPage() {
                         </p>
                       ) : null}
                       <button type="submit" className="ui-btn-secondary px-3 py-2 text-sm">
-                        Create payment
+                        Crear pago
                       </button>
                     </form>
                   </section>
 
                   {/* Payments list */}
                   <section className="space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payments</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Pagos</p>
                     {payments.length === 0 ? (
-                      <p className="text-sm text-muted">No payments yet.</p>
+                      <p className="text-sm text-muted">Aún no hay pagos.</p>
                     ) : (
                       payments.map((payment) => (
                         <div
@@ -733,7 +752,7 @@ export default function DealsPage() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-sm font-semibold">{currency(payment.amount)}</p>
-                            <span className="text-xs text-muted">{payment.method}</span>
+                            <span className="text-xs text-muted">{PAYMENT_METHOD_LABELS[payment.method] ?? payment.method}</span>
                           </div>
                           <p className="mt-1 text-xs text-muted">
                             <span
@@ -753,7 +772,7 @@ export default function DealsPage() {
                                 onClick={() => void markPaymentPaid(payment.id)}
                                 className="ui-btn-secondary border-emerald-400/40 px-2 py-1 text-xs text-emerald-200"
                               >
-                                Mark paid
+                                Marcar pagado
                               </button>
                             ) : null}
                             <button
@@ -767,7 +786,7 @@ export default function DealsPage() {
                               }
                               className="ui-btn-danger px-2 py-1 text-xs"
                             >
-                              Delete
+                              Eliminar
                             </button>
                           </div>
                         </div>
@@ -795,8 +814,8 @@ export default function DealsPage() {
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <h2 className="text-lg font-semibold">Create Deal</h2>
-                <p className="mt-1 text-sm text-muted">Add a new sales opportunity to the pipeline.</p>
+                <h2 className="text-lg font-semibold">Crear oportunidad</h2>
+                <p className="mt-1 text-sm text-muted">Agrega una nueva oportunidad de venta al pipeline.</p>
               </div>
               <button
                 type="button"
@@ -812,7 +831,7 @@ export default function DealsPage() {
                 {...createDealForm.register('clientId')}
                 className="ui-input"
               >
-                <option value="">Select client</option>
+                <option value="">Seleccionar cliente</option>
                 {clients.map((client) => (
                   <option key={client.id} value={client.id}>
                     {client.name}
@@ -823,7 +842,7 @@ export default function DealsPage() {
                 {...createDealForm.register('watchId')}
                 className="ui-input"
               >
-                <option value="">Select watch</option>
+                <option value="">Seleccionar reloj</option>
                 {watches.map((watch) => (
                   <option key={watch.id} value={watch.id}>
                     {watch.brand} {watch.model}
@@ -856,7 +875,7 @@ export default function DealsPage() {
               <textarea
                 rows={3}
                 {...createDealForm.register('notes')}
-                placeholder="Deal notes"
+                placeholder="Notas de la oportunidad"
                 className="ui-input sm:col-span-2"
               />
             </div>
@@ -876,13 +895,13 @@ export default function DealsPage() {
                 onClick={() => setCreateOpen(false)}
                 className="ui-btn-ghost px-3 py-2"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 type="submit"
                 className="ui-btn-primary px-4 py-2"
               >
-                Create deal
+                Crear oportunidad
               </button>
             </div>
           </form>
@@ -903,8 +922,8 @@ export default function DealsPage() {
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <h2 className="text-lg font-semibold">Edit Deal</h2>
-                <p className="mt-1 text-sm text-muted">Update close date, value, and notes.</p>
+                <h2 className="text-lg font-semibold">Editar oportunidad</h2>
+                <p className="mt-1 text-sm text-muted">Actualiza la fecha de cierre, valor y notas.</p>
               </div>
               <button
                 type="button"
@@ -940,13 +959,13 @@ export default function DealsPage() {
                 onClick={() => setEditOpen(false)}
                 className="ui-btn-ghost px-3 py-2"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 type="submit"
                 className="ui-btn-primary px-4 py-2"
               >
-                Save changes
+                Guardar cambios
               </button>
             </div>
           </form>
@@ -955,10 +974,10 @@ export default function DealsPage() {
 
       <DeleteConfirmDialog
         open={Boolean(deleteTarget)}
-        title={deleteTarget?.kind === 'payment' ? 'Delete payment?' : 'Delete deal?'}
+        title={deleteTarget?.kind === 'payment' ? '¿Eliminar pago?' : '¿Eliminar oportunidad?'}
         description={
           deleteTarget
-            ? `This will permanently remove ${deleteTarget.label}. This action cannot be undone.`
+            ? `Esto eliminará permanentemente este registro.`
             : ''
         }
         loading={deleteLoading}

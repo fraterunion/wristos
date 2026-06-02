@@ -92,12 +92,12 @@ function dash(value: string | null | undefined) {
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  LEAD: 'Lead',
-  INTERESTED: 'Interested',
-  NEGOTIATING: 'Negotiating',
-  PENDING_PAYMENT: 'Pending Payment',
-  CLOSED_WON: 'Won',
-  CLOSED_LOST: 'Lost',
+  LEAD: 'Prospecto',
+  INTERESTED: 'Interesado',
+  NEGOTIATING: 'Negociando',
+  PENDING_PAYMENT: 'Pago pendiente',
+  CLOSED_WON: 'Cerrado ganado',
+  CLOSED_LOST: 'Cerrado perdido',
 };
 
 const STAGE_COLORS: Record<string, string> = {
@@ -120,10 +120,10 @@ const STATUS_COLORS: Record<WatchStatus, string> = {
 type Tab = 'movements' | 'sold' | 'stock' | 'acquired';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'movements', label: 'Movements' },
-  { id: 'sold', label: 'Sold' },
-  { id: 'stock', label: 'In Stock' },
-  { id: 'acquired', label: 'Acquired' },
+  { id: 'movements', label: 'Movimientos' },
+  { id: 'sold', label: 'Vendidos' },
+  { id: 'stock', label: 'En stock' },
+  { id: 'acquired', label: 'Adquiridos' },
 ];
 
 // --- Page ---
@@ -157,7 +157,7 @@ export default function HistoryPage() {
       setAcquired(acquiredData);
       setMovements(movementsData);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Unable to load history right now.');
+      setError(caught instanceof ApiError ? caught.message : 'No se pudo cargar el historial.');
     } finally {
       setLoading(false);
     }
@@ -171,9 +171,9 @@ export default function HistoryPage() {
     <div className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">History</h1>
+          <h1 className="ui-title">Historial</h1>
           <p className="ui-subtitle max-w-2xl">
-            Complete record of every watch acquired, sold, and in movement — your business at a glance.
+            Registro completo de cada reloj adquirido, vendido y en movimiento — tu negocio de un vistazo.
           </p>
         </div>
       </header>
@@ -181,13 +181,13 @@ export default function HistoryPage() {
       {/* Summary cards */}
       {summary ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatCard label="Acquired" value={String(summary.totalAcquired)} />
-          <StatCard label="Sold" value={String(summary.totalSold)} />
-          <StatCard label="In Stock" value={String(summary.currentStock)} />
-          <StatCard label="Revenue" value={formatMoney(summary.totalRevenue)} />
-          <StatCard label="Cost of Sales" value={formatMoney(summary.totalCostOfSold)} />
+          <StatCard label="Adquiridos" value={String(summary.totalAcquired)} />
+          <StatCard label="Vendidos" value={String(summary.totalSold)} />
+          <StatCard label="En stock" value={String(summary.currentStock)} />
+          <StatCard label="Ingresos" value={formatMoney(summary.totalRevenue)} />
+          <StatCard label="Costo de ventas" value={formatMoney(summary.totalCostOfSold)} />
           <StatCard
-            label="Gross Profit"
+            label="Utilidad bruta"
             value={formatMoney(summary.totalProfit)}
             highlight={Number(summary.totalProfit) >= 0 ? 'positive' : 'negative'}
           />
@@ -196,10 +196,10 @@ export default function HistoryPage() {
 
       {error ? (
         <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-6">
-          <h3 className="text-sm font-semibold text-rose-100">Could not load history</h3>
+          <h3 className="text-sm font-semibold text-rose-100">No se pudo cargar el historial</h3>
           <p className="mt-2 text-sm text-rose-100/90">{error}</p>
           <button type="button" onClick={() => void load()} className="ui-btn-danger mt-4 px-4 py-2 text-rose-50">
-            Try again
+            Intentar de nuevo
           </button>
         </div>
       ) : null}
@@ -236,19 +236,19 @@ export default function HistoryPage() {
       {/* Movements tab */}
       {!loading && !error && activeTab === 'movements' ? (
         movements.length === 0 ? (
-          <EmptyState message="No deal movements recorded yet." />
+          <EmptyState message="Aún no hay movimientos registrados." />
         ) : (
           <TableWrapper>
             <table className="min-w-[900px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Serial</th>
-                  <th className="px-4 py-3 font-medium">Client</th>
-                  <th className="px-4 py-3 font-medium">Stage</th>
-                  <th className="px-4 py-3 font-medium text-right">Agreed Price</th>
-                  <th className="px-4 py-3 font-medium">Last Update</th>
-                  <th className="px-4 py-3 font-medium">Created</th>
+                  <th className="px-4 py-3 font-medium">Reloj</th>
+                  <th className="px-4 py-3 font-medium">Serie</th>
+                  <th className="px-4 py-3 font-medium">Cliente</th>
+                  <th className="px-4 py-3 font-medium">Etapa</th>
+                  <th className="px-4 py-3 font-medium text-right">Precio acordado</th>
+                  <th className="px-4 py-3 font-medium">Última actualización</th>
+                  <th className="px-4 py-3 font-medium">Creado</th>
                 </tr>
               </thead>
               <tbody>
@@ -284,19 +284,19 @@ export default function HistoryPage() {
       {/* Sold tab */}
       {!loading && !error && activeTab === 'sold' ? (
         sold.length === 0 ? (
-          <EmptyState message="No watches sold yet." />
+          <EmptyState message="Aún no hay relojes vendidos." />
         ) : (
           <TableWrapper>
             <table className="min-w-[960px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Buyer</th>
-                  <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
-                  <th className="px-4 py-3 font-medium text-right">Sale Price</th>
-                  <th className="px-4 py-3 font-medium text-right">Margin</th>
-                  <th className="px-4 py-3 font-medium">Sold</th>
+                  <th className="px-4 py-3 font-medium">Reloj</th>
+                  <th className="px-4 py-3 font-medium">Comprador</th>
+                  <th className="px-4 py-3 font-medium">Propiedad</th>
+                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                  <th className="px-4 py-3 font-medium text-right">Precio de venta</th>
+                  <th className="px-4 py-3 font-medium text-right">Margen</th>
+                  <th className="px-4 py-3 font-medium">Vendido</th>
                 </tr>
               </thead>
               <tbody>
@@ -321,8 +321,8 @@ export default function HistoryPage() {
                       <td className="px-4 py-3">
                         <span className="text-xs font-medium uppercase tracking-wide text-muted">
                           {item.watch.ownershipType === 'CONSIGNMENT'
-                            ? `Consignment${item.watch.consignmentOwnerName ? ` · ${item.watch.consignmentOwnerName}` : ''}`
-                            : 'Owned'}
+                            ? `Consignación${item.watch.consignmentOwnerName ? ` · ${item.watch.consignmentOwnerName}` : ''}`
+                            : 'Propio'}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-muted">
@@ -352,19 +352,19 @@ export default function HistoryPage() {
       {/* In Stock tab */}
       {!loading && !error && activeTab === 'stock' ? (
         stock.length === 0 ? (
-          <EmptyState message="No watches currently in stock." />
+          <EmptyState message="Actualmente no hay relojes en stock." />
         ) : (
           <TableWrapper>
             <table className="min-w-[880px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Condition</th>
-                  <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
-                  <th className="px-4 py-3 font-medium text-right">Price Range</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Acquired</th>
+                  <th className="px-4 py-3 font-medium">Reloj</th>
+                  <th className="px-4 py-3 font-medium">Condición</th>
+                  <th className="px-4 py-3 font-medium">Propiedad</th>
+                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                  <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
+                  <th className="px-4 py-3 font-medium">Estado</th>
+                  <th className="px-4 py-3 font-medium">Adquirido</th>
                 </tr>
               </thead>
               <tbody>
@@ -379,8 +379,8 @@ export default function HistoryPage() {
                     <td className="px-4 py-3">
                       <span className="text-xs font-medium uppercase tracking-wide text-muted">
                         {w.ownershipType === 'CONSIGNMENT'
-                          ? `Consignment${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
-                          : 'Owned'}
+                          ? `Consignación${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
+                          : 'Propio'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
@@ -406,19 +406,19 @@ export default function HistoryPage() {
       {/* Acquired tab */}
       {!loading && !error && activeTab === 'acquired' ? (
         acquired.length === 0 ? (
-          <EmptyState message="No watches acquired yet." />
+          <EmptyState message="Aún no hay relojes adquiridos." />
         ) : (
           <TableWrapper>
             <table className="min-w-[880px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Watch</th>
-                  <th className="px-4 py-3 font-medium">Condition</th>
-                  <th className="px-4 py-3 font-medium">Ownership</th>
-                  <th className="px-4 py-3 font-medium text-right">Effective Cost</th>
-                  <th className="px-4 py-3 font-medium text-right">Price Range</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Acquired</th>
+                  <th className="px-4 py-3 font-medium">Reloj</th>
+                  <th className="px-4 py-3 font-medium">Condición</th>
+                  <th className="px-4 py-3 font-medium">Propiedad</th>
+                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                  <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
+                  <th className="px-4 py-3 font-medium">Estado</th>
+                  <th className="px-4 py-3 font-medium">Adquirido</th>
                 </tr>
               </thead>
               <tbody>
@@ -436,8 +436,8 @@ export default function HistoryPage() {
                     <td className="px-4 py-3">
                       <span className="text-xs font-medium uppercase tracking-wide text-muted">
                         {w.ownershipType === 'CONSIGNMENT'
-                          ? `Consignment${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
-                          : 'Owned'}
+                          ? `Consignación${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
+                          : 'Propio'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
@@ -504,7 +504,7 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-white/15 bg-panel/50 px-4 py-12 text-center">
       <p className="text-base font-medium text-white">{message}</p>
-      <p className="mt-2 text-sm text-muted">Data will appear here once activity is recorded.</p>
+      <p className="mt-2 text-sm text-muted">Los datos aparecerán aquí una vez que se registre actividad.</p>
     </div>
   );
 }

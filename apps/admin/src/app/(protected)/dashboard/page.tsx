@@ -159,7 +159,7 @@ export default function DashboardPage() {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : 'Unable to load dashboard data.',
+          : 'No se pudieron cargar los datos del panel.',
       );
     } finally {
       setIsLoading(false);
@@ -200,16 +200,16 @@ export default function DashboardPage() {
   const kpis = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'Total Watches', value: String(data.summary.totalWatches) },
-      { label: 'Available Watches', value: String(data.summary.availableWatches) },
-      { label: 'Sold Watches', value: String(data.summary.soldWatches) },
-      { label: 'Active Clients', value: String(data.summary.activeClients) },
+      { label: 'Total de relojes', value: String(data.summary.totalWatches) },
+      { label: 'Relojes disponibles', value: String(data.summary.availableWatches) },
+      { label: 'Relojes vendidos', value: String(data.summary.soldWatches) },
+      { label: 'Clientes activos', value: String(data.summary.activeClients) },
       {
-        label: 'Total Agreed Revenue',
+        label: 'Ingresos acordados totales',
         value: formatCurrency(data.summary.totalAgreedRevenue),
       },
       {
-        label: 'Total Collected Revenue',
+        label: 'Ingresos cobrados totales',
         value: formatCurrency(data.summary.totalCollectedRevenue),
         tone: 'success' as const,
       },
@@ -223,14 +223,14 @@ export default function DashboardPage() {
   if (error) {
     return (
       <section className="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
-        <h2 className="text-lg font-semibold text-red-100">Dashboard unavailable</h2>
+        <h2 className="text-lg font-semibold text-red-100">Panel no disponible</h2>
         <p className="mt-2 text-sm text-red-200/90">{error}</p>
         <button
           type="button"
           onClick={() => void fetchDashboard()}
           className="mt-4 rounded-md border border-red-400/50 px-3 py-2 text-sm text-red-100 hover:bg-red-400/20"
         >
-          Retry
+          Reintentar
         </button>
       </section>
     );
@@ -239,9 +239,9 @@ export default function DashboardPage() {
   if (!data) {
     return (
       <section className="rounded-xl border border-white/10 bg-panel p-6">
-        <h2 className="text-lg font-semibold">No dashboard data yet</h2>
+        <h2 className="text-lg font-semibold">Aún no hay datos en el panel</h2>
         <p className="mt-2 text-sm text-muted">
-          Add inventory and deals to unlock real-time business insights.
+          Agrega inventario y oportunidades para ver análisis en tiempo real.
         </p>
       </section>
     );
@@ -251,9 +251,9 @@ export default function DashboardPage() {
     <section className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h2 className="ui-title">Performance Dashboard</h2>
+          <h2 className="ui-title">Panel de rendimiento</h2>
           <p className="ui-subtitle">
-            Live snapshot of inventory, pipeline, and revenue health.
+            Instantánea en vivo de inventario, pipeline e ingresos.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -261,16 +261,16 @@ export default function DashboardPage() {
             href="/inventory"
             className="ui-btn-secondary px-3 py-2"
           >
-            Add Watch
+            Agregar reloj
           </Link>
           <Link
             href="/crm"
             className="ui-btn-secondary px-3 py-2"
           >
-            Add Client
+            Agregar cliente
           </Link>
           <Link href="/deals" className="ui-btn-primary px-3 py-2">
-            Create Deal
+            Crear oportunidad
           </Link>
         </div>
       </header>
@@ -289,9 +289,9 @@ export default function DashboardPage() {
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold">Performance Trends</h3>
+            <h3 className="text-lg font-semibold">Tendencias de rendimiento</h3>
             <p className="mt-1 text-sm text-muted">
-              Revenue and sales momentum over the selected period.
+              Impulso de ingresos y ventas en el período seleccionado.
             </p>
           </div>
           <div className="rounded-lg border border-white/10 bg-panel p-1">
@@ -306,8 +306,7 @@ export default function DashboardPage() {
                     : 'text-muted hover:bg-white/5 hover:text-white'
                 }`}
               >
-                {option[0].toUpperCase()}
-                {option.slice(1)}
+                {{ week: 'Semana', month: 'Mes', year: 'Año' }[option]}
               </button>
             ))}
           </div>
@@ -316,7 +315,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <article className="ui-card">
             <h4 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Revenue Over Time
+              Ingresos en el tiempo
             </h4>
             <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
@@ -368,7 +367,7 @@ export default function DashboardPage() {
 
           <article className="ui-card">
             <h4 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Watches Sold Over Time
+              Relojes vendidos en el tiempo
             </h4>
             <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
@@ -404,24 +403,24 @@ export default function DashboardPage() {
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article className="ui-card">
-          <h3 className="text-lg font-semibold">Pipeline Summary</h3>
+          <h3 className="text-lg font-semibold">Resumen del pipeline</h3>
           <p className="mt-1 text-sm text-muted">
-            Deal movement and stage distribution for your active pipeline.
+            Movimiento de oportunidades y distribución por etapa en tu pipeline activo.
           </p>
 
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Open</p>
+              <p className="text-xs uppercase tracking-wide text-muted">Abiertas</p>
               <p className="mt-2 text-xl font-semibold">{data.pipeline.openDeals}</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Won</p>
+              <p className="text-xs uppercase tracking-wide text-muted">Ganadas</p>
               <p className="mt-2 text-xl font-semibold text-emerald-300">
                 {data.pipeline.wonDeals}
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Lost</p>
+              <p className="text-xs uppercase tracking-wide text-muted">Perdidas</p>
               <p className="mt-2 text-xl font-semibold text-rose-300">
                 {data.pipeline.lostDeals}
               </p>
@@ -433,7 +432,7 @@ export default function DashboardPage() {
             data-query-key={queryKeys.analytics.pipeline.join(':')}
           >
             {Object.keys(data.pipeline.countsByStage).length === 0 ? (
-              <p className="text-sm text-muted">No pipeline records yet.</p>
+              <p className="text-sm text-muted">Aún no hay registros en el pipeline.</p>
             ) : (
               Object.entries(data.pipeline.countsByStage).map(([stage, count]) => (
                 <div
@@ -449,9 +448,9 @@ export default function DashboardPage() {
         </article>
 
         <article className="ui-card">
-          <h3 className="text-lg font-semibold">Inventory Aging</h3>
+          <h3 className="text-lg font-semibold">Antigüedad del inventario</h3>
           <p className="mt-1 text-sm text-muted">
-            Watches grouped by time in inventory to highlight stale stock.
+            Relojes agrupados por tiempo en inventario para identificar stock sin movimiento.
           </p>
 
           <div
@@ -459,19 +458,19 @@ export default function DashboardPage() {
             data-query-key={queryKeys.analytics.inventoryAging.join(':')}
           >
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">0-30 days</p>
+              <p className="text-xs uppercase tracking-wide text-muted">0-30 días</p>
               <p className="mt-2 text-xl font-semibold">{data.inventoryAging.days0to30}</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">31-60 days</p>
+              <p className="text-xs uppercase tracking-wide text-muted">31-60 días</p>
               <p className="mt-2 text-xl font-semibold">{data.inventoryAging.days31to60}</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">61-90 days</p>
+              <p className="text-xs uppercase tracking-wide text-muted">61-90 días</p>
               <p className="mt-2 text-xl font-semibold">{data.inventoryAging.days61to90}</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">90+ days</p>
+              <p className="text-xs uppercase tracking-wide text-muted">90+ días</p>
               <p className="mt-2 text-xl font-semibold text-amber-300">
                 {data.inventoryAging.days90plus}
               </p>

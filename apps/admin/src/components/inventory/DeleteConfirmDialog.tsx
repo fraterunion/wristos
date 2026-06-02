@@ -14,7 +14,7 @@ export function DeleteConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = 'Delete',
+  confirmLabel = 'Eliminar',
   loading = false,
   onCancel,
   onConfirm,
@@ -39,7 +39,7 @@ export function DeleteConfirmDialog({
             disabled={loading}
             className="ui-btn-ghost px-4 py-2"
           >
-            Cancel
+            Cancelar
           </button>
           <button
             type="button"
@@ -47,7 +47,7 @@ export function DeleteConfirmDialog({
             disabled={loading}
             className="ui-btn-danger bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500"
           >
-            {loading ? 'Deleting…' : confirmLabel}
+            {loading ? 'Eliminando…' : confirmLabel}
           </button>
         </div>
       </div>

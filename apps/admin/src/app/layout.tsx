@@ -4,7 +4,7 @@ import { AuthProvider } from '@/lib/auth-context';
 
 export const metadata: Metadata = {
   title: 'WristOS Admin',
-  description: 'WristOS admin dashboard',
+  description: 'Panel de administración WristOS',
 };
 
 export const viewport: Viewport = {
@@ -14,7 +14,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>
         <AuthProvider>{children}</AuthProvider>
       </body>

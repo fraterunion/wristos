@@ -32,7 +32,7 @@ export default function LoginPage() {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : 'Unable to sign in. Check your credentials.',
+          : 'No se pudo iniciar sesión. Verifica tus credenciales.',
       );
     } finally {
       setSubmitting(false);
@@ -42,7 +42,7 @@ export default function LoginPage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-muted">
-        Loading...
+        Cargando...
       </div>
     );
   }
@@ -51,11 +51,11 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-surface px-4 py-6 sm:px-6 sm:py-0">
       <div className="w-full max-w-md rounded-xl border border-white/10 bg-panel p-5 shadow-xl shadow-black/20 sm:p-8">
         <h1 className="text-xl font-semibold sm:text-2xl">WristOS Admin</h1>
-        <p className="mt-2 text-sm text-muted">Sign in to continue</p>
+        <p className="mt-2 text-sm text-muted">Inicia sesión para continuar</p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
           <label className="block text-sm">
-            <span className="mb-1 block text-muted">Email</span>
+            <span className="mb-1 block text-muted">Correo electrónico</span>
             <input
               type="email"
               value={email}
@@ -67,7 +67,7 @@ export default function LoginPage() {
           </label>
 
           <label className="block text-sm">
-            <span className="mb-1 block text-muted">Password</span>
+            <span className="mb-1 block text-muted">Contraseña</span>
             <input
               type="password"
               value={password}
@@ -89,7 +89,7 @@ export default function LoginPage() {
             disabled={isDisabled}
             className="w-full rounded-md bg-accent px-4 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? 'Signing in...' : 'Sign in'}
+            {submitting ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
         </form>
       </div>

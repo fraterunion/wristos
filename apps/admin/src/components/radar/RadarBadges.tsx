@@ -8,10 +8,10 @@ const INTENT_STYLES: Record<RadarIntent, string> = {
 };
 
 const INTENT_LABELS: Record<RadarIntent, string> = {
-  SELL_OFFER: 'Sell',
-  BUY_REQUEST: 'Buy',
-  PRICE_SIGNAL: 'Price Signal',
-  GENERAL_INQUIRY: 'Inquiry',
+  SELL_OFFER: 'Venta',
+  BUY_REQUEST: 'Compra',
+  PRICE_SIGNAL: 'Señal de precio',
+  GENERAL_INQUIRY: 'Consulta',
 };
 
 export function IntentBadge({ intent }: { intent: RadarIntent }) {
@@ -31,9 +31,9 @@ const STATUS_STYLES: Record<RadarReviewStatus, string> = {
 };
 
 const STATUS_LABELS: Record<RadarReviewStatus, string> = {
-  PENDING_REVIEW: 'Pending',
-  CONFIRMED: 'Confirmed',
-  DISMISSED: 'Dismissed',
+  PENDING_REVIEW: 'Pendiente',
+  CONFIRMED: 'Confirmado',
+  DISMISSED: 'Descartado',
 };
 
 export function ReviewStatusBadge({ status }: { status: RadarReviewStatus }) {
@@ -56,7 +56,7 @@ export function SourceBadge({ source }: { source: RadarReferenceSource | null })
           : 'border-white/15 bg-white/5 text-muted'
       }`}
     >
-      {source === 'EXPLICIT' ? 'Explicit' : 'Inferred'}
+      {source === 'EXPLICIT' ? 'Explícito' : 'Inferido'}
     </span>
   );
 }

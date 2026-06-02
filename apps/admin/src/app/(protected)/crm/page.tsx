@@ -11,6 +11,13 @@ import type { Client, ClientInteraction, ClientPreference } from '@/types/domain
 
 const interactionTypes = ['CALL', 'MESSAGE', 'MEETING', 'NOTE'] as const;
 
+const INTERACTION_TYPE_LABELS: Record<typeof interactionTypes[number], string> = {
+  CALL: 'Llamada',
+  MESSAGE: 'Mensaje',
+  MEETING: 'Reunión',
+  NOTE: 'Nota',
+};
+
 const clientSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
   email: z.string().trim().optional().refine((value) => !value || z.string().email().safeParse(value).success, {
@@ -151,7 +158,7 @@ export default function CrmPage() {
         setSelectedClientId(data[0].id);
       }
     } catch (error) {
-      setClientsError(error instanceof ApiError ? error.message : 'Unable to load clients.');
+      setClientsError(error instanceof ApiError ? error.message : 'No se pudieron cargar los clientes.');
     } finally {
       setClientsLoading(false);
     }
@@ -233,13 +240,13 @@ export default function CrmPage() {
     try {
       if (clientModalMode === 'create') {
         const created = await apiPost<Client>('/crm/clients', payload, { authenticated: true });
-        setFlash({ type: 'success', message: 'Client created successfully.' });
+        setFlash({ type: 'success', message: 'Cliente creado correctamente.' });
         setClientModalOpen(false);
         await loadClients();
         setSelectedClientId(created.id);
       } else if (selectedClientId) {
         await apiPatch<Client>(`/crm/clients/${selectedClientId}`, payload, { authenticated: true });
-        setFlash({ type: 'success', message: 'Client updated successfully.' });
+        setFlash({ type: 'success', message: 'Cliente actualizado correctamente.' });
         setClientModalOpen(false);
         await loadClients();
         await loadClientDetails(selectedClientId);
@@ -247,7 +254,7 @@ export default function CrmPage() {
     } catch (error) {
       setFlash({
         type: 'error',
-        message: error instanceof ApiError ? error.message : 'Failed to save client.',
+        message: error instanceof ApiError ? error.message : 'Error al guardar el cliente.',
       });
     }
   });
@@ -264,7 +271,7 @@ export default function CrmPage() {
         },
         { authenticated: true },
       );
-      setFlash({ type: 'success', message: 'Interaction added.' });
+      setFlash({ type: 'success', message: 'Interacción agregada.' });
       interactionForm.reset({
         type: values.type,
         notes: '',
@@ -274,7 +281,7 @@ export default function CrmPage() {
     } catch (error) {
       setFlash({
         type: 'error',
-        message: error instanceof ApiError ? error.message : 'Could not add interaction.',
+        message: error instanceof ApiError ? error.message : 'No se pudo agregar la interacción.',
       });
     }
   });
@@ -293,12 +300,12 @@ export default function CrmPage() {
         },
         { authenticated: true },
       );
-      setFlash({ type: 'success', message: 'Client preference saved.' });
+      setFlash({ type: 'success', message: 'Preferencia del cliente guardada.' });
       await loadClientDetails(selectedClientId);
     } catch (error) {
       setFlash({
         type: 'error',
-        message: error instanceof ApiError ? error.message : 'Could not save preferences.',
+        message: error instanceof ApiError ? error.message : 'No se pudieron guardar las preferencias.',
       });
     }
   });
@@ -308,13 +315,13 @@ export default function CrmPage() {
     setDeleteLoading(true);
     try {
       await apiDelete(`/crm/clients/${deleteTarget.id}`, { authenticated: true });
-      setFlash({ type: 'success', message: 'Client deleted.' });
+      setFlash({ type: 'success', message: 'Cliente eliminado.' });
       setDeleteTarget(null);
       await loadClients();
     } catch (error) {
       setFlash({
         type: 'error',
-        message: error instanceof ApiError ? error.message : 'Could not delete client.',
+        message: error instanceof ApiError ? error.message : 'No se pudo eliminar el cliente.',
       });
     } finally {
       setDeleteLoading(false);
@@ -326,14 +333,14 @@ export default function CrmPage() {
       <header className="ui-page-header">
         <div>
           <h1 className="ui-title">CRM</h1>
-          <p className="ui-subtitle">Manage clients, conversations, and buying preferences.</p>
+          <p className="ui-subtitle">Administra clientes, conversaciones y preferencias de compra.</p>
         </div>
         <button
           type="button"
           onClick={openCreateModal}
           className="ui-btn-primary px-4 py-2"
         >
-          Add client
+          Agregar cliente
         </button>
       </header>
 
@@ -354,19 +361,19 @@ export default function CrmPage() {
           <input
             value={draftFilters.name}
             onChange={(event) => setDraftFilters((prev) => ({ ...prev, name: event.target.value }))}
-            placeholder="Filter by name"
+            placeholder="Filtrar por nombre"
             className="ui-input"
           />
           <input
             value={draftFilters.phone}
             onChange={(event) => setDraftFilters((prev) => ({ ...prev, phone: event.target.value }))}
-            placeholder="Filter by phone"
+            placeholder="Filtrar por teléfono"
             className="ui-input"
           />
           <input
             value={draftFilters.tag}
             onChange={(event) => setDraftFilters((prev) => ({ ...prev, tag: event.target.value }))}
-            placeholder="Filter by tag"
+            placeholder="Filtrar por etiqueta"
             className="ui-input"
           />
           <div className="flex gap-2">
@@ -375,7 +382,7 @@ export default function CrmPage() {
               onClick={() => setAppliedFilters({ ...draftFilters })}
               className="ui-btn-secondary flex-1 px-3 py-2"
             >
-              Apply
+              Aplicar
             </button>
             <button
               type="button"
@@ -386,7 +393,7 @@ export default function CrmPage() {
               }}
               className="ui-btn-ghost px-3 py-2"
             >
-              Reset
+              Restablecer
             </button>
           </div>
         </div>
@@ -409,14 +416,14 @@ export default function CrmPage() {
             </div>
           ) : clients.length === 0 ? (
             <div className="rounded-xl border border-dashed border-white/15 p-10 text-center">
-              <p className="text-lg font-medium">No clients found</p>
-              <p className="mt-2 text-sm text-muted">Create your first client to start building your CRM pipeline.</p>
+              <p className="text-lg font-medium">No se encontraron clientes</p>
+              <p className="mt-2 text-sm text-muted">Crea tu primer cliente para comenzar tu pipeline de CRM.</p>
               <button
                 type="button"
                 onClick={openCreateModal}
                 className="ui-btn-primary mt-5 px-4 py-2"
               >
-                Add first client
+                Agregar primer cliente
               </button>
             </div>
           ) : (
@@ -437,9 +444,9 @@ export default function CrmPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-semibold">{client.name}</p>
-                        <p className="mt-1 text-xs text-muted">{client.email ?? 'No email'} · {client.phone ?? 'No phone'}</p>
+                        <p className="mt-1 text-xs text-muted">{client.email ?? 'Sin correo'} · {client.phone ?? 'Sin teléfono'}</p>
                       </div>
-                      <span className="text-xs text-muted">{client.budgetRange ?? 'No budget'}</span>
+                      <span className="text-xs text-muted">{client.budgetRange ?? 'Sin presupuesto'}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {(client.tags ?? []).length ? (
@@ -449,7 +456,7 @@ export default function CrmPage() {
                           </span>
                         ))
                       ) : (
-                        <span className="text-xs text-muted">No tags</span>
+                        <span className="text-xs text-muted">Sin etiquetas</span>
                       )}
                     </div>
                   </button>
@@ -462,7 +469,7 @@ export default function CrmPage() {
         <article className="ui-card">
           {!selectedClientId ? (
             <div className="rounded-xl border border-dashed border-white/15 p-8 text-center text-sm text-muted">
-              Select a client to view details and interactions.
+              Selecciona un cliente para ver sus detalles e interacciones.
             </div>
           ) : detailLoading ? (
             <div className="space-y-3 animate-pulse">
@@ -480,38 +487,38 @@ export default function CrmPage() {
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
                   <h2 className="text-lg font-semibold">{selectedClient.name}</h2>
-                  <p className="mt-1 text-sm text-muted">{selectedClient.email ?? 'No email'} · {selectedClient.phone ?? 'No phone'}</p>
-                  <p className="mt-1 text-xs text-muted">Budget: {selectedClient.budgetRange ?? 'Not specified'}</p>
+                  <p className="mt-1 text-sm text-muted">{selectedClient.email ?? 'Sin correo'} · {selectedClient.phone ?? 'Sin teléfono'}</p>
+                  <p className="mt-1 text-xs text-muted">Budget: {selectedClient.budgetRange ?? 'Sin especificar'}</p>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={openEditModal} className="ui-btn-secondary px-3 py-2 text-xs">
-                    Edit
+                    Editar
                   </button>
                   <button
                     type="button"
                     onClick={() => setDeleteTarget(selectedClient)}
                     className="ui-btn-danger px-3 py-2 text-xs"
                   >
-                    Delete
+                    Eliminar
                   </button>
                 </div>
               </div>
 
               <section>
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Notes</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Notas</h3>
                 <p className="mt-2 rounded-lg border border-white/10 bg-surface/60 p-3 text-sm text-white/90">
-                  {selectedClient.notes?.trim() || 'No notes yet.'}
+                  {selectedClient.notes?.trim() || 'Aún no hay notas.'}
                 </p>
               </section>
 
               <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Add interaction</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Agregar interacción</h3>
                 <form onSubmit={submitInteraction} className="space-y-3 rounded-lg border border-white/10 bg-surface/50 p-3">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <select {...interactionForm.register('type')} className="ui-input">
                       {interactionTypes.map((type) => (
                         <option key={type} value={type}>
-                          {type}
+                          {INTERACTION_TYPE_LABELS[type]}
                         </option>
                       ))}
                     </select>
@@ -520,20 +527,20 @@ export default function CrmPage() {
                   <textarea
                     {...interactionForm.register('notes')}
                     rows={2}
-                    placeholder="What happened?"
+                    placeholder="¿Qué ocurrió?"
                     className="ui-input"
                   />
                   {interactionForm.formState.errors.notes ? (
                     <p className="text-xs text-rose-300">{interactionForm.formState.errors.notes.message}</p>
                   ) : null}
                   <button type="submit" className="ui-btn-secondary px-3 py-2">
-                    Add interaction
+                    Agregar interacción
                   </button>
                 </form>
 
                 <div className="space-y-2">
                   {interactions.length === 0 ? (
-                    <p className="text-sm text-muted">No interactions yet.</p>
+                    <p className="text-sm text-muted">Aún no hay interacciones.</p>
                   ) : (
                     interactions.map((item) => (
                       <div key={item.id} className="rounded-lg border border-white/10 bg-surface/50 p-3">
@@ -549,27 +556,27 @@ export default function CrmPage() {
               </section>
 
               <section className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Client preference</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Preferencia del cliente</h3>
                 <form onSubmit={submitPreference} className="space-y-3 rounded-lg border border-white/10 bg-surface/50 p-3">
                   <input
                     {...preferenceForm.register('preferredBrandsInput')}
-                    placeholder="Preferred brands (comma-separated)"
+                    placeholder="Marcas preferidas (separadas por comas)"
                     className="ui-input"
                   />
                   <input
                     {...preferenceForm.register('preferredModelsInput')}
-                    placeholder="Preferred models (comma-separated)"
+                    placeholder="Modelos preferidos (separados por comas)"
                     className="ui-input"
                   />
                   <div className="grid gap-3 sm:grid-cols-2">
                     <input
                       {...preferenceForm.register('budgetMin')}
-                      placeholder="Budget min"
+                      placeholder="Presupuesto mínimo"
                       className="ui-input"
                     />
                     <input
                       {...preferenceForm.register('budgetMax')}
-                      placeholder="Budget max"
+                      placeholder="Presupuesto máximo"
                       className="ui-input"
                     />
                   </div>
@@ -581,17 +588,17 @@ export default function CrmPage() {
                   <textarea
                     {...preferenceForm.register('notes')}
                     rows={2}
-                    placeholder="Preference notes"
+                    placeholder="Notas de preferencia"
                     className="ui-input"
                   />
                   <button type="submit" className="ui-btn-secondary px-3 py-2">
-                    Save preference
+                    Guardar preferencia
                   </button>
                 </form>
                 {preference ? (
                   <p className="text-xs text-muted">Last updated {formatDateTime(preference.updatedAt)}</p>
                 ) : (
-                  <p className="text-xs text-muted">No saved preference yet.</p>
+                  <p className="text-xs text-muted">Aún no hay preferencia guardada.</p>
                 )}
               </section>
             </div>
@@ -614,9 +621,9 @@ export default function CrmPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">
-                  {clientModalMode === 'create' ? 'Create client' : 'Edit client'}
+                  {clientModalMode === 'create' ? 'Crear cliente' : 'Editar cliente'}
                 </h2>
-                <p className="mt-1 text-sm text-muted">Capture core profile and commercial context.</p>
+                <p className="mt-1 text-sm text-muted">Captura el perfil y contexto comercial.</p>
               </div>
               <button
                 type="button"
@@ -628,15 +635,15 @@ export default function CrmPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
-                <input {...clientForm.register('name')} placeholder="Client name *" className="ui-input" />
+                <input {...clientForm.register('name')} placeholder="Nombre del cliente *" className="ui-input" />
                 {clientForm.formState.errors.name ? (
                   <p className="mt-1 text-xs text-rose-300">{clientForm.formState.errors.name.message}</p>
                 ) : null}
               </div>
               <input {...clientForm.register('email')} placeholder="Email" className="ui-input" />
               <input {...clientForm.register('phone')} placeholder="Phone" className="ui-input" />
-              <input {...clientForm.register('tagsInput')} placeholder="Tags (comma-separated)" className="ui-input sm:col-span-2" />
-              <input {...clientForm.register('budgetRange')} placeholder="Budget range (e.g. 8k-12k)" className="ui-input sm:col-span-2" />
+              <input {...clientForm.register('tagsInput')} placeholder="Etiquetas (separadas por comas)" className="ui-input sm:col-span-2" />
+              <input {...clientForm.register('budgetRange')} placeholder="Rango de presupuesto (ej. 8k-12k)" className="ui-input sm:col-span-2" />
               <textarea {...clientForm.register('notes')} rows={3} placeholder="Notes" className="ui-input sm:col-span-2" />
               {(clientForm.formState.errors.email || clientForm.formState.errors.phone) ? (
                 <p className="text-xs text-rose-300 sm:col-span-2">
@@ -646,10 +653,10 @@ export default function CrmPage() {
             </div>
             <div className="flex justify-end gap-2 border-t border-white/10 pt-3">
               <button type="button" onClick={() => setClientModalOpen(false)} className="ui-btn-ghost px-3 py-2">
-                Cancel
+                Cancelar
               </button>
               <button type="submit" className="ui-btn-primary px-4 py-2">
-                {clientModalMode === 'create' ? 'Create client' : 'Save changes'}
+                {clientModalMode === 'create' ? 'Crear cliente' : 'Guardar cambios'}
               </button>
             </div>
           </form>
@@ -658,10 +665,10 @@ export default function CrmPage() {
 
       <DeleteConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Delete client?"
+        title="¿Eliminar cliente?"
         description={
           deleteTarget
-            ? `This will archive ${deleteTarget.name} and remove it from active CRM views.`
+            ? `Esto archivará a ${deleteTarget.name} y eliminará sus datos de la vista activa.`
             : ''
         }
         loading={deleteLoading}

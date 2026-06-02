@@ -98,7 +98,7 @@ export default function RadarListingDetailPage({
       setListing(data);
       setDraft(draftFromListing(data));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load listing.');
+      setError(err instanceof ApiError ? err.message : 'No se pudo cargar el listado.');
     } finally {
       setLoading(false);
     }
@@ -125,9 +125,9 @@ export default function RadarListingDetailPage({
       const updated = await updateRadarListing(id, buildPayload(draft));
       setListing(updated);
       setDraft(draftFromListing(updated));
-      setFlash({ type: 'success', message: 'Listing saved.' });
+      setFlash({ type: 'success', message: 'Listado guardado.' });
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Save failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al guardar.' });
     } finally {
       setSaving(false);
     }
@@ -139,9 +139,9 @@ export default function RadarListingDetailPage({
       const updated = await confirmRadarListing(id);
       setListing(updated);
       setDraft(draftFromListing(updated));
-      setFlash({ type: 'success', message: 'Listing confirmed.' });
+      setFlash({ type: 'success', message: 'Listado confirmado.' });
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Confirm failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al confirmar.' });
     } finally {
       setConfirmLoading(false);
     }
@@ -152,10 +152,10 @@ export default function RadarListingDetailPage({
     try {
       await dismissRadarListing(id, reason || undefined);
       setDismissOpen(false);
-      setFlash({ type: 'success', message: 'Listing dismissed.' });
+      setFlash({ type: 'success', message: 'Listado descartado.' });
       void loadListing();
     } catch (err) {
-      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Dismiss failed.' });
+      setFlash({ type: 'error', message: err instanceof ApiError ? err.message : 'Error al descartar.' });
     } finally {
       setDismissLoading(false);
     }
@@ -164,8 +164,8 @@ export default function RadarListingDetailPage({
   const anyLoading = saving || confirmLoading || dismissLoading;
 
   const title = listing
-    ? [listing.brand, listing.rawModelMention].filter(Boolean).join(' ') || 'Listing'
-    : 'Listing Detail';
+    ? [listing.brand, listing.rawModelMention].filter(Boolean).join(' ') || 'Listado'
+    : 'Detalle del listado';
 
   return (
     <section className="ui-page">
@@ -187,7 +187,7 @@ export default function RadarListingDetailPage({
           <p className="ui-subtitle font-mono text-xs">{id}</p>
         </div>
         <Link href="/radar" className="ui-btn-secondary px-3 py-2">
-          Back to Radar
+          Volver al radar
         </Link>
       </header>
 
@@ -205,7 +205,7 @@ export default function RadarListingDetailPage({
             onClick={() => void loadListing()}
             className="mt-3 text-sm underline text-rose-200"
           >
-            Retry
+            Reintentar
           </button>
         </section>
       ) : listing && draft ? (
@@ -218,7 +218,7 @@ export default function RadarListingDetailPage({
                 <ReviewStatusBadge status={listing.reviewStatus} />
                 {listing.urgencyDetected && (
                   <span className="inline-flex items-center rounded-full border border-rose-500/40 bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-200">
-                    Urgent
+                    Urgente
                   </span>
                 )}
               </div>
@@ -245,7 +245,7 @@ export default function RadarListingDetailPage({
                   disabled={anyLoading}
                   className="ui-btn-primary px-4 py-2 text-sm disabled:opacity-50"
                 >
-                  {confirmLoading ? 'Confirming…' : 'Confirm listing'}
+                  {confirmLoading ? 'Confirmando…' : 'Confirmar listado'}
                 </button>
               )}
               {listing.reviewStatus !== 'DISMISSED' && (
@@ -255,19 +255,19 @@ export default function RadarListingDetailPage({
                   disabled={anyLoading}
                   className="ui-btn-danger px-4 py-2 text-sm disabled:opacity-50"
                 >
-                  Dismiss
+                  Descartar
                 </button>
               )}
               {listing.confirmedAt && (
                 <p className="text-xs text-muted">
-                  Confirmed {formatDate(listing.confirmedAt)}
-                  {listing.confirmedBy ? ` by ${listing.confirmedBy}` : ''}
+                  Confirmado el {formatDate(listing.confirmedAt)}
+                  {listing.confirmedBy ? ` por ${listing.confirmedBy}` : ''}
                 </p>
               )}
               {listing.dismissedAt && (
                 <p className="text-xs text-muted">
-                  Dismissed {formatDate(listing.dismissedAt)}
-                  {listing.dismissedBy ? ` by ${listing.dismissedBy}` : ''}
+                  Descartado el {formatDate(listing.dismissedAt)}
+                  {listing.dismissedBy ? ` por ${listing.dismissedBy}` : ''}
                 </p>
               )}
             </div>
@@ -275,7 +275,7 @@ export default function RadarListingDetailPage({
 
           {/* ── AI analysis ──────────────────────────────────────────────── */}
           <article className="ui-card space-y-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">AI Analysis</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Análisis IA</h2>
             {listing.aiSummary && (
               <p className="rounded-lg border border-white/10 bg-surface/40 px-3 py-2 text-sm text-white/80 leading-relaxed">
                 {listing.aiSummary}
@@ -283,14 +283,14 @@ export default function RadarListingDetailPage({
             )}
             {listing.watchReference && (
               <div className="rounded-lg border border-white/15 bg-white/5 px-4 py-3">
-                <p className="text-xs uppercase tracking-wide text-white/50">Catalog match</p>
+                <p className="text-xs uppercase tracking-wide text-white/50">Coincidencia en catálogo</p>
                 <p className="mt-1 text-sm text-white">
                   {listing.watchReference.brand} {listing.watchReference.model}{' '}
                   <span className="font-mono text-white/70">{listing.watchReference.reference}</span>
                 </p>
                 {listing.watchReference.approximateRetailUsd && (
                   <p className="mt-0.5 text-xs text-muted">
-                    Approx. retail {formatPrice(listing.watchReference.approximateRetailUsd, 'USD')}
+                    Precio aprox. {formatPrice(listing.watchReference.approximateRetailUsd, 'USD')}
                   </p>
                 )}
               </div>
@@ -300,65 +300,65 @@ export default function RadarListingDetailPage({
 
           {/* ── Edit form ────────────────────────────────────────────────── */}
           <article className="ui-card space-y-5">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Edit Fields</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Editar campos</h2>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Brand</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Marca</label>
                 <input
                   value={draft.brand}
                   onChange={(e) => setField('brand', e.target.value)}
                   className="ui-input mt-1 w-full"
-                  placeholder="e.g. Rolex"
+                  placeholder="ej. Rolex"
                 />
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Reference number</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Número de referencia</label>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     value={draft.referenceNumber}
                     onChange={(e) => setField('referenceNumber', e.target.value)}
                     className="ui-input flex-1"
-                    placeholder="e.g. 126710BLNR"
+                    placeholder="ej. 126710BLNR"
                   />
                   <SourceBadge source={listing.referenceSource} />
                 </div>
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Intent</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Tipo</label>
                 <select
                   value={draft.intent}
                   onChange={(e) => setField('intent', e.target.value as RadarIntent)}
                   className="ui-input mt-1 w-full"
                 >
-                  <option value="SELL_OFFER">Sell Offer</option>
-                  <option value="BUY_REQUEST">Buy Request</option>
-                  <option value="PRICE_SIGNAL">Price Signal</option>
-                  <option value="GENERAL_INQUIRY">General Inquiry</option>
+                  <option value="SELL_OFFER">Oferta de venta</option>
+                  <option value="BUY_REQUEST">Solicitud de compra</option>
+                  <option value="PRICE_SIGNAL">Señal de precio</option>
+                  <option value="GENERAL_INQUIRY">Consulta general</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Year</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Año</label>
                 <input
                   value={draft.year}
                   onChange={(e) => setField('year', e.target.value)}
                   className="ui-input mt-1 w-full"
-                  placeholder="e.g. 2021"
+                  placeholder="ej. 2021"
                   inputMode="numeric"
                 />
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Price</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Precio</label>
                 <input
                   value={draft.priceAmount}
                   onChange={(e) => setField('priceAmount', e.target.value)}
                   className="ui-input mt-1 w-full"
-                  placeholder="e.g. 12500"
+                  placeholder="ej. 12500"
                   inputMode="decimal"
                 />
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Currency</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Moneda</label>
                 <input
                   value={draft.priceCurrency}
                   onChange={(e) => setField('priceCurrency', e.target.value)}
@@ -368,49 +368,49 @@ export default function RadarListingDetailPage({
                 />
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Box</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Estuche</label>
                 <select
                   value={draft.hasBox}
                   onChange={(e) => setField('hasBox', e.target.value as DraftFields['hasBox'])}
                   className="ui-input mt-1 w-full"
                 >
-                  <option value="">Not specified</option>
-                  <option value="true">Yes</option>
+                  <option value="">Sin especificar</option>
+                  <option value="true">Sí</option>
                   <option value="false">No</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs uppercase tracking-wide text-muted">Papers</label>
+                <label className="text-xs uppercase tracking-wide text-muted">Documentos</label>
                 <select
                   value={draft.hasPapers}
                   onChange={(e) => setField('hasPapers', e.target.value as DraftFields['hasPapers'])}
                   className="ui-input mt-1 w-full"
                 >
-                  <option value="">Not specified</option>
-                  <option value="true">Yes</option>
+                  <option value="">Sin especificar</option>
+                  <option value="true">Sí</option>
                   <option value="false">No</option>
                 </select>
               </div>
             </div>
 
             <div>
-              <label className="text-xs uppercase tracking-wide text-muted">Condition notes</label>
+              <label className="text-xs uppercase tracking-wide text-muted">Notas de condición</label>
               <textarea
                 value={draft.conditionNotes}
                 onChange={(e) => setField('conditionNotes', e.target.value)}
                 rows={2}
                 className="ui-input mt-1 w-full resize-none"
-                placeholder="e.g. Minor scratches on bracelet"
+                placeholder="ej. Pequeños rasguños en la pulsera"
               />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wide text-muted">Dealer notes</label>
+              <label className="text-xs uppercase tracking-wide text-muted">Notas del operador</label>
               <textarea
                 value={draft.dealerNotes}
                 onChange={(e) => setField('dealerNotes', e.target.value)}
                 rows={2}
                 className="ui-input mt-1 w-full resize-none"
-                placeholder="Internal notes…"
+                placeholder="Notas internas…"
               />
             </div>
 
@@ -421,18 +421,18 @@ export default function RadarListingDetailPage({
                 disabled={anyLoading}
                 className="ui-btn-primary px-5 py-2 text-sm disabled:opacity-50"
               >
-                {saving ? 'Saving…' : 'Save changes'}
+                {saving ? 'Guardando…' : 'Guardar cambios'}
               </button>
             </div>
           </article>
 
           {/* ── Source & message ─────────────────────────────────────────── */}
           <article className="ui-card space-y-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Source</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Fuente</h2>
 
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted">Sender</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Remitente</p>
                 <p className="mt-1 text-sm text-white">
                   {listing.contact?.displayName ?? listing.message.senderRaw}
                 </p>
@@ -441,18 +441,18 @@ export default function RadarListingDetailPage({
                 )}
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted">Posted</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Publicado</p>
                 <p className="mt-1 text-sm text-white">{formatDateTime(listing.message.postedAt)}</p>
               </div>
               {listing.message.import.sourceGroupName && (
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted">Group</p>
+                  <p className="text-xs uppercase tracking-wide text-muted">Grupo</p>
                   <p className="mt-1 text-sm text-white">{listing.message.import.sourceGroupName}</p>
                 </div>
               )}
               {listing.message.import.dateRangeStart && (
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted">Import range</p>
+                  <p className="text-xs uppercase tracking-wide text-muted">Rango de importación</p>
                   <p className="mt-1 text-sm text-white">
                     {formatDate(listing.message.import.dateRangeStart)}
                     {listing.message.import.dateRangeEnd && (
@@ -462,11 +462,11 @@ export default function RadarListingDetailPage({
                 </div>
               )}
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted">Listing created</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Listado creado</p>
                 <p className="mt-1 text-sm text-white">{formatDateTime(listing.createdAt)}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted">Initial confidence</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Confianza inicial</p>
                 <p className="mt-1 text-sm text-white">
                   {Math.round(listing.initialConfidence * 100)}%
                 </p>
@@ -474,7 +474,7 @@ export default function RadarListingDetailPage({
             </div>
 
             <div>
-              <p className="text-xs uppercase tracking-wide text-muted">Original message</p>
+              <p className="text-xs uppercase tracking-wide text-muted">Mensaje original</p>
               <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-surface/60 px-3 py-3 font-sans text-sm leading-relaxed text-white/70">
                 {listing.message.content}
               </pre>
@@ -483,7 +483,7 @@ export default function RadarListingDetailPage({
 
           {/* ── Contact ──────────────────────────────────────────────────── */}
           <article className="ui-card">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Contact</h2>
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Contacto</h2>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-white">
@@ -500,7 +500,7 @@ export default function RadarListingDetailPage({
                 href={`/radar/contacts/${listing.contactId}`}
                 className="ui-btn-ghost px-3 py-1.5 text-xs"
               >
-                View profile
+                Ver perfil
               </Link>
             </div>
           </article>

@@ -29,14 +29,14 @@ export function DismissModal({ open, loading, onCancel, onConfirm }: Props) {
         onClick={onCancel}
       />
       <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-panel/95 p-4 shadow-2xl backdrop-blur sm:p-6">
-        <h3 className="text-lg font-semibold text-white">Dismiss listing</h3>
+        <h3 className="text-lg font-semibold text-white">Descartar listado</h3>
         <p className="mt-1 text-sm text-muted">
-          Reason is optional — it will be appended to dealer notes.
+          El motivo es opcional — se añadirá a las notas del operador.
         </p>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          placeholder="e.g. Duplicate, already handled"
+          placeholder="ej. Duplicado, ya atendido"
           rows={3}
           className="ui-input mt-4 resize-none"
           disabled={loading}
@@ -49,7 +49,7 @@ export function DismissModal({ open, loading, onCancel, onConfirm }: Props) {
             disabled={loading}
             className="ui-btn-ghost px-4 py-2"
           >
-            Cancel
+            Cancelar
           </button>
           <button
             type="button"
@@ -57,7 +57,7 @@ export function DismissModal({ open, loading, onCancel, onConfirm }: Props) {
             disabled={loading}
             className="ui-btn-danger bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
           >
-            {loading ? 'Dismissing…' : 'Dismiss'}
+            {loading ? 'Descartando…' : 'Descartar'}
           </button>
         </div>
       </div>

@@ -15,10 +15,10 @@ function scoreTone(score: number) {
 }
 
 function scoreLabel(score: number) {
-  if (score >= 85) return 'Strong fit';
-  if (score >= 70) return 'Good fit';
-  if (score >= 55) return 'Possible fit';
-  return 'Weak fit';
+  if (score >= 85) return 'Muy compatible';
+  if (score >= 70) return 'Compatible';
+  if (score >= 55) return 'Posible';
+  return 'Baja compatibilidad';
 }
 
 export default function MatchingPage() {
@@ -56,7 +56,7 @@ export default function MatchingPage() {
         setSelectedClientId(clientData[0].id);
       }
     } catch (caughtError) {
-      setError(caughtError instanceof ApiError ? caughtError.message : 'Could not load selectors.');
+      setError(caughtError instanceof ApiError ? caughtError.message : 'No se pudieron cargar los datos.');
     } finally {
       setLoading(false);
     }
@@ -101,7 +101,7 @@ export default function MatchingPage() {
       setError(
         caughtError instanceof ApiError
           ? caughtError.message
-          : 'Could not load match suggestions.',
+          : 'No se pudieron cargar las sugerencias.',
       );
     } finally {
       setSuggestionsLoading(false);
@@ -128,13 +128,13 @@ export default function MatchingPage() {
     setRecalculating('all');
     try {
       await apiPost('/matching/recalculate', {}, { authenticated: true });
-      setFlash({ type: 'success', message: 'Recalculated matching for all watches.' });
+      setFlash({ type: 'success', message: 'Coincidencias recalculadas para todos los relojes.' });
       await loadSuggestions();
     } catch (caughtError) {
       setFlash({
         type: 'error',
         message:
-          caughtError instanceof ApiError ? caughtError.message : 'Recalculation failed.',
+          caughtError instanceof ApiError ? caughtError.message : 'El recálculo falló.',
       });
     } finally {
       setRecalculating(null);
@@ -146,13 +146,13 @@ export default function MatchingPage() {
     setRecalculating('watch');
     try {
       await apiPost('/matching/recalculate', { watchId: selectedWatchId }, { authenticated: true });
-      setFlash({ type: 'success', message: 'Recalculated matches for selected watch.' });
+      setFlash({ type: 'success', message: 'Coincidencias recalculadas para el reloj seleccionado.' });
       await loadSuggestions();
     } catch (caughtError) {
       setFlash({
         type: 'error',
         message:
-          caughtError instanceof ApiError ? caughtError.message : 'Watch recalculation failed.',
+          caughtError instanceof ApiError ? caughtError.message : 'El recálculo del reloj falló.',
       });
     } finally {
       setRecalculating(null);
@@ -162,13 +162,13 @@ export default function MatchingPage() {
   const dismissSuggestion = async (suggestionId: string) => {
     try {
       await apiPatch(`/matching/suggestions/${suggestionId}/dismiss`, {}, { authenticated: true });
-      setFlash({ type: 'success', message: 'Suggestion dismissed.' });
+      setFlash({ type: 'success', message: 'Sugerencia descartada.' });
       await loadSuggestions();
     } catch (caughtError) {
       setFlash({
         type: 'error',
         message:
-          caughtError instanceof ApiError ? caughtError.message : 'Could not dismiss suggestion.',
+          caughtError instanceof ApiError ? caughtError.message : 'No se pudo descartar la sugerencia.',
       });
     }
   };
@@ -177,9 +177,9 @@ export default function MatchingPage() {
     <div className="ui-page">
       <header className="ui-page-header">
         <div>
-          <h1 className="ui-title">Matching Intelligence</h1>
+          <h1 className="ui-title">Inteligencia de coincidencias</h1>
           <p className="ui-subtitle">
-            Surface the highest-probability buyer-watch opportunities in seconds.
+            Descubre las mejores oportunidades comprador-reloj en segundos.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -189,7 +189,7 @@ export default function MatchingPage() {
             disabled={recalculating !== null}
             className="ui-btn-secondary px-3 py-2"
           >
-            {recalculating === 'all' ? 'Recalculating…' : 'Recalculate all'}
+            {recalculating === 'all' ? 'Recalculando…' : 'Recalcular todo'}
           </button>
           <button
             type="button"
@@ -197,7 +197,7 @@ export default function MatchingPage() {
             disabled={recalculating !== null || !selectedWatchId}
             className="ui-btn-primary px-3 py-2"
           >
-            {recalculating === 'watch' ? 'Recalculating…' : 'Recalculate selected watch'}
+            {recalculating === 'watch' ? 'Recalculando…' : 'Recalcular reloj seleccionado'}
           </button>
         </div>
       </header>
@@ -224,7 +224,7 @@ export default function MatchingPage() {
                 mode === 'watch' ? 'bg-accent text-black font-semibold' : 'text-muted hover:bg-white/5 hover:text-white'
               }`}
             >
-              Watch-first
+              Por reloj
             </button>
             <button
               type="button"
@@ -233,14 +233,14 @@ export default function MatchingPage() {
                 mode === 'client' ? 'bg-accent text-black font-semibold' : 'text-muted hover:bg-white/5 hover:text-white'
               }`}
             >
-              Client-first
+              Por cliente
             </button>
           </div>
 
           {mode === 'watch' ? (
             <label className="min-w-0 w-full flex-1 basis-full sm:min-w-[240px] sm:basis-auto">
               <span className="mb-1 block text-xs uppercase tracking-wide text-muted">
-                Select watch
+                Seleccionar reloj
               </span>
               <select
                 value={selectedWatchId}
@@ -257,7 +257,7 @@ export default function MatchingPage() {
           ) : (
             <label className="min-w-0 w-full flex-1 basis-full sm:min-w-[240px] sm:basis-auto">
               <span className="mb-1 block text-xs uppercase tracking-wide text-muted">
-                Select client
+                Seleccionar cliente
               </span>
               <select
                 value={selectedClientId}
@@ -280,7 +280,7 @@ export default function MatchingPage() {
               onChange={(event) => setIncludeDismissed(event.target.checked)}
               className="h-4 w-4 rounded border-white/30 bg-surface"
             />
-            Show dismissed
+            Mostrar descartadas
           </label>
         </div>
       </section>
@@ -299,7 +299,7 @@ export default function MatchingPage() {
             onClick={() => void (loading ? loadSelectors() : loadSuggestions())}
             className="mt-3 underline"
           >
-            Retry
+            Reintentar
           </button>
         </section>
       ) : (
@@ -312,10 +312,9 @@ export default function MatchingPage() {
             </div>
           ) : suggestions.length === 0 ? (
             <div className="rounded-xl border border-dashed border-white/15 bg-panel/60 p-12 text-center">
-              <h2 className="text-lg font-semibold">No suggestions right now</h2>
+              <h2 className="text-lg font-semibold">Sin sugerencias por ahora</h2>
               <p className="mt-2 text-sm text-muted">
-                Recalculate matching or select another {mode === 'watch' ? 'watch' : 'client'} to
-                surface opportunities.
+                Recalcula coincidencias o selecciona otro {mode === 'watch' ? 'reloj' : 'cliente'} para descubrir oportunidades.
               </p>
             </div>
           ) : (
@@ -330,8 +329,8 @@ export default function MatchingPage() {
                         {client?.name ?? 'Unknown client'} ↔ {watch ? `${watch.brand} ${watch.model}` : 'Unknown watch'}
                       </h3>
                       <p className="mt-1 text-xs text-muted">
-                        {watch?.serialNumber ? `S/N ${watch.serialNumber}` : 'No serial'} ·{' '}
-                        {client?.budgetRange ?? 'No budget profile'}
+                        {watch?.serialNumber ? `S/N ${watch.serialNumber}` : 'Sin número de serie'} ·{' '}
+                        {client?.budgetRange ?? 'Sin perfil de presupuesto'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -347,7 +346,7 @@ export default function MatchingPage() {
                         onClick={() => void dismissSuggestion(suggestion.id)}
                         className="ui-btn-danger px-2 py-1 text-xs"
                       >
-                        Dismiss
+                        Descartar
                       </button>
                     </div>
                   </div>
