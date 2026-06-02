@@ -157,7 +157,7 @@ export type PaymentSummary = {
   pendingBalance: string;
 };
 
-export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CARD' | 'OTHER';
+export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CARD' | 'OTHER' | 'BANCOS' | 'CESAR';
 export type PaymentStatus = 'PENDING' | 'PAID' | 'OVERDUE';
 
 export type Payment = {
@@ -207,7 +207,35 @@ export type OperatingExpenseCategory =
   | 'FLIGHTS'
   | 'TRAVEL'
   | 'MARKETING'
-  | 'COMMISSIONS';
+  | 'COMMISSIONS'
+  | 'BANK_FEES';
+
+export type VentaPaymentMethod = 'CASH' | 'BANCOS' | 'CESAR';
+export type VentaBankChannel = 'JOSE' | 'MAYTE';
+
+export type RegisterSalePayload = {
+  watchId: string;
+  clientId: string;
+  salePrice: number;
+  paymentMethod: VentaPaymentMethod;
+  bankChannel?: VentaBankChannel;
+  saleDate?: string;
+  notes?: string;
+};
+
+export type RegisterSaleResponse = {
+  id: string;
+  watchId: string;
+  clientId: string;
+  salePrice: string;
+  paymentMethod: VentaPaymentMethod;
+  bankChannel: VentaBankChannel | null;
+  bankFee: string | null;
+  netReceived: string;
+  paidAt: string | null;
+  notes: string | null;
+  createdAt: string;
+};
 
 export type OperatingExpense = {
   id: string;

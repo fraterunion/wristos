@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DealStage, Watch, WatchExpense, WatchStatus } from '@prisma/client';
+import { DealStage, OperatingExpenseCategory, Watch, WatchExpense, WatchStatus } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -10,7 +10,7 @@ export class HistoryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getSummary(tenantId: string) {
-    const [totalAcquired, currentStock, soldDeals] = await Promise.all([
+    const [totalAcquired, currentStock, soldDeals, bankFeeAgg] = await Promise.all([
       this.prisma.watch.count({ where: { tenantId } }),
       this.prisma.watch.count({
         where: { tenantId, deletedAt: null, status: { not: WatchStatus.SOLD } },
@@ -27,6 +27,11 @@ export class HistoryService {
           },
         },
       }),
+      // Sum all bank fee expenses to deduct from gross profit
+      this.prisma.operatingExpense.aggregate({
+        where: { tenantId, category: OperatingExpenseCategory.BANK_FEES },
+        _sum: { amount: true },
+      }),
     ]);
 
     const totalRevenue = soldDeals.reduce((sum, d) => sum + Number(d.agreedPrice), 0);
@@ -34,6 +39,7 @@ export class HistoryService {
       const expenseSum = d.watch.expenses.reduce((es, e) => es + Number(e.amount), 0);
       return sum + Number(d.watch.cost) + expenseSum;
     }, 0);
+    const totalBankFees = Number(bankFeeAgg._sum.amount ?? 0);
 
     return {
       totalAcquired,
@@ -41,7 +47,8 @@ export class HistoryService {
       currentStock,
       totalRevenue: totalRevenue.toFixed(2),
       totalCostOfSold: totalCostOfSold.toFixed(2),
-      totalProfit: (totalRevenue - totalCostOfSold).toFixed(2),
+      totalBankFees: totalBankFees.toFixed(2),
+      totalProfit: (totalRevenue - totalCostOfSold - totalBankFees).toFixed(2),
     };
   }
 

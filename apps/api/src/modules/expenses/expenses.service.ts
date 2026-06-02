@@ -81,7 +81,10 @@ export class ExpensesService {
 
     for (const row of rows) {
       const amt = Number(row.amount);
-      if (row.category === OperatingExpenseCategory.COMMISSIONS) {
+      if (
+        row.category === OperatingExpenseCategory.COMMISSIONS ||
+        row.category === OperatingExpenseCategory.BANK_FEES
+      ) {
         totalCommissions += amt;
       } else {
         totalOperating += amt;
@@ -101,7 +104,9 @@ export class ExpensesService {
         total: data.total.toFixed(2),
         count: data.count,
         percentage: totalSpend > 0 ? ((data.total / totalSpend) * 100).toFixed(1) : '0.0',
-        isCommission: cat === OperatingExpenseCategory.COMMISSIONS,
+        isCommission:
+          cat === OperatingExpenseCategory.COMMISSIONS ||
+          cat === OperatingExpenseCategory.BANK_FEES,
       }))
       .sort((a, b) => Number(b.total) - Number(a.total));
 
