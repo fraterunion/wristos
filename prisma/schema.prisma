@@ -53,6 +53,8 @@ enum PaymentMethod {
   CASH
   CARD
   OTHER
+  BANCOS
+  CESAR
 }
 
 enum ClientInteractionType {
@@ -93,6 +95,7 @@ enum OperatingExpenseCategory {
   TRAVEL
   MARKETING
   COMMISSIONS
+  BANK_FEES
 }
 
 // --- AI Market Radar ---
