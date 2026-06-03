@@ -77,14 +77,14 @@ export class ExpensesService {
 
     let totalOperating = 0;
     let totalCommissions = 0;
+    let totalBankFees = 0;
     const byCategory: Record<string, { total: number; count: number }> = {};
 
     for (const row of rows) {
       const amt = Number(row.amount);
-      if (
-        row.category === OperatingExpenseCategory.COMMISSIONS ||
-        row.category === OperatingExpenseCategory.BANK_FEES
-      ) {
+      if (row.category === OperatingExpenseCategory.BANK_FEES) {
+        totalBankFees += amt;
+      } else if (row.category === OperatingExpenseCategory.COMMISSIONS) {
         totalCommissions += amt;
       } else {
         totalOperating += amt;
@@ -96,7 +96,7 @@ export class ExpensesService {
       byCategory[row.category].count += 1;
     }
 
-    const totalSpend = totalOperating + totalCommissions;
+    const totalSpend = totalOperating + totalCommissions + totalBankFees;
 
     const categorySummary = Object.entries(byCategory)
       .map(([cat, data]) => ({
@@ -116,6 +116,7 @@ export class ExpensesService {
     return {
       totalOperatingExpenses: totalOperating.toFixed(2),
       totalCommissions: totalCommissions.toFixed(2),
+      totalBankFees: totalBankFees.toFixed(2),
       totalSpend: totalSpend.toFixed(2),
       expenseCount: rows.length,
       biggestCategory,

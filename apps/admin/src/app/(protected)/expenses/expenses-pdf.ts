@@ -190,17 +190,17 @@ function drawSummarySection(doc: Doc, summary: ExpensesSummary, W: number, start
   y += 8;
 
   const stats = [
-    { label: 'Total Operating', value: fmt(summary.totalOperatingExpenses), gold: false },
-    { label: 'Commissions',     value: fmt(summary.totalCommissions),       gold: true  },
-    { label: 'Total Spend',     value: fmt(summary.totalSpend),             gold: false },
+    { label: 'Gasto Total',       value: fmt(summary.totalSpend),             gold: false },
+    { label: 'Operativos',        value: fmt(summary.totalOperatingExpenses), gold: false },
+    { label: 'Comisiones',        value: fmt(summary.totalCommissions),       gold: true  },
+    { label: 'Com. Bancos',       value: fmt(summary.totalBankFees),          gold: true  },
     {
-      label: 'Biggest Category',
+      label: 'Cat. Principal',
       value: summary.biggestCategory
         ? (CATEGORY_LABELS[summary.biggestCategory as OperatingExpenseCategory] ?? summary.biggestCategory)
         : '—',
       gold: false,
     },
-    { label: 'Records', value: String(summary.expenseCount), gold: false },
   ];
 
   const BOX_H = 22;
@@ -463,7 +463,7 @@ function drawExpensesTable(
   doc.setFontSize(6.5);
   t(doc, C.LIGHT_MUTED);
   doc.text(
-    `Operating ${fmt(summary.totalOperatingExpenses)}  ·  Commissions ${fmt(summary.totalCommissions)}`,
+    `Operativos ${fmt(summary.totalOperatingExpenses)}  ·  Comisiones ${fmt(summary.totalCommissions)}  ·  Bancos ${fmt(summary.totalBankFees)}`,
     NOTE_X + 2,
     y + 6.5,
   );
