@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -13,6 +14,7 @@ import {
   WatchStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FxService } from '../fx/fx.service';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
 import { RegisterSaleDto } from './dto/register-sale.dto';
@@ -21,7 +23,12 @@ import { UpdateDealStageDto } from './dto/update-deal-stage.dto';
 
 @Injectable()
 export class DealsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DealsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fxService: FxService,
+  ) {}
 
   async create(tenantId: string, dto: CreateDealDto) {
     await this.ensureClientInTenant(dto.clientId, tenantId);
@@ -203,6 +210,34 @@ export class DealsService {
 
     const soldAt = dto.saleDate ? new Date(dto.saleDate) : new Date();
 
+    // --- Currency resolution (pre-transaction) ---
+    // Default to MXN for backwards compatibility with callers that omit currency.
+    // Commit 5 (frontend) will send currency explicitly.
+    const currency = dto.currency ?? 'MXN';
+
+    let canonicalMxn: Prisma.Decimal; // agreedPrice and Payment.amount
+    let exchangeRateDecimal: Prisma.Decimal | null = null;
+
+    if (currency === 'USD') {
+      // Fetch rate before starting the transaction so a failure does not leave
+      // a partially-committed state. ServiceUnavailableException propagates
+      // to the caller if no rate can be obtained (no cache + fetch failed).
+      const fxResult = await this.fxService.getUsdMxn();
+      if (fxResult.stale) {
+        this.logger.warn(
+          'USD sale using stale FX rate (cached %s)',
+          fxResult.fetchedAt,
+        );
+      }
+      exchangeRateDecimal = new Prisma.Decimal(fxResult.rate.toString());
+      // Round to 2dp (monetary). Using Decimal arithmetic avoids float errors.
+      canonicalMxn = new Prisma.Decimal(dto.salePrice.toString())
+        .mul(exchangeRateDecimal)
+        .toDecimalPlaces(2);
+    } else {
+      canonicalMxn = new Prisma.Decimal(dto.salePrice);
+    }
+
     const BANK_RATES: Record<'JOSE' | 'MAYTE', number> = {
       JOSE: 0.02,
       MAYTE: 0.01,
@@ -210,39 +245,40 @@ export class DealsService {
 
     // --- Atomic transaction ---
     const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Create Deal with stage CLOSED_WON
+      // 1. Create Deal — agreedPrice is always canonical MXN
       const deal = await tx.deal.create({
         data: {
           tenant: { connect: { id: tenantId } },
           client: { connect: { id: dto.clientId } },
           watch: { connect: { id: dto.watchId } },
           stage: DealStage.CLOSED_WON,
-          agreedPrice: new Prisma.Decimal(dto.salePrice),
+          agreedPrice: canonicalMxn,
+          originalCurrency: currency,
+          originalAmount: new Prisma.Decimal(dto.salePrice),
+          exchangeRate: exchangeRateDecimal,
           notes: dto.notes,
           expectedCloseAt: soldAt,
         },
       });
 
-      // 2. Create Payment as already PAID
+      // 2. Create Payment — amount is canonical MXN
       const payment = await tx.payment.create({
         data: {
           tenant: { connect: { id: tenantId } },
           deal: { connect: { id: deal.id } },
-          amount: new Prisma.Decimal(dto.salePrice),
+          amount: canonicalMxn,
           method: dto.paymentMethod as PaymentMethod,
           status: PaymentStatus.PAID,
           paidAt: soldAt,
         },
       });
 
-      // 3. Create bank fee expense (BANCOS only)
+      // 3. Bank fee expense (BANCOS only) — calculated from canonical MXN
       let bankFeeExpense: { amount: Prisma.Decimal } | null = null;
       if (dto.paymentMethod === 'BANCOS' && dto.bankChannel) {
-        const rate = BANK_RATES[dto.bankChannel];
-        const feeAmount = new Prisma.Decimal(dto.salePrice).mul(
-          new Prisma.Decimal(rate),
-        );
-        const pct = (rate * 100).toFixed(0);
+        const bankRate = BANK_RATES[dto.bankChannel];
+        const feeAmount = canonicalMxn.mul(new Prisma.Decimal(bankRate));
+        const pct = (bankRate * 100).toFixed(0);
         bankFeeExpense = await tx.operatingExpense.create({
           data: {
             tenant: { connect: { id: tenantId } },
@@ -265,13 +301,17 @@ export class DealsService {
 
     const { deal, payment, bankFeeExpense } = result;
     const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
-    const netReceived = new Prisma.Decimal(dto.salePrice).minus(bankFeeDecimal);
+    const netReceived = canonicalMxn.minus(bankFeeDecimal);
 
     return {
       id: deal.id,
       watchId: deal.watchId,
       clientId: deal.clientId,
+      // agreedPrice / salePrice is always MXN — the canonical accounting amount
       salePrice: deal.agreedPrice.toString(),
+      originalCurrency: deal.originalCurrency,
+      originalAmount: deal.originalAmount?.toString() ?? null,
+      exchangeRate: deal.exchangeRate?.toString() ?? null,
       paymentMethod: payment.method,
       bankChannel: dto.bankChannel ?? null,
       bankFee: bankFeeExpense ? bankFeeDecimal.toString() : null,
