@@ -463,7 +463,12 @@ export default function ExpensesPage() {
           {summary && (
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
               <SummaryCard
-                label="Total operativo"
+                label="Gasto Total"
+                value={formatCurrency(summary.totalSpend)}
+                tone="red"
+              />
+              <SummaryCard
+                label="Operativos"
                 value={formatCurrency(summary.totalOperatingExpenses)}
                 tone="default"
               />
@@ -471,26 +476,20 @@ export default function ExpensesPage() {
                 label="Comisiones"
                 value={formatCurrency(summary.totalCommissions)}
                 tone="gold"
-                sub="Rastreadas por separado"
               />
               <SummaryCard
-                label="Gasto total"
-                value={formatCurrency(summary.totalSpend)}
-                tone="red"
+                label="Comisiones Bancos"
+                value={formatCurrency(summary.totalBankFees)}
+                tone="gold"
               />
               <SummaryCard
-                label="Categoría principal"
+                label="Categoría Principal"
                 value={
                   summary.biggestCategory
                     ? (CATEGORY_LABELS[summary.biggestCategory as OperatingExpenseCategory] ??
                       summary.biggestCategory)
                     : '—'
                 }
-                tone="muted"
-              />
-              <SummaryCard
-                label="Total de registros"
-                value={String(summary.expenseCount)}
                 tone="muted"
               />
             </div>

@@ -264,6 +264,7 @@ export type ExpenseCategorySummary = {
 export type ExpensesSummary = {
   totalOperatingExpenses: string;
   totalCommissions: string;
+  totalBankFees: string;
   totalSpend: string;
   expenseCount: number;
   biggestCategory: string | null;
