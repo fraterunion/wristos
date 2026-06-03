@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import { apiGet } from '@/lib/api-client';
+import { getFxUsdMxn, type FxRateResult } from '@/lib/fx-api';
 import { queryKeys } from '@/lib/query-keys';
 import {
   AnalyticsPeriod,
@@ -124,6 +125,63 @@ function DashboardSkeleton() {
   );
 }
 
+function timeAgo(iso: string): string {
+  const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (diffMin < 1) return 'hace un momento';
+  if (diffMin === 1) return 'hace 1 min';
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  const diffHr = Math.floor(diffMin / 60);
+  return diffHr === 1 ? 'hace 1 hora' : `hace ${diffHr} horas`;
+}
+
+function FxRateCard({
+  rate,
+  loading,
+  error,
+}: {
+  rate: FxRateResult | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <article className="rounded-xl border border-white/10 bg-panel p-5">
+      <p className="text-xs uppercase tracking-wide text-muted">Tipo de cambio</p>
+
+      {loading ? (
+        <div className="mt-3 space-y-2 animate-pulse">
+          <div className="h-8 w-28 rounded bg-white/10" />
+          <div className="h-3 w-16 rounded bg-white/10" />
+          <div className="h-3 w-44 rounded bg-white/[0.06]" />
+        </div>
+      ) : !rate ? (
+        <>
+          <p className="mt-3 text-2xl font-semibold text-white/25">No disponible</p>
+          <p className="mt-1 text-xs text-muted/60">USD/MXN</p>
+        </>
+      ) : (
+        <>
+          <div className="mt-3 flex items-baseline gap-2">
+            <p className="text-2xl font-semibold text-white tabular-nums">
+              ${rate.rate.toFixed(2)}
+            </p>
+            {rate.stale && (
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400/80">
+                Dato en caché
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-muted">USD/MXN</p>
+          <p className="mt-3 text-[11px] text-muted/60">
+            Fuente: {rate.source}
+            <span className="mx-1 opacity-40">·</span>
+            Actualizado {timeAgo(rate.fetchedAt)}
+          </p>
+        </>
+      )}
+    </article>
+  );
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -132,6 +190,10 @@ export default function DashboardPage() {
   const [revenueSeries, setRevenueSeries] = useState<RevenueOverTimePoint[]>([]);
   const [salesSeries, setSalesSeries] = useState<SalesOverTimePoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
+
+  const [fxRate, setFxRate] = useState<FxRateResult | null>(null);
+  const [fxLoading, setFxLoading] = useState(true);
+  const [fxError, setFxError] = useState<string | null>(null);
 
   const fetchDashboard = async () => {
     setIsLoading(true);
@@ -168,6 +230,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void fetchDashboard();
+  }, []);
+
+  useEffect(() => {
+    getFxUsdMxn()
+      .then((r) => { setFxRate(r); setFxLoading(false); })
+      .catch(() => { setFxError('No disponible'); setFxLoading(false); });
   }, []);
 
   useEffect(() => {
@@ -284,6 +352,7 @@ export default function DashboardPage() {
             tone={kpi.tone}
           />
         ))}
+        <FxRateCard rate={fxRate} loading={fxLoading} error={fxError} />
       </section>
 
       <section className="space-y-4">

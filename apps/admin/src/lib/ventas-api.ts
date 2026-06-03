@@ -9,17 +9,10 @@ import type {
 
 const AUTH = { authenticated: true } as const;
 
-export type FxRateResult = {
-  pair: string;
-  rate: number;
-  source: string;
-  fetchedAt: string;
-  stale?: boolean;
-};
-
-export function getFxUsdMxn(): Promise<FxRateResult> {
-  return apiGet<FxRateResult>('/fx/usd-mxn', AUTH);
-}
+// FX types and helper live in fx-api.ts so they can be used outside Ventas.
+// Re-exported here for backwards compatibility with existing ventas/page.tsx imports.
+export type { FxRateResult } from './fx-api';
+export { getFxUsdMxn } from './fx-api';
 
 export function registerSale(payload: RegisterSalePayload): Promise<RegisterSaleResponse> {
   return apiPost<RegisterSaleResponse>('/deals/register-sale', payload, AUTH);
