@@ -77,6 +77,9 @@ export type Watch = {
   imageUrl?: string | null;
   condition: string;
   cost: string;
+  costCurrency?: string | null;
+  costOriginalAmount?: string | null;
+  costExchangeRate?: string | null;
   priceMin: string;
   priceMax: string;
   effectiveCost: string;

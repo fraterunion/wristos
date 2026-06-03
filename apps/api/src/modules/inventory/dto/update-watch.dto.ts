@@ -2,6 +2,7 @@ import { WatchOwnershipType, WatchStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -41,6 +42,10 @@ export class UpdateWatchDto {
   @IsString()
   @IsNotEmpty()
   condition?: string;
+
+  @IsOptional()
+  @IsIn(['MXN', 'USD'])
+  costCurrency?: 'MXN' | 'USD';
 
   @IsOptional()
   @Type(() => Number)

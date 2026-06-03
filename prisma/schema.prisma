@@ -318,6 +318,9 @@ model Watch {
   ownershipType              WatchOwnershipType @default(OWNED)
   consignmentOwnerName       String?
   consignmentSplitPercentage Decimal?           @db.Decimal(5, 2)
+  costCurrency               String?
+  costOriginalAmount         Decimal?           @db.Decimal(12, 2)
+  costExchangeRate           Decimal?           @db.Decimal(12, 6)
   status                     WatchStatus        @default(AVAILABLE)
   deletedAt                  DateTime?
   createdAt                  DateTime           @default(now())

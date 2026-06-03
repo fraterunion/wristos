@@ -1,10 +1,10 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
-import { apiDelete, apiPost, apiPatch, ApiError } from '@/lib/api-client';
+import { apiDelete, apiGet, apiPost, apiPatch, ApiError } from '@/lib/api-client';
 import type { Watch, WatchExpense, WatchExpenseCategory } from '@/types/domain';
 
 import { ImageUploader } from './ImageUploader';
@@ -15,6 +15,7 @@ import {
   WATCH_OWNERSHIP_VALUES,
   WATCH_STATUS_VALUES,
   watchFormSchema,
+  type CostCurrency,
   type WatchFormValues,
   watchToFormValues,
 } from './watch-form-schema';
@@ -29,6 +30,12 @@ const EXPENSE_CATEGORIES: { value: WatchExpenseCategory; label: string }[] = [
   { value: 'TRAVEL', label: 'Viaje' },
 ];
 
+type FxState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; rate: number }
+  | { status: 'error' };
+
 type Props = {
   mode: 'create' | 'edit';
   watch: Watch | null;
@@ -37,13 +44,13 @@ type Props = {
   onSaved: (payload: { mode: 'create' | 'edit' }) => void;
 };
 
-function formatMoney(value: string) {
-  const n = Number(value);
-  return new Intl.NumberFormat('en-US', {
+function fmtMxn(n: number) {
+  return new Intl.NumberFormat('es-MX', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
+    currencyDisplay: 'narrowSymbol',
     maximumFractionDigits: 0,
-  }).format(Number.isFinite(n) ? n : 0);
+  }).format(n);
 }
 
 export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
@@ -59,6 +66,10 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   const [expenseRemoving, setExpenseRemoving] = useState<string | null>(null);
   const [expenseError, setExpenseError] = useState<string | null>(null);
 
+  // FX rate state
+  const [fx, setFx] = useState<FxState>({ status: 'idle' });
+  const fxFetchedRef = useRef(false);
+
   const form = useForm<WatchFormValues>({
     resolver: zodResolver(watchFormSchema),
     defaultValues: defaultWatchFormValues,
@@ -67,6 +78,11 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   const { register, handleSubmit, reset, watch: watchForm, formState, setValue, clearErrors } = form;
   const ownershipType = watchForm('ownershipType');
   const imageUrl = watchForm('imageUrl') ?? '';
+  const costCurrency = watchForm('costCurrency');
+  const costValue = watchForm('cost');
+
+  // Determine if this is a legacy watch (costCurrency not set on existing record)
+  const isLegacy = mode === 'edit' && watch != null && watch.costCurrency == null;
 
   useEffect(() => {
     if (!open) return;
@@ -75,6 +91,8 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
     setExpenseAmount('');
     setExpenseNotes('');
     setExpenseCategory('REPAIR');
+    fxFetchedRef.current = false;
+    setFx({ status: 'idle' });
     if (mode === 'edit' && watch) {
       reset(watchToFormValues(watch));
       setExpenses(watch.expenses ?? []);
@@ -91,6 +109,17 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
     setValue('consignmentSplitPercentage', '');
     clearErrors(['consignmentOwnerName', 'consignmentSplitPercentage']);
   }, [ownershipType, open, setValue, clearErrors]);
+
+  // Fetch FX rate when user selects USD (once per modal open)
+  useEffect(() => {
+    if (!open || costCurrency !== 'USD') return;
+    if (fxFetchedRef.current) return;
+    fxFetchedRef.current = true;
+    setFx({ status: 'loading' });
+    apiGet<{ rate: number }>('/fx/usd-mxn', { authenticated: true })
+      .then((data) => setFx({ status: 'ok', rate: data.rate }))
+      .catch(() => setFx({ status: 'error' }));
+  }, [open, costCurrency]);
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitting(true);
@@ -195,8 +224,13 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   if (!open) return null;
 
   const title = mode === 'create' ? 'Agregar reloj al inventario' : 'Editar reloj';
-
   const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+  // FX preview values
+  const fxRate = fx.status === 'ok' ? fx.rate : null;
+  const fxPreviewMxn =
+    fxRate != null && costValue > 0 ? Math.round(costValue * fxRate * 100) / 100 : null;
+  const usdDisabled = fx.status === 'error';
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
@@ -230,6 +264,13 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           {submitError ? (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {submitError}
+            </div>
+          ) : null}
+
+          {/* Legacy warning */}
+          {isLegacy ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2.5 text-xs text-amber-200/80">
+              Este reloj fue registrado sin moneda especificada. Verifica el costo antes de guardar.
             </div>
           ) : null}
 
@@ -296,28 +337,93 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </p>
           </div>
 
-          {/* Cost */}
-          <label className="block text-sm">
-            <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-              Costo base (USD)
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              min={0}
-              {...register('cost', { valueAsNumber: true })}
-              className="ui-input"
-            />
-            {formState.errors.cost ? (
-              <p className="ui-error">{formState.errors.cost.message}</p>
-            ) : null}
-          </label>
+          {/* Cost with currency selector */}
+          <div className="space-y-2">
+            {/* Currency toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                Moneda:
+              </span>
+              {(['MXN', 'USD'] as CostCurrency[]).map((cur) => (
+                <button
+                  key={cur}
+                  type="button"
+                  disabled={cur === 'USD' && usdDisabled}
+                  onClick={() => {
+                    setValue('costCurrency', cur, { shouldDirty: true });
+                    // Fetch FX if switching to USD for the first time
+                    if (cur === 'USD' && !fxFetchedRef.current) {
+                      fxFetchedRef.current = true;
+                      setFx({ status: 'loading' });
+                      apiGet<{ rate: number }>('/fx/usd-mxn', { authenticated: true })
+                        .then((data) => setFx({ status: 'ok', rate: data.rate }))
+                        .catch(() => setFx({ status: 'error' }));
+                    }
+                  }}
+                  className={`rounded-lg border px-3 py-1 text-xs font-semibold transition disabled:opacity-40 ${
+                    costCurrency === cur
+                      ? 'border-accent bg-accent/15 text-accent'
+                      : 'border-white/10 text-muted hover:border-white/20 hover:text-white'
+                  }`}
+                >
+                  {cur === 'MXN' ? 'Pesos' : 'Dólares'}
+                </button>
+              ))}
+              {fx.status === 'loading' && (
+                <span className="text-xs text-white/30">Obteniendo tipo de cambio…</span>
+              )}
+              {fx.status === 'error' && (
+                <span className="text-xs text-rose-400/80">Tipo de cambio no disponible</span>
+              )}
+              {fx.status === 'ok' && costCurrency === 'USD' && (
+                <span className="text-xs text-white/30">
+                  USD/MXN: {fx.rate.toFixed(2)}
+                </span>
+              )}
+            </div>
+
+            {/* Cost input */}
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+                {costCurrency === 'USD' ? 'Costo base en dólares' : 'Costo base'}
+              </span>
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                {...register('cost', { valueAsNumber: true })}
+                className="ui-input"
+              />
+              {formState.errors.cost ? (
+                <p className="ui-error">{formState.errors.cost.message}</p>
+              ) : null}
+            </label>
+
+            {/* Helper / FX preview */}
+            {costCurrency === 'MXN' ? (
+              <p className="text-xs text-muted/70">Se registrará en pesos.</p>
+            ) : fxPreviewMxn != null ? (
+              <div className="rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2">
+                <p className="text-xs text-muted/70">Costo estimado en pesos:</p>
+                <p className="mt-0.5 text-sm font-semibold text-white">
+                  {fmtMxn(fxPreviewMxn)}
+                </p>
+                <p className="mt-0.5 text-xs text-white/30">
+                  USD {new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(costValue)} × ${fxRate?.toFixed(2)}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted/70">
+                Se convertirá automáticamente a pesos al guardar el reloj.
+              </p>
+            )}
+          </div>
 
           {/* Price Range */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Precio mínimo (USD)
+                Precio mínimo (MXN)
               </span>
               <input
                 type="number"
@@ -332,7 +438,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Precio máximo (USD)
+                Precio máximo (MXN)
               </span>
               <input
                 type="number"
@@ -428,10 +534,11 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                   <span className="text-xs tabular-nums text-white/70">
                     Total{' '}
                     <span className="font-semibold text-white">
-                      {new Intl.NumberFormat('en-US', {
+                      {new Intl.NumberFormat('es-MX', {
                         style: 'currency',
-                        currency: 'USD',
-                        maximumFractionDigits: 2,
+                        currency: 'MXN',
+                        currencyDisplay: 'narrowSymbol',
+                        maximumFractionDigits: 0,
                       }).format(totalExpenses)}
                     </span>
                   </span>
@@ -457,10 +564,11 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
                         </div>
                         <div className="flex shrink-0 items-center gap-3 pl-3">
                           <span className="tabular-nums text-white/80">
-                            {new Intl.NumberFormat('en-US', {
+                            {new Intl.NumberFormat('es-MX', {
                               style: 'currency',
-                              currency: 'USD',
-                              maximumFractionDigits: 2,
+                              currency: 'MXN',
+                              currencyDisplay: 'narrowSymbol',
+                              maximumFractionDigits: 0,
                             }).format(Number(expense.amount))}
                           </span>
                           <button
@@ -535,8 +643,8 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </button>
             <button
               type="submit"
-              disabled={submitting}
-              className="ui-btn-primary px-5 py-2"
+              disabled={submitting || (costCurrency === 'USD' && usdDisabled)}
+              className="ui-btn-primary px-5 py-2 disabled:opacity-60"
             >
               {submitting ? 'Guardando…' : mode === 'create' ? 'Crear reloj' : 'Guardar cambios'}
             </button>

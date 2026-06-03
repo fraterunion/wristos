@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, Watch, WatchExpense, WatchOwnershipType } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FxService } from '../fx/fx.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateWatchDto } from './dto/create-watch.dto';
 import { ListWatchesDto } from './dto/list-watches.dto';
@@ -21,9 +22,16 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly fxService: FxService,
   ) {}
 
   async create(tenantId: string, dto: CreateWatchDto) {
+    const currency = dto.costCurrency ?? 'MXN';
+    const { canonicalCost, originalAmount, exchangeRate } = await this.resolveCost(
+      dto.cost,
+      currency,
+    );
+
     const data: Prisma.WatchCreateInput = {
       tenant: { connect: { id: tenantId } },
       brand: dto.brand,
@@ -31,7 +39,10 @@ export class InventoryService {
       serialNumber: dto.serialNumber,
       imageUrl: dto.imageUrl ?? null,
       condition: dto.condition,
-      cost: new Prisma.Decimal(dto.cost),
+      cost: canonicalCost,
+      costCurrency: currency,
+      costOriginalAmount: originalAmount,
+      costExchangeRate: exchangeRate,
       priceMin: new Prisma.Decimal(dto.priceMin),
       priceMax: new Prisma.Decimal(dto.priceMax),
       status: dto.status ?? undefined,
@@ -120,11 +131,22 @@ export class InventoryService {
     if (dto.serialNumber !== undefined) data.serialNumber = dto.serialNumber;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
     if (dto.condition !== undefined) data.condition = dto.condition;
-    if (dto.cost !== undefined) data.cost = new Prisma.Decimal(dto.cost);
     if (dto.priceMin !== undefined) data.priceMin = new Prisma.Decimal(dto.priceMin);
     if (dto.priceMax !== undefined) data.priceMax = new Prisma.Decimal(dto.priceMax);
     if (dto.status !== undefined) data.status = dto.status;
     if (dto.ownershipType !== undefined) data.ownershipType = dto.ownershipType;
+
+    if (dto.cost !== undefined) {
+      const currency = dto.costCurrency ?? 'MXN';
+      const { canonicalCost, originalAmount, exchangeRate } = await this.resolveCost(
+        dto.cost,
+        currency,
+      );
+      data.cost = canonicalCost;
+      data.costCurrency = currency;
+      data.costOriginalAmount = originalAmount;
+      data.costExchangeRate = exchangeRate;
+    }
 
     if (nextOwnership === WatchOwnershipType.OWNED) {
       data.consignmentOwnerName = null;
@@ -207,13 +229,40 @@ export class InventoryService {
 
     const folder = `${baseFolder}/${tenantId}`;
     const timestamp = Math.floor(Date.now() / 1000);
-    // Cloudinary signature: SHA-1 of alphabetically-sorted params joined with & + apiSecret
     const paramString = `folder=${folder}&timestamp=${timestamp}`;
     const signature = createHash('sha1')
       .update(paramString + apiSecret)
       .digest('hex');
 
     return { signature, timestamp, cloudName, apiKey, folder };
+  }
+
+  // Converts the user-supplied cost to canonical MXN, fetching FX rate when needed.
+  private async resolveCost(
+    amount: number,
+    currency: 'MXN' | 'USD',
+  ): Promise<{
+    canonicalCost: Prisma.Decimal;
+    originalAmount: Prisma.Decimal | null;
+    exchangeRate: Prisma.Decimal | null;
+  }> {
+    if (currency === 'MXN') {
+      return {
+        canonicalCost: new Prisma.Decimal(amount),
+        originalAmount: null,
+        exchangeRate: null,
+      };
+    }
+
+    const fx = await this.fxService.getUsdMxn();
+    const rate = fx.rate;
+    const mxnAmount = Math.round(amount * rate * 100) / 100;
+
+    return {
+      canonicalCost: new Prisma.Decimal(mxnAmount),
+      originalAmount: new Prisma.Decimal(amount),
+      exchangeRate: new Prisma.Decimal(rate),
+    };
   }
 
   private serializeWatch(watch: WatchWithExpenses) {
@@ -226,6 +275,9 @@ export class InventoryService {
       imageUrl: watch.imageUrl,
       condition: watch.condition,
       cost: watch.cost.toString(),
+      costCurrency: watch.costCurrency ?? null,
+      costOriginalAmount: watch.costOriginalAmount?.toString() ?? null,
+      costExchangeRate: watch.costExchangeRate?.toString() ?? null,
       priceMin: watch.priceMin.toString(),
       priceMax: watch.priceMax.toString(),
       effectiveCost: computeEffectiveCost(watch.cost, watch.expenses),
