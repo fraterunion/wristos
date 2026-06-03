@@ -29,10 +29,15 @@ const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
   PARKING: 'Estacionamiento',
   MEALS: 'Comidas',
   FLIGHTS: 'Vuelos',
-  TRAVEL: 'Viaje',
+  TRAVEL: 'Viáticos',
   MARKETING: 'Marketing',
   COMMISSIONS: 'Comisiones',
   BANK_FEES: 'Comisiones de bancos',
+};
+
+const COMMISSION_SECTION_LABELS: Partial<Record<OperatingExpenseCategory, string>> = {
+  COMMISSIONS: 'Ventas',
+  BANK_FEES: 'Bancos',
 };
 
 type Filters = {
@@ -119,6 +124,17 @@ function SummaryCard({
   );
 }
 
+function categoryBarLabel(row: ExpenseCategorySummary): string {
+  if (row.isCommission) {
+    return (
+      COMMISSION_SECTION_LABELS[row.category as OperatingExpenseCategory] ??
+      CATEGORY_LABELS[row.category as OperatingExpenseCategory] ??
+      row.category
+    );
+  }
+  return CATEGORY_LABELS[row.category as OperatingExpenseCategory] ?? row.category;
+}
+
 function CategoryBar({ row, maxTotal }: { row: ExpenseCategorySummary; maxTotal: number }) {
   const pct = maxTotal > 0 ? (Number(row.total) / maxTotal) * 100 : 0;
   return (
@@ -127,13 +143,8 @@ function CategoryBar({ row, maxTotal }: { row: ExpenseCategorySummary; maxTotal:
         <span
           className={`text-sm font-medium ${row.isCommission ? 'text-amber-300' : 'text-white'}`}
         >
-          {CATEGORY_LABELS[row.category as OperatingExpenseCategory] ?? row.category}
+          {categoryBarLabel(row)}
         </span>
-        {row.isCommission && (
-          <span className="ml-1.5 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-            comisión
-          </span>
-        )}
       </div>
       <div className="flex-1">
         <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
