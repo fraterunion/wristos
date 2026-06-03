@@ -367,10 +367,11 @@ model Deal {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  client   Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  watch    Watch     @relation(fields: [watchId], references: [id], onDelete: Restrict)
-  payments Payment[]
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client            Client             @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  watch             Watch              @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  payments          Payment[]
+  operatingExpenses OperatingExpense[]
 
   @@index([tenantId])
   @@index([tenantId, stage])
@@ -468,6 +469,7 @@ model AutomationRun {
 model OperatingExpense {
   id          String                   @id @default(cuid())
   tenantId    String
+  dealId      String?
   category    OperatingExpenseCategory
   amount      Decimal                  @db.Decimal(12, 2)
   notes       String?
@@ -476,10 +478,12 @@ model OperatingExpense {
   updatedAt   DateTime                 @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deal   Deal?  @relation(fields: [dealId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([tenantId, category])
   @@index([tenantId, expenseDate])
+  @@index([dealId])
   @@map("operating_expenses")
 }
 
