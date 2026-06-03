@@ -12,6 +12,9 @@ export const WATCH_STATUS_VALUES = [
 
 export const WATCH_OWNERSHIP_VALUES = ['OWNED', 'CONSIGNMENT'] as const;
 
+export const COST_CURRENCY_VALUES = ['MXN', 'USD'] as const;
+export type CostCurrency = (typeof COST_CURRENCY_VALUES)[number];
+
 const numericField = (label: string) =>
   z.preprocess((val) => {
     if (val === '' || val === null || val === undefined) return 0;
@@ -27,6 +30,7 @@ export const watchFormSchema = z
     serialNumber: z.string().optional(),
     imageUrl: z.string().optional(),
     condition: z.string().trim().min(1, 'Condition is required'),
+    costCurrency: z.enum(COST_CURRENCY_VALUES),
     cost: numericField('Base cost'),
     priceMin: numericField('Min price'),
     priceMax: numericField('Max price'),
@@ -66,6 +70,7 @@ export const defaultWatchFormValues: WatchFormValues = {
   serialNumber: '',
   imageUrl: '',
   condition: '',
+  costCurrency: 'MXN',
   cost: 0,
   priceMin: 0,
   priceMax: 0,
@@ -82,6 +87,9 @@ export function watchToFormValues(watch: Watch): WatchFormValues {
     serialNumber: watch.serialNumber ?? '',
     imageUrl: watch.imageUrl ?? '',
     condition: watch.condition,
+    costCurrency: watch.costCurrency === 'USD' ? 'USD' : 'MXN',
+    // In edit mode, the cost field always shows the canonical MXN value.
+    // If the user re-saves in USD mode, they must re-enter the USD amount.
     cost: Number(watch.cost),
     priceMin: Number(watch.priceMin),
     priceMax: Number(watch.priceMax),
@@ -100,6 +108,7 @@ export function buildCreateWatchBody(values: WatchFormValues) {
     brand: values.brand.trim(),
     model: values.model.trim(),
     condition: values.condition.trim(),
+    costCurrency: values.costCurrency,
     cost: values.cost,
     priceMin: values.priceMin,
     priceMax: values.priceMax,
@@ -128,6 +137,7 @@ export function buildUpdateWatchBody(values: WatchFormValues) {
     brand: values.brand.trim(),
     model: values.model.trim(),
     condition: values.condition.trim(),
+    costCurrency: values.costCurrency,
     cost: values.cost,
     priceMin: values.priceMin,
     priceMax: values.priceMax,
