@@ -171,7 +171,7 @@ function KpiCard({
 
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-panel px-5 py-4 shadow-sm shadow-black/30">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">{label}</p>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">{label}</p>
       <p className={`mt-2.5 text-[22px] font-semibold tabular-nums leading-none ${valueClass}`}>
         {value}
       </p>
@@ -380,11 +380,11 @@ export default function VentasPage() {
           </button>
         </section>
       ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_2fr]">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[400px_minmax(0,1fr)]">
 
           {/* ── Registration form ────────────────────────────────────────── */}
           <article className="rounded-2xl border border-white/[0.07] bg-panel p-5 shadow-sm shadow-black/20 space-y-5">
-            <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">
+            <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
               Nueva venta
             </h2>
 
@@ -575,10 +575,10 @@ export default function VentasPage() {
           </article>
 
           {/* ── Recent sales table ───────────────────────────────────────── */}
-          <article className="rounded-2xl border border-white/[0.07] bg-panel shadow-sm shadow-black/20 overflow-hidden">
+          <article className="rounded-2xl border border-white/[0.07] bg-panel shadow-sm shadow-black/20 min-w-0 overflow-hidden">
 
             <div className="px-6 py-4 border-b border-white/[0.05]">
-              <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">
+              <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
                 Ventas recientes
               </h2>
             </div>
@@ -586,45 +586,57 @@ export default function VentasPage() {
             {dataLoading ? (
               <div className="space-y-px p-3 animate-pulse">
                 {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="h-[72px] rounded-xl bg-white/[0.03]" />
+                  <div key={i} className="h-[68px] rounded-xl bg-white/[0.03]" />
                 ))}
               </div>
             ) : recentSales.length === 0 ? (
               <div className="px-6 py-20 text-center">
-                <p className="text-sm text-white/30">Aún no hay ventas registradas.</p>
-                <p className="mt-1.5 text-xs text-white/15">
+                <p className="text-sm text-white/40">Aún no hay ventas registradas.</p>
+                <p className="mt-1.5 text-xs text-white/20">
                   Las ventas registradas aparecerán aquí.
                 </p>
               </div>
             ) : (
+              /* min-w forces the scroll trigger at a known size; overflow-x-auto scrolls
+                 within the card without leaking into the page layout */
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[720px]">
+                  <colgroup>
+                    <col style={{ width: '96px' }} />
+                    {/* Reloj column is flexible — takes remaining space */}
+                    <col />
+                    <col style={{ width: '130px' }} className="hidden sm:table-column-group" />
+                    <col style={{ width: '116px' }} />
+                    <col style={{ width: '132px' }} className="hidden md:table-column-group" />
+                    <col style={{ width: '110px' }} className="hidden lg:table-column-group" />
+                    <col style={{ width: '148px' }} className="hidden lg:table-column-group" />
+                  </colgroup>
                   <thead>
-                    <tr className="border-b border-white/[0.05]">
-                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20">
+                    <tr className="border-b border-white/[0.06]">
+                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap">
                         Fecha
                       </th>
-                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20">
+                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
                         Reloj
                       </th>
-                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden sm:table-cell">
+                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden sm:table-cell">
                         Comprador
                       </th>
-                      <th className="px-6 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20">
+                      <th className="px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap">
                         Precio
                       </th>
-                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden md:table-cell">
+                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden md:table-cell">
                         Método
                       </th>
-                      <th className="px-6 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden lg:table-cell">
+                      <th className="px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap hidden lg:table-cell">
                         Comisión
                       </th>
-                      <th className="px-6 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden lg:table-cell">
+                      <th className="px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap hidden lg:table-cell">
                         Neto recibido
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/[0.035]">
+                  <tbody className="divide-y divide-white/[0.04]">
                     {recentSales.map((sale) => {
                       const method = sale.payments[0]?.method ?? null;
                       // Bank fee is stored as OperatingExpense.BANK_FEES and is not currently
@@ -633,40 +645,40 @@ export default function VentasPage() {
                       return (
                         <tr
                           key={sale.dealId}
-                          className="group transition-colors duration-150 hover:bg-white/[0.02]"
+                          className="transition-colors duration-150 hover:bg-white/[0.025]"
                         >
-                          <td className="px-6 py-5 text-xs tabular-nums text-white/25 whitespace-nowrap align-middle">
+                          <td className="px-3 py-4 text-xs tabular-nums text-white/35 whitespace-nowrap align-middle">
                             {formatDate(sale.soldAt)}
                           </td>
-                          <td className="px-6 py-5 align-middle">
-                            <p className="text-[15px] font-semibold text-white leading-tight">
+                          <td className="px-3 py-4 align-middle overflow-hidden">
+                            <p className="text-sm font-semibold text-white leading-snug truncate">
                               {sale.watch.brand} {sale.watch.model}
                             </p>
                             {sale.watch.serialNumber && (
-                              <p className="mt-1 text-[10px] font-mono tracking-[0.2em] text-white/25 uppercase">
+                              <p className="mt-0.5 text-[10px] font-mono tracking-[0.16em] text-white/30 uppercase truncate">
                                 {sale.watch.serialNumber}
                               </p>
                             )}
                           </td>
-                          <td className="px-6 py-5 align-middle hidden sm:table-cell">
-                            <p className="text-sm text-white/60">{sale.buyer.name}</p>
+                          <td className="px-3 py-4 align-middle hidden sm:table-cell overflow-hidden">
+                            <p className="text-sm text-white/55 truncate">{sale.buyer.name}</p>
                           </td>
-                          <td className="px-6 py-5 text-right align-middle whitespace-nowrap">
-                            <span className="text-[15px] font-bold tabular-nums text-white">
+                          <td className="px-3 py-4 text-right align-middle whitespace-nowrap">
+                            <span className="text-sm font-bold tabular-nums text-white">
                               {formatMoney(sale.agreedPrice)}
                             </span>
                           </td>
-                          <td className="px-6 py-5 align-middle hidden md:table-cell">
+                          <td className="px-3 py-4 align-middle hidden md:table-cell">
                             <PaymentBadge method={method} />
                           </td>
-                          <td className="px-6 py-5 text-right align-middle whitespace-nowrap hidden lg:table-cell">
-                            <span className="text-xs text-white/15">—</span>
+                          <td className="px-3 py-4 text-right align-middle whitespace-nowrap hidden lg:table-cell">
+                            <span className="text-xs text-white/20">—</span>
                           </td>
-                          <td className="px-6 py-5 text-right align-middle whitespace-nowrap hidden lg:table-cell">
+                          <td className="px-3 py-4 text-right align-middle whitespace-nowrap hidden lg:table-cell">
                             {isBancosRow ? (
-                              <span className="text-xs italic text-white/25">Pendiente</span>
+                              <span className="text-xs italic text-white/30">Pendiente</span>
                             ) : (
-                              <span className="text-lg font-semibold tabular-nums text-emerald-400">
+                              <span className="text-base font-semibold tabular-nums text-emerald-400">
                                 {formatMoney(sale.agreedPrice)}
                               </span>
                             )}
