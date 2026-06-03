@@ -380,7 +380,7 @@ export default function VentasPage() {
           </button>
         </section>
       ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[400px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[400px_minmax(0,1fr)]">
 
           {/* ── Registration form ────────────────────────────────────────── */}
           <article className="rounded-2xl border border-white/[0.07] bg-panel p-5 shadow-sm shadow-black/20 space-y-5">
@@ -597,41 +597,33 @@ export default function VentasPage() {
                 </p>
               </div>
             ) : (
-              /* min-w forces the scroll trigger at a known size; overflow-x-auto scrolls
-                 within the card without leaking into the page layout */
+              /* table-fixed: columns use th widths, not content size.
+                 Reloj column (no explicit width) absorbs remaining space.
+                 overflow-x-auto only triggers on small screens where some columns
+                 are still visible but space is tight. */
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px]">
-                  <colgroup>
-                    <col style={{ width: '96px' }} />
-                    {/* Reloj column is flexible — takes remaining space */}
-                    <col />
-                    <col style={{ width: '130px' }} className="hidden sm:table-column-group" />
-                    <col style={{ width: '116px' }} />
-                    <col style={{ width: '132px' }} className="hidden md:table-column-group" />
-                    <col style={{ width: '110px' }} className="hidden lg:table-column-group" />
-                    <col style={{ width: '148px' }} className="hidden lg:table-column-group" />
-                  </colgroup>
+                <table className="w-full table-fixed">
                   <thead>
                     <tr className="border-b border-white/[0.06]">
-                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap">
+                      <th className="w-[88px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
                         Fecha
                       </th>
                       <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
                         Reloj
                       </th>
-                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden sm:table-cell">
+                      <th className="w-[118px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden 2xl:table-cell">
                         Comprador
                       </th>
-                      <th className="px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap">
+                      <th className="w-[108px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
                         Precio
                       </th>
-                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden md:table-cell">
+                      <th className="w-[128px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden md:table-cell">
                         Método
                       </th>
-                      <th className="px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap hidden lg:table-cell">
+                      <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden lg:table-cell">
                         Comisión
                       </th>
-                      <th className="px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 whitespace-nowrap hidden lg:table-cell">
+                      <th className="w-[132px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden lg:table-cell">
                         Neto recibido
                       </th>
                     </tr>
@@ -645,22 +637,25 @@ export default function VentasPage() {
                       return (
                         <tr
                           key={sale.dealId}
-                          className="transition-colors duration-150 hover:bg-white/[0.025]"
+                          className="transition-colors duration-150 hover:bg-white/[0.02]"
                         >
-                          <td className="px-3 py-4 text-xs tabular-nums text-white/35 whitespace-nowrap align-middle">
+                          <td className="px-3 py-4 text-xs tabular-nums text-white/35 whitespace-nowrap align-top pt-[18px]">
                             {formatDate(sale.soldAt)}
                           </td>
                           <td className="px-3 py-4 align-middle overflow-hidden">
-                            <p className="text-sm font-semibold text-white leading-snug truncate">
-                              {sale.watch.brand} {sale.watch.model}
+                            <p className="text-sm font-semibold text-white leading-tight truncate">
+                              {sale.watch.brand}
+                            </p>
+                            <p className="mt-0.5 text-xs text-white/50 truncate">
+                              {sale.watch.model}
                             </p>
                             {sale.watch.serialNumber && (
-                              <p className="mt-0.5 text-[10px] font-mono tracking-[0.16em] text-white/30 uppercase truncate">
+                              <p className="mt-0.5 text-[10px] font-mono tracking-[0.14em] text-white/25 uppercase truncate">
                                 {sale.watch.serialNumber}
                               </p>
                             )}
                           </td>
-                          <td className="px-3 py-4 align-middle hidden sm:table-cell overflow-hidden">
+                          <td className="px-3 py-4 align-middle hidden 2xl:table-cell overflow-hidden">
                             <p className="text-sm text-white/55 truncate">{sale.buyer.name}</p>
                           </td>
                           <td className="px-3 py-4 text-right align-middle whitespace-nowrap">
