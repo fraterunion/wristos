@@ -39,6 +39,23 @@ const ALL_PAYMENT_LABELS: Record<string, string> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function PaymentBadge({ method }: { method: string | null }) {
+  if (!method) return <span className="text-muted/40">—</span>;
+  const label = ALL_PAYMENT_LABELS[method] ?? method;
+  if (method === 'CASH') {
+    return (
+      <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold tracking-widest border border-emerald-800/70 bg-emerald-950 text-emerald-300/90">
+        {label.toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium tracking-widest border border-white/10 bg-white/[0.05] text-white/40">
+      {label.toUpperCase()}
+    </span>
+  );
+}
+
 function formatMoney(value: string | number | null | undefined) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
@@ -219,7 +236,7 @@ export default function VentasPage() {
           </button>
         </section>
       ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[480px_1fr]">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_2fr]">
 
           {/* ── Registration form ───────────────────────────────────────── */}
           <article className="ui-card space-y-5">
@@ -436,66 +453,74 @@ export default function VentasPage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-white/10 text-left">
-                      <th className="pb-2 text-xs font-medium uppercase tracking-wide text-muted">
+                    <tr className="border-b border-white/[0.08] text-left">
+                      <th className="pb-3 pr-8 text-[10px] font-medium uppercase tracking-widest text-muted/50">
                         Fecha
                       </th>
-                      <th className="pb-2 text-xs font-medium uppercase tracking-wide text-muted">
+                      <th className="pb-3 pr-8 text-[10px] font-medium uppercase tracking-widest text-muted/50">
                         Reloj
                       </th>
-                      <th className="pb-2 text-xs font-medium uppercase tracking-wide text-muted hidden sm:table-cell">
+                      <th className="pb-3 pr-8 text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden sm:table-cell">
                         Comprador
                       </th>
-                      <th className="pb-2 text-right text-xs font-medium uppercase tracking-wide text-muted">
+                      <th className="pb-3 pr-10 text-right text-[10px] font-medium uppercase tracking-widest text-muted/50">
                         Precio
                       </th>
-                      <th className="pb-2 text-xs font-medium uppercase tracking-wide text-muted hidden md:table-cell">
+                      <th className="pb-3 pr-10 text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden md:table-cell">
                         Método
                       </th>
-                      <th className="pb-2 text-right text-xs font-medium uppercase tracking-wide text-muted hidden lg:table-cell">
+                      <th className="pb-3 pr-10 text-right text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden lg:table-cell">
                         Comisión
                       </th>
-                      <th className="pb-2 text-right text-xs font-medium uppercase tracking-wide text-muted hidden lg:table-cell">
+                      <th className="pb-3 text-right text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden lg:table-cell">
                         Neto recibido
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/[0.06]">
+                  <tbody className="divide-y divide-white/[0.04]">
                     {recentSales.map((sale) => {
                       const method = sale.payments[0]?.method ?? null;
-                      const methodLabel = method ? (ALL_PAYMENT_LABELS[method] ?? method) : '—';
+                      // Bank fee is stored as OperatingExpense.BANK_FEES and is not currently
+                      // returned by /history/sold. Do not infer it from payments.
+                      const isBancosRow = method === 'BANCOS';
                       return (
                         <tr
                           key={sale.dealId}
-                          className="transition hover:bg-white/[0.03]"
+                          className="transition hover:bg-white/[0.025]"
                         >
-                          <td className="py-3 pr-4 text-xs text-muted whitespace-nowrap">
+                          <td className="py-4 pr-8 text-xs text-muted/60 whitespace-nowrap">
                             {formatDate(sale.soldAt)}
                           </td>
-                          <td className="py-3 pr-4">
-                            <p className="font-medium text-white">
+                          <td className="py-4 pr-8">
+                            <p className="font-medium text-white leading-snug">
                               {sale.watch.brand} {sale.watch.model}
                             </p>
                             {sale.watch.serialNumber && (
-                              <p className="text-xs text-muted font-mono">
+                              <p className="mt-0.5 text-[10px] text-muted/50 font-mono tracking-wider">
                                 {sale.watch.serialNumber}
                               </p>
                             )}
                           </td>
-                          <td className="py-3 pr-4 text-white/80 hidden sm:table-cell">
+                          <td className="py-4 pr-8 text-sm text-white/60 hidden sm:table-cell">
                             {sale.buyer.name}
                           </td>
-                          <td className="py-3 pr-4 text-right font-semibold text-white whitespace-nowrap">
+                          <td className="py-4 pr-10 text-right font-bold text-white whitespace-nowrap">
                             {formatMoney(sale.agreedPrice)}
                           </td>
-                          <td className="py-3 pr-4 text-muted hidden md:table-cell">
-                            {methodLabel}
+                          <td className="py-4 pr-10 hidden md:table-cell">
+                            <PaymentBadge method={method} />
                           </td>
-                          <td className="py-3 pr-4 text-right text-muted hidden lg:table-cell">
-                            —
+                          <td className="py-4 pr-10 text-right whitespace-nowrap hidden lg:table-cell">
+                            <span className="text-muted/30">—</span>
                           </td>
-                          <td className="py-3 text-right text-muted hidden lg:table-cell">
-                            —
+                          <td className="py-4 text-right whitespace-nowrap hidden lg:table-cell">
+                            {isBancosRow ? (
+                              <span className="text-xs text-muted/40 italic">Pendiente</span>
+                            ) : (
+                              <span className="text-[15px] font-semibold text-emerald-400">
+                                {formatMoney(sale.agreedPrice)}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );
