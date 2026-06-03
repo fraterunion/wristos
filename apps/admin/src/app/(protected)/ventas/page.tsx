@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError } from '@/lib/api-client';
+import { ApiError, apiGet } from '@/lib/api-client';
 import {
   listClients,
   listRecentSales,
@@ -37,21 +37,93 @@ const ALL_PAYMENT_LABELS: Record<string, string> = {
   CESAR: 'César',
 };
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type HistorySummary = {
+  totalSold: number;
+  totalRevenue: string;
+  totalCostOfSold: string;
+  totalBankFees: string;
+  totalProfit: string;
+};
+
+// ─── Icons (inline SVG — no external dependency) ─────────────────────────────
+
+function IconBanknote() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect width="20" height="12" x="2" y="6" rx="2" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M6 12h.01M18 12h.01" />
+    </svg>
+  );
+}
+
+function IconBuilding() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 22V9l9-7 9 7v13H3z" />
+      <path d="M9 22v-7h6v7" />
+      <path d="M9 10h.01M15 10h.01M9 14h.01M15 14h.01" />
+    </svg>
+  );
+}
+
+function IconUser() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+    </svg>
+  );
+}
+
+function IconCreditCard() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect width="20" height="14" x="2" y="5" rx="2" />
+      <path d="M2 10h20" />
+    </svg>
+  );
+}
+
+function IconArrows() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3 4 7l4 4" />
+      <path d="M4 7h16" />
+      <path d="m16 17 4-4-4-4" />
+      <path d="M20 13H4" />
+    </svg>
+  );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function PaymentBadge({ method }: { method: string | null }) {
-  if (!method) return <span className="text-muted/40">—</span>;
+  if (!method) return <span className="text-white/20">—</span>;
   const label = ALL_PAYMENT_LABELS[method] ?? method;
+
   if (method === 'CASH') {
     return (
-      <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold tracking-widest border border-emerald-800/70 bg-emerald-950 text-emerald-300/90">
-        {label.toUpperCase()}
+      <span className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-[5px] text-[11px] font-semibold tracking-wide border border-emerald-700/50 bg-emerald-950 text-emerald-300">
+        <IconBanknote />
+        {label}
       </span>
     );
   }
+
+  const icon =
+    method === 'BANCOS' ? <IconBuilding /> :
+    method === 'CESAR' ? <IconUser /> :
+    method === 'CARD' ? <IconCreditCard /> :
+    method === 'TRANSFER' ? <IconArrows /> :
+    null;
+
   return (
-    <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium tracking-widest border border-white/10 bg-white/[0.05] text-white/40">
-      {label.toUpperCase()}
+    <span className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-[5px] text-[11px] font-medium tracking-wide border border-white/[0.07] bg-white/[0.03] text-white/50">
+      {icon}
+      {label}
     </span>
   );
 }
@@ -79,13 +151,43 @@ function todayIso() {
   return new Date().toISOString().split('T')[0];
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
+
+function KpiCard({
+  label,
+  value,
+  sub,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  highlight?: 'positive' | 'negative';
+}) {
+  const valueClass =
+    highlight === 'positive' ? 'text-emerald-400' :
+    highlight === 'negative' ? 'text-rose-400' :
+    'text-white';
+
+  return (
+    <div className="rounded-2xl border border-white/[0.07] bg-panel px-5 py-4 shadow-sm shadow-black/30">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">{label}</p>
+      <p className={`mt-2.5 text-[22px] font-semibold tabular-nums leading-none ${valueClass}`}>
+        {value}
+      </p>
+      {sub && <p className="mt-1.5 text-[11px] text-white/20">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function VentasPage() {
   // Data
   const [watches, setWatches] = useState<Watch[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [recentSales, setRecentSales] = useState<SoldItem[]>([]);
+  const [summary, setSummary] = useState<HistorySummary | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
 
@@ -103,20 +205,22 @@ export default function VentasPage() {
   // Flash
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // ── Data loading ──────────────────────────────────────────────────────────
+  // ── Data loading ───────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
     setDataLoading(true);
     setDataError(null);
     try {
-      const [allWatches, allClients, sales] = await Promise.all([
+      const [allWatches, allClients, sales, summaryData] = await Promise.all([
         listSellableWatches(),
         listClients(),
         listRecentSales(),
+        apiGet<HistorySummary>('/history/summary', { authenticated: true }),
       ]);
       setWatches(allWatches.filter((w) => SELLABLE_STATUSES.has(w.status)));
       setClients(allClients);
       setRecentSales(sales);
+      setSummary(summaryData);
     } catch (err) {
       setDataError(err instanceof ApiError ? err.message : 'No se pudieron cargar los datos.');
     } finally {
@@ -134,7 +238,7 @@ export default function VentasPage() {
     return () => window.clearTimeout(t);
   }, [flash]);
 
-  // ── Derived calculations ──────────────────────────────────────────────────
+  // ── Derived calculations ───────────────────────────────────────────────────
 
   const salePriceNum = Number(salePrice) || 0;
   const commissionRate =
@@ -151,7 +255,18 @@ export default function VentasPage() {
     !salePrice.trim() ||
     (isBancos && !bankChannel);
 
-  // ── Form handlers ─────────────────────────────────────────────────────────
+  // ── KPI derivation from loaded sales ──────────────────────────────────────
+
+  const now = new Date();
+  const salesThisMonth = recentSales.filter((s) => {
+    const d = new Date(s.soldAt);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  });
+  const revenueThisMonth = salesThisMonth.reduce((sum, s) => sum + Number(s.agreedPrice), 0);
+  const monthName = now.toLocaleDateString('es-MX', { month: 'long' });
+  const monthLabel = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+
+  // ── Form handlers ──────────────────────────────────────────────────────────
 
   const handlePaymentMethodChange = (m: VentaPaymentMethod) => {
     setPaymentMethod(m);
@@ -195,7 +310,7 @@ export default function VentasPage() {
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <section className="ui-page">
@@ -223,6 +338,35 @@ export default function VentasPage() {
         </div>
       </header>
 
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard
+          label={`Ventas · ${monthLabel}`}
+          value={dataLoading ? '—' : String(salesThisMonth.length)}
+          sub="Cierres este mes"
+        />
+        <KpiCard
+          label={`Ingresos · ${monthLabel}`}
+          value={dataLoading ? '—' : formatMoney(revenueThisMonth)}
+          sub="Precio acordado, mes actual"
+        />
+        <KpiCard
+          label="Total ingresos"
+          value={dataLoading || !summary ? '—' : formatMoney(summary.totalRevenue)}
+          sub="Acumulado histórico"
+        />
+        <KpiCard
+          label="Utilidad bruta"
+          value={dataLoading || !summary ? '—' : formatMoney(summary.totalProfit)}
+          sub="Ingresos menos costo de ventas"
+          highlight={
+            summary
+              ? Number(summary.totalProfit) >= 0 ? 'positive' : 'negative'
+              : undefined
+          }
+        />
+      </div>
+
       {/* Body */}
       {dataError ? (
         <section className="rounded-xl border border-rose-500/35 bg-rose-500/10 p-5">
@@ -238,9 +382,9 @@ export default function VentasPage() {
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_2fr]">
 
-          {/* ── Registration form ───────────────────────────────────────── */}
-          <article className="ui-card space-y-5">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          {/* ── Registration form ────────────────────────────────────────── */}
+          <article className="rounded-2xl border border-white/[0.07] bg-panel p-5 shadow-sm shadow-black/20 space-y-5">
+            <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">
               Nueva venta
             </h2>
 
@@ -330,8 +474,8 @@ export default function VentasPage() {
                       disabled={submitting}
                       className={`rounded-lg border px-3 py-2 text-sm transition ${
                         paymentMethod === opt.value
-                          ? 'border-white/40 bg-white/15 font-semibold text-white'
-                          : 'border-white/15 text-muted hover:border-white/25 hover:text-white'
+                          ? 'border-white/35 bg-white/10 font-semibold text-white'
+                          : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
                       }`}
                     >
                       {opt.label}
@@ -342,7 +486,7 @@ export default function VentasPage() {
 
               {/* Bank channel (conditional) */}
               {isBancos && (
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 space-y-3">
                   <div>
                     <label className="ui-field-label">Canal bancario</label>
                     <div className="grid grid-cols-2 gap-2 mt-1">
@@ -354,12 +498,12 @@ export default function VentasPage() {
                           disabled={submitting}
                           className={`rounded-lg border px-3 py-2 text-sm transition ${
                             bankChannel === opt.value
-                              ? 'border-white/40 bg-white/15 font-semibold text-white'
-                              : 'border-white/15 text-muted hover:border-white/25 hover:text-white'
+                              ? 'border-white/35 bg-white/10 font-semibold text-white'
+                              : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
                           }`}
                         >
                           {opt.label}
-                          <span className="ml-1 text-xs text-muted/70">
+                          <span className="ml-1 text-xs text-white/30">
                             ({(opt.rate * 100).toFixed(0)}%)
                           </span>
                         </button>
@@ -370,22 +514,22 @@ export default function VentasPage() {
                   {/* Commission preview */}
                   {bankChannel && salePriceNum > 0 && (
                     <div className="grid grid-cols-2 gap-3 pt-1">
-                      <div className="rounded-lg bg-white/[0.04] px-3 py-2">
-                        <p className="text-xs uppercase tracking-wide text-muted">
+                      <div className="rounded-lg bg-white/[0.04] px-3 py-2.5">
+                        <p className="text-[10px] uppercase tracking-widest text-white/30">
                           Comisión bancaria
                         </p>
-                        <p className="mt-1 text-sm font-semibold text-amber-300">
+                        <p className="mt-1.5 text-sm font-semibold text-amber-300">
                           {formatMoney(bankFeeAmt)}
-                          <span className="ml-1 text-xs font-normal text-muted">
+                          <span className="ml-1 text-xs font-normal text-white/30">
                             ({(commissionRate * 100).toFixed(0)}%)
                           </span>
                         </p>
                       </div>
-                      <div className="rounded-lg bg-white/[0.04] px-3 py-2">
-                        <p className="text-xs uppercase tracking-wide text-muted">
+                      <div className="rounded-lg bg-white/[0.04] px-3 py-2.5">
+                        <p className="text-[10px] uppercase tracking-widest text-white/30">
                           Neto recibido
                         </p>
-                        <p className="mt-1 text-sm font-semibold text-emerald-300">
+                        <p className="mt-1.5 text-sm font-semibold text-emerald-300">
                           {formatMoney(netReceivedAmt)}
                         </p>
                       </div>
@@ -430,54 +574,57 @@ export default function VentasPage() {
             </form>
           </article>
 
-          {/* ── Recent sales table ──────────────────────────────────────── */}
-          <article className="ui-card space-y-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Ventas recientes
-            </h2>
+          {/* ── Recent sales table ───────────────────────────────────────── */}
+          <article className="rounded-2xl border border-white/[0.07] bg-panel shadow-sm shadow-black/20 overflow-hidden">
+
+            <div className="px-6 py-4 border-b border-white/[0.05]">
+              <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">
+                Ventas recientes
+              </h2>
+            </div>
 
             {dataLoading ? (
-              <div className="space-y-2 animate-pulse">
+              <div className="space-y-px p-3 animate-pulse">
                 {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="h-12 rounded-lg bg-white/10" />
+                  <div key={i} className="h-[72px] rounded-xl bg-white/[0.03]" />
                 ))}
               </div>
             ) : recentSales.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-white/15 px-6 py-10 text-center">
-                <p className="text-sm text-muted">Aún no hay ventas registradas.</p>
-                <p className="mt-1 text-xs text-muted/60">
+              <div className="px-6 py-20 text-center">
+                <p className="text-sm text-white/30">Aún no hay ventas registradas.</p>
+                <p className="mt-1.5 text-xs text-white/15">
                   Las ventas registradas aparecerán aquí.
                 </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full">
                   <thead>
-                    <tr className="border-b border-white/[0.08] text-left">
-                      <th className="pb-3 pr-8 text-[10px] font-medium uppercase tracking-widest text-muted/50">
+                    <tr className="border-b border-white/[0.05]">
+                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20">
                         Fecha
                       </th>
-                      <th className="pb-3 pr-8 text-[10px] font-medium uppercase tracking-widest text-muted/50">
+                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20">
                         Reloj
                       </th>
-                      <th className="pb-3 pr-8 text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden sm:table-cell">
+                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden sm:table-cell">
                         Comprador
                       </th>
-                      <th className="pb-3 pr-10 text-right text-[10px] font-medium uppercase tracking-widest text-muted/50">
+                      <th className="px-6 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20">
                         Precio
                       </th>
-                      <th className="pb-3 pr-10 text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden md:table-cell">
+                      <th className="px-6 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden md:table-cell">
                         Método
                       </th>
-                      <th className="pb-3 pr-10 text-right text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden lg:table-cell">
+                      <th className="px-6 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden lg:table-cell">
                         Comisión
                       </th>
-                      <th className="pb-3 text-right text-[10px] font-medium uppercase tracking-widest text-muted/50 hidden lg:table-cell">
+                      <th className="px-6 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/20 hidden lg:table-cell">
                         Neto recibido
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/[0.04]">
+                  <tbody className="divide-y divide-white/[0.035]">
                     {recentSales.map((sale) => {
                       const method = sale.payments[0]?.method ?? null;
                       // Bank fee is stored as OperatingExpense.BANK_FEES and is not currently
@@ -486,38 +633,40 @@ export default function VentasPage() {
                       return (
                         <tr
                           key={sale.dealId}
-                          className="transition hover:bg-white/[0.025]"
+                          className="group transition-colors duration-150 hover:bg-white/[0.02]"
                         >
-                          <td className="py-4 pr-8 text-xs text-muted/60 whitespace-nowrap">
+                          <td className="px-6 py-5 text-xs tabular-nums text-white/25 whitespace-nowrap align-middle">
                             {formatDate(sale.soldAt)}
                           </td>
-                          <td className="py-4 pr-8">
-                            <p className="font-medium text-white leading-snug">
+                          <td className="px-6 py-5 align-middle">
+                            <p className="text-[15px] font-semibold text-white leading-tight">
                               {sale.watch.brand} {sale.watch.model}
                             </p>
                             {sale.watch.serialNumber && (
-                              <p className="mt-0.5 text-[10px] text-muted/50 font-mono tracking-wider">
+                              <p className="mt-1 text-[10px] font-mono tracking-[0.2em] text-white/25 uppercase">
                                 {sale.watch.serialNumber}
                               </p>
                             )}
                           </td>
-                          <td className="py-4 pr-8 text-sm text-white/60 hidden sm:table-cell">
-                            {sale.buyer.name}
+                          <td className="px-6 py-5 align-middle hidden sm:table-cell">
+                            <p className="text-sm text-white/60">{sale.buyer.name}</p>
                           </td>
-                          <td className="py-4 pr-10 text-right font-bold text-white whitespace-nowrap">
-                            {formatMoney(sale.agreedPrice)}
+                          <td className="px-6 py-5 text-right align-middle whitespace-nowrap">
+                            <span className="text-[15px] font-bold tabular-nums text-white">
+                              {formatMoney(sale.agreedPrice)}
+                            </span>
                           </td>
-                          <td className="py-4 pr-10 hidden md:table-cell">
+                          <td className="px-6 py-5 align-middle hidden md:table-cell">
                             <PaymentBadge method={method} />
                           </td>
-                          <td className="py-4 pr-10 text-right whitespace-nowrap hidden lg:table-cell">
-                            <span className="text-muted/30">—</span>
+                          <td className="px-6 py-5 text-right align-middle whitespace-nowrap hidden lg:table-cell">
+                            <span className="text-xs text-white/15">—</span>
                           </td>
-                          <td className="py-4 text-right whitespace-nowrap hidden lg:table-cell">
+                          <td className="px-6 py-5 text-right align-middle whitespace-nowrap hidden lg:table-cell">
                             {isBancosRow ? (
-                              <span className="text-xs text-muted/40 italic">Pendiente</span>
+                              <span className="text-xs italic text-white/25">Pendiente</span>
                             ) : (
-                              <span className="text-[15px] font-semibold text-emerald-400">
+                              <span className="text-lg font-semibold tabular-nums text-emerald-400">
                                 {formatMoney(sale.agreedPrice)}
                               </span>
                             )}
