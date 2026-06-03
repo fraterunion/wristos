@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, apiGet } from '@/lib/api-client';
 import {
   getFxUsdMxn,
@@ -53,6 +53,28 @@ type HistorySummary = {
   totalCostOfSold: string;
   totalBankFees: string;
   totalProfit: string;
+};
+
+type SaleFilters = {
+  dateFrom: string;
+  dateTo: string;
+  paymentMethod: string;
+  currency: string;
+  buyer: string;
+  watchSearch: string;
+  minAmount: string;
+  maxAmount: string;
+};
+
+const EMPTY_FILTERS: SaleFilters = {
+  dateFrom: '',
+  dateTo: '',
+  paymentMethod: '',
+  currency: '',
+  buyer: '',
+  watchSearch: '',
+  minAmount: '',
+  maxAmount: '',
 };
 
 // ─── Icons (inline SVG) ───────────────────────────────────────────────────────
@@ -232,6 +254,9 @@ export default function VentasPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // ── Filter state ───────────────────────────────────────────────────────────
+  const [filters, setFilters] = useState<SaleFilters>(EMPTY_FILTERS);
+
   // ── Flash ──────────────────────────────────────────────────────────────────
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -271,13 +296,8 @@ export default function VentasPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadData();
-  }, [loadData]);
-
-  useEffect(() => {
-    void loadFx();
-  }, [loadFx]);
+  useEffect(() => { void loadData(); }, [loadData]);
+  useEffect(() => { void loadFx(); }, [loadFx]);
 
   useEffect(() => {
     if (!flash) return;
@@ -288,28 +308,15 @@ export default function VentasPage() {
   // ── Derived calculations ───────────────────────────────────────────────────
 
   const salePriceNum = Number(salePrice) || 0;
-
-  // Canonical preview base in MXN — used for bank fee preview and conversion display
-  const previewMxn = saleCurrency === 'USD' && fxRate
-    ? salePriceNum * fxRate.rate
-    : salePriceNum;
-
-  const commissionRate =
-    paymentMethod === 'BANCOS' && bankChannel ? BANK_RATES[bankChannel] : 0;
+  const previewMxn = saleCurrency === 'USD' && fxRate ? salePriceNum * fxRate.rate : salePriceNum;
+  const commissionRate = paymentMethod === 'BANCOS' && bankChannel ? BANK_RATES[bankChannel] : 0;
   const bankFeeAmt = previewMxn * commissionRate;
   const netReceivedAmt = previewMxn - bankFeeAmt;
-
   const isBancos = paymentMethod === 'BANCOS';
   const usdBlocked = saleCurrency === 'USD' && !fxRate;
-
   const isDisabled =
-    submitting ||
-    !watchId ||
-    !clientId ||
-    salePriceNum <= 0 ||
-    !salePrice.trim() ||
-    (isBancos && !bankChannel) ||
-    usdBlocked;
+    submitting || !watchId || !clientId || salePriceNum <= 0 ||
+    !salePrice.trim() || (isBancos && !bankChannel) || usdBlocked;
 
   // ── KPI derivation ─────────────────────────────────────────────────────────
 
@@ -322,6 +329,51 @@ export default function VentasPage() {
   const monthName = now.toLocaleDateString('es-MX', { month: 'long' });
   const monthLabel = monthName.charAt(0).toUpperCase() + monthName.slice(1);
 
+  // ── Client-side filtering ──────────────────────────────────────────────────
+
+  const activeFilterCount = useMemo(
+    () => Object.values(filters).filter((v) => v !== '').length,
+    [filters],
+  );
+
+  const filteredSales = useMemo(() => {
+    return recentSales.filter((sale) => {
+      const saleDay = sale.soldAt.slice(0, 10); // YYYY-MM-DD
+      if (filters.dateFrom && saleDay < filters.dateFrom) return false;
+      if (filters.dateTo && saleDay > filters.dateTo) return false;
+      if (filters.paymentMethod) {
+        const method = sale.payments[0]?.method ?? '';
+        if (method !== filters.paymentMethod) return false;
+      }
+      if (filters.currency) {
+        // Legacy records (null) are treated as MXN
+        const cur = sale.originalCurrency ?? 'MXN';
+        if (cur !== filters.currency) return false;
+      }
+      if (filters.buyer.trim()) {
+        const q = filters.buyer.trim().toLowerCase();
+        if (!sale.buyer.name.toLowerCase().includes(q)) return false;
+      }
+      if (filters.watchSearch.trim()) {
+        const q = filters.watchSearch.trim().toLowerCase();
+        const hit =
+          sale.watch.brand.toLowerCase().includes(q) ||
+          sale.watch.model.toLowerCase().includes(q) ||
+          (sale.watch.serialNumber?.toLowerCase().includes(q) ?? false);
+        if (!hit) return false;
+      }
+      if (filters.minAmount.trim()) {
+        const min = Number(filters.minAmount);
+        if (Number.isFinite(min) && Number(sale.agreedPrice) < min) return false;
+      }
+      if (filters.maxAmount.trim()) {
+        const max = Number(filters.maxAmount);
+        if (Number.isFinite(max) && Number(sale.agreedPrice) > max) return false;
+      }
+      return true;
+    });
+  }, [recentSales, filters]);
+
   // ── Form handlers ──────────────────────────────────────────────────────────
 
   const handlePaymentMethodChange = (m: VentaPaymentMethod) => {
@@ -331,20 +383,16 @@ export default function VentasPage() {
 
   const handleCurrencyChange = (c: SaleCurrency) => {
     setSaleCurrency(c);
-    // Refresh FX rate when switching to USD if we have an error or stale data
     if (c === 'USD' && !fxRate) void loadFx();
   };
 
+  const setFilter = (field: keyof SaleFilters, value: string) =>
+    setFilters((prev) => ({ ...prev, [field]: value }));
+
   const resetForm = () => {
-    setWatchId('');
-    setClientId('');
-    setSalePrice('');
-    setSaleCurrency('MXN');
-    setPaymentMethod('CASH');
-    setBankChannel('');
-    setSaleDate(todayIso());
-    setNotes('');
-    setSubmitError(null);
+    setWatchId(''); setClientId(''); setSalePrice(''); setSaleCurrency('MXN');
+    setPaymentMethod('CASH'); setBankChannel(''); setSaleDate(todayIso());
+    setNotes(''); setSubmitError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -354,22 +402,14 @@ export default function VentasPage() {
     setSubmitError(null);
     try {
       const response = await registerSale({
-        watchId,
-        clientId,
-        salePrice: salePriceNum,
-        paymentMethod,
+        watchId, clientId, salePrice: salePriceNum, paymentMethod,
         bankChannel: isBancos && bankChannel ? bankChannel : undefined,
         saleDate: saleDate || undefined,
         notes: notes.trim() || undefined,
         currency: saleCurrency,
       });
 
-      // Build flash message with conversion summary for USD sales
-      if (
-        saleCurrency === 'USD' &&
-        response.originalAmount &&
-        response.exchangeRate
-      ) {
+      if (saleCurrency === 'USD' && response.originalAmount && response.exchangeRate) {
         const rate = Number(response.exchangeRate).toFixed(2);
         setFlash({
           type: 'success',
@@ -382,8 +422,7 @@ export default function VentasPage() {
       resetForm();
       void loadData();
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : 'No se pudo registrar la venta.';
-      setSubmitError(msg);
+      setSubmitError(err instanceof ApiError ? err.message : 'No se pudo registrar la venta.');
     } finally {
       setSubmitting(false);
     }
@@ -391,18 +430,19 @@ export default function VentasPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const filterInputClass =
+    'h-8 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-xs text-white/70 placeholder:text-white/25 focus:outline-none focus:border-white/20 transition';
+
   return (
     <section className="ui-page">
 
       {/* Flash */}
       {flash && (
-        <div
-          className={`rounded-lg border px-4 py-3 text-sm ${
-            flash.type === 'success'
-              ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
-              : 'border-rose-500/35 bg-rose-500/10 text-rose-100'
-          }`}
-        >
+        <div className={`rounded-lg border px-4 py-3 text-sm ${
+          flash.type === 'success'
+            ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
+            : 'border-rose-500/35 bg-rose-500/10 text-rose-100'
+        }`}>
           {flash.message}
         </div>
       )}
@@ -438,11 +478,7 @@ export default function VentasPage() {
           label="Utilidad bruta"
           value={dataLoading || !summary ? '—' : formatMoney(summary.totalProfit)}
           sub="Ingresos menos costo de ventas"
-          highlight={
-            summary
-              ? Number(summary.totalProfit) >= 0 ? 'positive' : 'negative'
-              : undefined
-          }
+          highlight={summary ? (Number(summary.totalProfit) >= 0 ? 'positive' : 'negative') : undefined}
         />
       </div>
 
@@ -450,11 +486,7 @@ export default function VentasPage() {
       {dataError ? (
         <section className="rounded-xl border border-rose-500/35 bg-rose-500/10 p-5">
           <p className="text-sm text-rose-100">{dataError}</p>
-          <button
-            type="button"
-            onClick={() => void loadData()}
-            className="mt-3 text-sm underline text-rose-200"
-          >
+          <button type="button" onClick={() => void loadData()} className="mt-3 text-sm underline text-rose-200">
             Reintentar
           </button>
         </section>
@@ -475,51 +507,29 @@ export default function VentasPage() {
 
             <form className="space-y-4" onSubmit={(e) => void handleSubmit(e)}>
 
-              {/* Watch selector */}
               <div>
                 <label className="ui-field-label">Reloj vendido</label>
-                <select
-                  value={watchId}
-                  onChange={(e) => setWatchId(e.target.value)}
-                  className="ui-input"
-                  disabled={dataLoading || submitting}
-                  required
-                >
-                  <option value="">
-                    {dataLoading ? 'Cargando...' : 'Seleccionar reloj'}
-                  </option>
+                <select value={watchId} onChange={(e) => setWatchId(e.target.value)} className="ui-input" disabled={dataLoading || submitting} required>
+                  <option value="">{dataLoading ? 'Cargando...' : 'Seleccionar reloj'}</option>
                   {watches.map((w) => (
                     <option key={w.id} value={w.id}>
-                      {w.brand} {w.model}
-                      {w.serialNumber ? ` — ${w.serialNumber}` : ''}
-                      {' '}({formatMoney(w.priceMin)}–{formatMoney(w.priceMax)})
+                      {w.brand} {w.model}{w.serialNumber ? ` — ${w.serialNumber}` : ''}{' '}
+                      ({formatMoney(w.priceMin)}–{formatMoney(w.priceMax)})
                     </option>
                   ))}
                 </select>
                 {!dataLoading && watches.length === 0 && (
-                  <p className="mt-1 text-xs text-muted/70">
-                    No hay relojes disponibles en inventario.
-                  </p>
+                  <p className="mt-1 text-xs text-muted/70">No hay relojes disponibles en inventario.</p>
                 )}
               </div>
 
-              {/* Client selector */}
               <div>
                 <label className="ui-field-label">Comprador</label>
-                <select
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  className="ui-input"
-                  disabled={dataLoading || submitting}
-                  required
-                >
-                  <option value="">
-                    {dataLoading ? 'Cargando...' : 'Seleccionar comprador'}
-                  </option>
+                <select value={clientId} onChange={(e) => setClientId(e.target.value)} className="ui-input" disabled={dataLoading || submitting} required>
+                  <option value="">{dataLoading ? 'Cargando...' : 'Seleccionar comprador'}</option>
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.phone ? ` — ${c.phone}` : ''}
+                      {c.name}{c.phone ? ` — ${c.phone}` : ''}
                     </option>
                   ))}
                 </select>
@@ -529,36 +539,20 @@ export default function VentasPage() {
               <div>
                 <label className="ui-field-label">Moneda</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleCurrencyChange('MXN')}
-                    disabled={submitting}
-                    className={`rounded-lg border px-3 py-2 text-sm transition ${
-                      saleCurrency === 'MXN'
-                        ? 'border-white/35 bg-white/10 font-semibold text-white'
-                        : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
-                    }`}
-                  >
+                  <button type="button" onClick={() => handleCurrencyChange('MXN')} disabled={submitting}
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${saleCurrency === 'MXN' ? 'border-white/35 bg-white/10 font-semibold text-white' : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'}`}>
                     Pesos
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleCurrencyChange('USD')}
-                    disabled={submitting || (fxError !== null && !fxRate)}
+                  <button type="button" onClick={() => handleCurrencyChange('USD')} disabled={submitting || (fxError !== null && !fxRate)}
                     title={fxError && !fxRate ? fxError : undefined}
                     className={`rounded-lg border px-3 py-2 text-sm transition ${
-                      saleCurrency === 'USD'
-                        ? 'border-white/35 bg-white/10 font-semibold text-white'
-                        : fxError && !fxRate
-                          ? 'border-white/5 text-white/20 cursor-not-allowed'
-                          : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
-                    }`}
-                  >
+                      saleCurrency === 'USD' ? 'border-white/35 bg-white/10 font-semibold text-white' :
+                      fxError && !fxRate ? 'border-white/5 text-white/20 cursor-not-allowed' :
+                      'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
+                    }`}>
                     Dólares
                   </button>
                 </div>
-
-                {/* FX rate info — shown below currency selector */}
                 <div className="mt-2 min-h-[28px]">
                   {fxLoading ? (
                     <div className="h-4 w-48 rounded bg-white/[0.05] animate-pulse" />
@@ -586,17 +580,9 @@ export default function VentasPage() {
                 <label className="ui-field-label">
                   {saleCurrency === 'USD' ? 'Precio de venta en dólares' : 'Precio de venta'}
                 </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={salePrice}
-                  onChange={(e) => setSalePrice(e.target.value)}
-                  placeholder="0.00"
-                  className="ui-input"
-                  disabled={submitting}
-                  required
-                />
+                <input type="number" step="0.01" min="0.01" value={salePrice}
+                  onChange={(e) => setSalePrice(e.target.value)} placeholder="0.00"
+                  className="ui-input" disabled={submitting} required />
                 <p className="mt-1 text-[11px] text-white/30">
                   {saleCurrency === 'USD'
                     ? 'Se convertirá automáticamente a pesos al registrar la venta.'
@@ -607,17 +593,11 @@ export default function VentasPage() {
               {/* USD conversion preview */}
               {saleCurrency === 'USD' && salePriceNum > 0 && fxRate && (
                 <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-3 space-y-2">
-                  <div>
-                    <p className="text-[10px] uppercase tracking-widest text-white/30">
-                      Venta estimada en pesos
-                    </p>
-                    <p className="mt-1 text-base font-semibold text-white">
-                      {formatMoney(previewMxn)}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-white/25">
-                      {formatUsd(salePriceNum)} × ${fxRate.rate.toFixed(2)}
-                    </p>
-                  </div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/30">Venta estimada en pesos</p>
+                  <p className="text-base font-semibold text-white">{formatMoney(previewMxn)}</p>
+                  <p className="text-[10px] text-white/25">
+                    {formatUsd(salePriceNum)} × ${fxRate.rate.toFixed(2)}
+                  </p>
                 </div>
               )}
 
@@ -626,17 +606,13 @@ export default function VentasPage() {
                 <label className="ui-field-label">Método de pago</label>
                 <div className="grid grid-cols-3 gap-2">
                   {PAYMENT_METHOD_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => handlePaymentMethodChange(opt.value)}
+                    <button key={opt.value} type="button" onClick={() => handlePaymentMethodChange(opt.value)}
                       disabled={submitting}
                       className={`rounded-lg border px-3 py-2 text-sm transition ${
                         paymentMethod === opt.value
                           ? 'border-white/35 bg-white/10 font-semibold text-white'
                           : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
-                      }`}
-                    >
+                      }`}>
                       {opt.label}
                     </button>
                   ))}
@@ -650,17 +626,13 @@ export default function VentasPage() {
                     <label className="ui-field-label">Canal bancario</label>
                     <div className="grid grid-cols-2 gap-2 mt-1">
                       {BANK_CHANNEL_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => setBankChannel(opt.value)}
+                        <button key={opt.value} type="button" onClick={() => setBankChannel(opt.value)}
                           disabled={submitting}
                           className={`rounded-lg border px-3 py-2 text-sm transition ${
                             bankChannel === opt.value
                               ? 'border-white/35 bg-white/10 font-semibold text-white'
                               : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
-                          }`}
-                        >
+                          }`}>
                           {opt.label}
                           <span className="ml-1 text-xs text-white/30">
                             ({(opt.rate * 100).toFixed(0)}%)
@@ -669,72 +641,42 @@ export default function VentasPage() {
                       ))}
                     </div>
                   </div>
-
-                  {/* Commission preview — uses MXN canonical amount */}
                   {bankChannel && salePriceNum > 0 && (
                     <div className="grid grid-cols-2 gap-3 pt-1">
                       <div className="rounded-lg bg-white/[0.04] px-3 py-2.5">
-                        <p className="text-[10px] uppercase tracking-widest text-white/30">
-                          Comisión bancaria
-                        </p>
+                        <p className="text-[10px] uppercase tracking-widest text-white/30">Comisión bancaria</p>
                         <p className="mt-1.5 text-sm font-semibold text-amber-300">
                           {formatMoney(bankFeeAmt)}
-                          <span className="ml-1 text-xs font-normal text-white/30">
-                            ({(commissionRate * 100).toFixed(0)}%)
-                          </span>
+                          <span className="ml-1 text-xs font-normal text-white/30">({(commissionRate * 100).toFixed(0)}%)</span>
                         </p>
                       </div>
                       <div className="rounded-lg bg-white/[0.04] px-3 py-2.5">
-                        <p className="text-[10px] uppercase tracking-widest text-white/30">
-                          Neto recibido
-                        </p>
-                        <p className="mt-1.5 text-sm font-semibold text-emerald-300">
-                          {formatMoney(netReceivedAmt)}
-                        </p>
+                        <p className="text-[10px] uppercase tracking-widest text-white/30">Neto recibido</p>
+                        <p className="mt-1.5 text-sm font-semibold text-emerald-300">{formatMoney(netReceivedAmt)}</p>
                       </div>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Sale date */}
               <div>
                 <label className="ui-field-label">Fecha de venta</label>
-                <input
-                  type="date"
-                  value={saleDate}
-                  onChange={(e) => setSaleDate(e.target.value)}
-                  className="ui-input"
-                  disabled={submitting}
-                />
+                <input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="ui-input" disabled={submitting} />
               </div>
 
-              {/* Notes */}
               <div>
                 <label className="ui-field-label">Notas (opcional)</label>
-                <textarea
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Detalles adicionales de la venta…"
-                  className="ui-input resize-none"
-                  disabled={submitting}
-                />
+                <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Detalles adicionales de la venta…" className="ui-input resize-none" disabled={submitting} />
               </div>
 
-              {/* FX unavailable warning when USD selected */}
               {saleCurrency === 'USD' && fxError && !fxRate && (
                 <div className="rounded-lg border border-rose-500/30 bg-rose-500/[0.08] px-3 py-2.5 text-xs text-rose-300/90">
                   {fxError}
                 </div>
               )}
 
-              {/* Submit */}
-              <button
-                type="submit"
-                disabled={isDisabled}
-                className="ui-btn-primary w-full py-2.5 disabled:opacity-50"
-              >
+              <button type="submit" disabled={isDisabled} className="ui-btn-primary w-full py-2.5 disabled:opacity-50">
                 {submitting ? 'Registrando…' : 'Registrar venta'}
               </button>
             </form>
@@ -743,10 +685,87 @@ export default function VentasPage() {
           {/* ── Recent sales table ───────────────────────────────────────── */}
           <article className="rounded-2xl border border-white/[0.07] bg-panel shadow-sm shadow-black/20 min-w-0 overflow-hidden">
 
-            <div className="px-6 py-4 border-b border-white/[0.05]">
+            <div className="px-4 py-4 border-b border-white/[0.05] space-y-3">
               <h2 className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
                 Ventas recientes
               </h2>
+
+              {/* Filter bar */}
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date" value={filters.dateFrom}
+                  onChange={(e) => setFilter('dateFrom', e.target.value)}
+                  title="Desde"
+                  className={`${filterInputClass} w-36`}
+                />
+                <input
+                  type="date" value={filters.dateTo}
+                  onChange={(e) => setFilter('dateTo', e.target.value)}
+                  title="Hasta"
+                  className={`${filterInputClass} w-36`}
+                />
+                <select
+                  value={filters.paymentMethod}
+                  onChange={(e) => setFilter('paymentMethod', e.target.value)}
+                  className={`${filterInputClass} w-36`}
+                >
+                  <option value="">Método: Todos</option>
+                  <option value="CASH">Efectivo</option>
+                  <option value="BANCOS">Bancos</option>
+                  <option value="CESAR">César</option>
+                  <option value="CARD">Tarjeta</option>
+                  <option value="TRANSFER">Transferencia</option>
+                </select>
+                <select
+                  value={filters.currency}
+                  onChange={(e) => setFilter('currency', e.target.value)}
+                  className={`${filterInputClass} w-32`}
+                >
+                  <option value="">Moneda: Todas</option>
+                  <option value="MXN">Pesos</option>
+                  <option value="USD">Dólares</option>
+                </select>
+                <input
+                  type="text" value={filters.buyer}
+                  onChange={(e) => setFilter('buyer', e.target.value)}
+                  placeholder="Comprador…"
+                  className={`${filterInputClass} w-28`}
+                />
+                <input
+                  type="text" value={filters.watchSearch}
+                  onChange={(e) => setFilter('watchSearch', e.target.value)}
+                  placeholder="Reloj, marca…"
+                  className={`${filterInputClass} w-28`}
+                />
+                <input
+                  type="number" value={filters.minAmount}
+                  onChange={(e) => setFilter('minAmount', e.target.value)}
+                  placeholder="$ Mín"
+                  className={`${filterInputClass} w-20`}
+                />
+                <input
+                  type="number" value={filters.maxAmount}
+                  onChange={(e) => setFilter('maxAmount', e.target.value)}
+                  placeholder="$ Máx"
+                  className={`${filterInputClass} w-20`}
+                />
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFilters(EMPTY_FILTERS)}
+                    className="h-8 rounded-lg border border-white/10 px-3 text-xs text-white/40 hover:text-white/70 hover:border-white/20 transition whitespace-nowrap"
+                  >
+                    Limpiar ({activeFilterCount})
+                  </button>
+                )}
+              </div>
+
+              {/* Result count — only when filters active */}
+              {activeFilterCount > 0 && !dataLoading && (
+                <p className="text-[10px] text-white/25">
+                  {filteredSales.length} de {recentSales.length} ventas
+                </p>
+              )}
             </div>
 
             {dataLoading ? (
@@ -758,9 +777,15 @@ export default function VentasPage() {
             ) : recentSales.length === 0 ? (
               <div className="px-6 py-20 text-center">
                 <p className="text-sm text-white/40">Aún no hay ventas registradas.</p>
-                <p className="mt-1.5 text-xs text-white/20">
-                  Las ventas registradas aparecerán aquí.
-                </p>
+                <p className="mt-1.5 text-xs text-white/20">Las ventas registradas aparecerán aquí.</p>
+              </div>
+            ) : filteredSales.length === 0 ? (
+              <div className="px-6 py-12 text-center">
+                <p className="text-sm text-white/40">Sin resultados para los filtros aplicados.</p>
+                <button type="button" onClick={() => setFilters(EMPTY_FILTERS)}
+                  className="mt-2 text-xs underline text-white/30 hover:text-white/60 transition">
+                  Limpiar filtros
+                </button>
               </div>
             ) : (
               /* table-fixed: columns use th widths; Reloj column absorbs remaining space */
@@ -768,54 +793,31 @@ export default function VentasPage() {
                 <table className="w-full table-fixed">
                   <thead>
                     <tr className="border-b border-white/[0.06]">
-                      <th className="w-[88px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
-                        Fecha
-                      </th>
-                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
-                        Reloj
-                      </th>
-                      <th className="w-[118px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden 2xl:table-cell">
-                        Comprador
-                      </th>
-                      <th className="w-[108px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
-                        Precio
-                      </th>
-                      <th className="w-[128px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden md:table-cell">
-                        Método
-                      </th>
-                      <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden lg:table-cell">
-                        Comisión
-                      </th>
-                      <th className="w-[132px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden lg:table-cell">
-                        Neto recibido
-                      </th>
+                      <th className="w-[88px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">Fecha</th>
+                      <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">Reloj</th>
+                      <th className="w-[118px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden 2xl:table-cell">Comprador</th>
+                      <th className="w-[108px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">Precio</th>
+                      <th className="w-[128px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden md:table-cell">Método</th>
+                      <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden lg:table-cell">Comisión</th>
+                      <th className="w-[132px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40 hidden lg:table-cell">Neto recibido</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/[0.04]">
-                    {recentSales.map((sale) => {
+                    {filteredSales.map((sale) => {
                       const method = sale.payments[0]?.method ?? null;
-                      // Bank fee is stored as OperatingExpense.BANK_FEES and is not currently
-                      // returned by /history/sold. Do not infer it from payments.
-                      const isBancosRow = method === 'BANCOS';
+                      const hasFee = !!sale.bankFee && Number(sale.bankFee) > 0;
                       const hasUsdMeta =
                         sale.originalCurrency === 'USD' &&
                         !!sale.originalAmount &&
                         !!sale.exchangeRate;
                       return (
-                        <tr
-                          key={sale.dealId}
-                          className="transition-colors duration-150 hover:bg-white/[0.02]"
-                        >
+                        <tr key={sale.dealId} className="transition-colors duration-150 hover:bg-white/[0.02]">
                           <td className="px-3 py-4 text-xs tabular-nums text-white/35 whitespace-nowrap align-top pt-[18px]">
                             {formatDate(sale.soldAt)}
                           </td>
                           <td className="px-3 py-4 align-middle overflow-hidden">
-                            <p className="text-sm font-semibold text-white leading-tight truncate">
-                              {sale.watch.brand}
-                            </p>
-                            <p className="mt-0.5 text-xs text-white/50 truncate">
-                              {sale.watch.model}
-                            </p>
+                            <p className="text-sm font-semibold text-white leading-tight truncate">{sale.watch.brand}</p>
+                            <p className="mt-0.5 text-xs text-white/50 truncate">{sale.watch.model}</p>
                             {sale.watch.serialNumber && (
                               <p className="mt-0.5 text-[10px] font-mono tracking-[0.14em] text-white/25 uppercase truncate">
                                 {sale.watch.serialNumber}
@@ -825,11 +827,10 @@ export default function VentasPage() {
                           <td className="px-3 py-4 align-middle hidden 2xl:table-cell overflow-hidden">
                             <p className="text-sm text-white/55 truncate">{sale.buyer.name}</p>
                           </td>
-                          <td className="px-3 py-4 text-right align-middle whitespace-nowrap">
-                            <span className="text-sm font-bold tabular-nums text-white">
+                          <td className="px-3 py-4 text-right align-middle">
+                            <span className="text-sm font-bold tabular-nums text-white whitespace-nowrap">
                               {formatMoney(sale.agreedPrice)}
                             </span>
-                            {/* USD original amount — shown when /history/sold exposes these fields */}
                             {hasUsdMeta && (
                               <p className="mt-0.5 text-[10px] text-white/25 tabular-nums">
                                 {formatUsd(sale.originalAmount)} @ ${Number(sale.exchangeRate).toFixed(2)}
@@ -840,16 +841,18 @@ export default function VentasPage() {
                             <PaymentBadge method={method} />
                           </td>
                           <td className="px-3 py-4 text-right align-middle whitespace-nowrap hidden lg:table-cell">
-                            <span className="text-xs text-white/20">—</span>
+                            {hasFee ? (
+                              <span className="text-xs tabular-nums text-amber-400/75">
+                                {formatMoney(sale.bankFee)}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-white/20">—</span>
+                            )}
                           </td>
                           <td className="px-3 py-4 text-right align-middle whitespace-nowrap hidden lg:table-cell">
-                            {isBancosRow ? (
-                              <span className="text-xs italic text-white/30">Pendiente</span>
-                            ) : (
-                              <span className="text-base font-semibold tabular-nums text-emerald-400">
-                                {formatMoney(sale.agreedPrice)}
-                              </span>
-                            )}
+                            <span className="text-base font-semibold tabular-nums text-emerald-400">
+                              {formatMoney(sale.netReceived)}
+                            </span>
                           </td>
                         </tr>
                       );
