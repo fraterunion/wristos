@@ -43,10 +43,12 @@ export type SoldItem = {
   };
   buyer: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
-  // Currency metadata — populated once /history/sold exposes these fields
-  originalCurrency?: string | null;
-  originalAmount?: string | null;
-  exchangeRate?: string | null;
+  // Currency metadata — returned by /history/sold since Commit A (dealId FK)
+  originalCurrency: 'MXN' | 'USD' | null;
+  originalAmount: string | null;
+  exchangeRate: string | null;
+  bankFee: string | null;      // MXN bank commission; null when no fee
+  netReceived: string;         // agreedPrice − bankFee; always present
   notes: string | null;
   soldAt: string;
   createdAt: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { apiGet, ApiError } from '@/lib/api-client';
 import type { PaymentMethod, PaymentStatus, WatchOwnershipType, WatchStatus } from '@/types/domain';
@@ -13,6 +13,7 @@ type HistorySummary = {
   currentStock: number;
   totalRevenue: string;
   totalCostOfSold: string;
+  totalBankFees?: string | number | null;
   totalProfit: string;
 };
 
@@ -32,6 +33,11 @@ type SoldItem = {
   };
   buyer: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
+  originalCurrency?: 'MXN' | 'USD' | null;
+  originalAmount?: string | null;
+  exchangeRate?: string | null;
+  bankFee?: string | null;
+  netReceived: string;
   notes: string | null;
   soldAt: string;
   createdAt: string;
@@ -67,19 +73,42 @@ type Movement = {
   updatedAt: string;
 };
 
+type SoldFilters = {
+  dateFrom: string;
+  dateTo: string;
+  watchSearch: string;
+  buyer: string;
+  paymentMethod: string;
+  currency: string;
+  minAmount: string;
+  maxAmount: string;
+};
+
+const EMPTY_SOLD_FILTERS: SoldFilters = {
+  dateFrom: '', dateTo: '', watchSearch: '', buyer: '',
+  paymentMethod: '', currency: '', minAmount: '', maxAmount: '',
+};
+
 // --- Helpers ---
 
 function formatMoney(value: string | number) {
   const n = Number(value);
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('es-MX', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
+    currencyDisplay: 'narrowSymbol',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(n) ? n : 0);
 }
 
+function formatUsd(value: string | number | null | undefined) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `USD ${new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(n)}`;
+}
+
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', {
+  return new Date(iso).toLocaleDateString('es-MX', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -126,6 +155,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'acquired', label: 'Adquiridos' },
 ];
 
+const filterInputClass =
+  'h-8 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-xs text-white/70 placeholder:text-white/25 focus:outline-none focus:border-white/20 transition';
+
 // --- Page ---
 
 export default function HistoryPage() {
@@ -139,6 +171,12 @@ export default function HistoryPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Per-tab search/filter state
+  const [soldFilters, setSoldFilters] = useState<SoldFilters>(EMPTY_SOLD_FILTERS);
+  const [movementsSearch, setMovementsSearch] = useState('');
+  const [stockSearch, setStockSearch] = useState('');
+  const [acquiredSearch, setAcquiredSearch] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -163,9 +201,87 @@ export default function HistoryPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
+
+  // --- Client-side filtering ---
+
+  const setSoldFilter = (field: keyof SoldFilters, value: string) =>
+    setSoldFilters((prev) => ({ ...prev, [field]: value }));
+
+  const soldActiveFilters = useMemo(
+    () => Object.values(soldFilters).filter((v) => v !== '').length,
+    [soldFilters],
+  );
+
+  const filteredSold = useMemo(() => {
+    return sold.filter((item) => {
+      const saleDay = item.soldAt.slice(0, 10);
+      if (soldFilters.dateFrom && saleDay < soldFilters.dateFrom) return false;
+      if (soldFilters.dateTo && saleDay > soldFilters.dateTo) return false;
+      if (soldFilters.watchSearch.trim()) {
+        const q = soldFilters.watchSearch.trim().toLowerCase();
+        if (
+          !item.watch.brand.toLowerCase().includes(q) &&
+          !item.watch.model.toLowerCase().includes(q) &&
+          !(item.watch.serialNumber?.toLowerCase().includes(q) ?? false)
+        ) return false;
+      }
+      if (soldFilters.buyer.trim()) {
+        if (!item.buyer.name.toLowerCase().includes(soldFilters.buyer.trim().toLowerCase()))
+          return false;
+      }
+      if (soldFilters.paymentMethod) {
+        const method = item.payments[0]?.method ?? '';
+        if (method !== soldFilters.paymentMethod) return false;
+      }
+      if (soldFilters.currency) {
+        const cur = item.originalCurrency ?? 'MXN';
+        if (cur !== soldFilters.currency) return false;
+      }
+      if (soldFilters.minAmount.trim()) {
+        const min = Number(soldFilters.minAmount);
+        if (Number.isFinite(min) && Number(item.agreedPrice) < min) return false;
+      }
+      if (soldFilters.maxAmount.trim()) {
+        const max = Number(soldFilters.maxAmount);
+        if (Number.isFinite(max) && Number(item.agreedPrice) > max) return false;
+      }
+      return true;
+    });
+  }, [sold, soldFilters]);
+
+  const filteredMovements = useMemo(() => {
+    if (!movementsSearch.trim()) return movements;
+    const q = movementsSearch.trim().toLowerCase();
+    return movements.filter(
+      (m) =>
+        m.watch.brand.toLowerCase().includes(q) ||
+        m.watch.model.toLowerCase().includes(q) ||
+        m.client.name.toLowerCase().includes(q),
+    );
+  }, [movements, movementsSearch]);
+
+  const filteredStock = useMemo(() => {
+    if (!stockSearch.trim()) return stock;
+    const q = stockSearch.trim().toLowerCase();
+    return stock.filter(
+      (w) =>
+        w.brand.toLowerCase().includes(q) ||
+        w.model.toLowerCase().includes(q) ||
+        (w.serialNumber?.toLowerCase().includes(q) ?? false),
+    );
+  }, [stock, stockSearch]);
+
+  const filteredAcquired = useMemo(() => {
+    if (!acquiredSearch.trim()) return acquired;
+    const q = acquiredSearch.trim().toLowerCase();
+    return acquired.filter(
+      (w) =>
+        w.brand.toLowerCase().includes(q) ||
+        w.model.toLowerCase().includes(q) ||
+        (w.serialNumber?.toLowerCase().includes(q) ?? false),
+    );
+  }, [acquired, acquiredSearch]);
 
   return (
     <div className="ui-page">
@@ -178,14 +294,18 @@ export default function HistoryPage() {
         </div>
       </header>
 
-      {/* Summary cards */}
+      {/* Summary cards — 7 cards: 3 counts + 4 financials */}
       {summary ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Adquiridos" value={String(summary.totalAcquired)} />
           <StatCard label="Vendidos" value={String(summary.totalSold)} />
           <StatCard label="En stock" value={String(summary.currentStock)} />
           <StatCard label="Ingresos" value={formatMoney(summary.totalRevenue)} />
           <StatCard label="Costo de ventas" value={formatMoney(summary.totalCostOfSold)} />
+          <StatCard
+            label="Comisiones bancarias"
+            value={summary.totalBankFees != null ? formatMoney(summary.totalBankFees) : '—'}
+          />
           <StatCard
             label="Utilidad bruta"
             value={formatMoney(summary.totalProfit)}
@@ -235,229 +355,369 @@ export default function HistoryPage() {
 
       {/* Movements tab */}
       {!loading && !error && activeTab === 'movements' ? (
-        movements.length === 0 ? (
-          <EmptyState message="Aún no hay movimientos registrados." />
-        ) : (
-          <TableWrapper>
-            <table className="min-w-[900px] w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Reloj</th>
-                  <th className="px-4 py-3 font-medium">Serie</th>
-                  <th className="px-4 py-3 font-medium">Cliente</th>
-                  <th className="px-4 py-3 font-medium">Etapa</th>
-                  <th className="px-4 py-3 font-medium text-right">Precio acordado</th>
-                  <th className="px-4 py-3 font-medium">Última actualización</th>
-                  <th className="px-4 py-3 font-medium">Creado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {movements.map((m) => (
-                  <tr key={m.dealId} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-white">{m.watch.brand}</div>
-                      <div className="text-xs text-muted">{m.watch.model}</div>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted">{dash(m.watch.serialNumber)}</td>
-                    <td className="px-4 py-3">
-                      <div className="text-white">{m.client.name}</div>
-                      <div className="text-xs text-muted">{dash(m.client.email)}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STAGE_COLORS[m.stage] ?? 'bg-zinc-500/20 text-zinc-300'}`}>
-                        {STAGE_LABELS[m.stage] ?? m.stage}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
-                      {formatMoney(m.agreedPrice)}
-                    </td>
-                    <td className="px-4 py-3 text-muted">{formatDate(m.updatedAt)}</td>
-                    <td className="px-4 py-3 text-muted">{formatDate(m.createdAt)}</td>
+        <>
+          {/* Simple search */}
+          <div className="flex items-center gap-2">
+            <input
+              type="text" value={movementsSearch}
+              onChange={(e) => setMovementsSearch(e.target.value)}
+              placeholder="Buscar por reloj o cliente…"
+              className={`${filterInputClass} w-56`}
+            />
+            {movementsSearch && (
+              <button type="button" onClick={() => setMovementsSearch('')}
+                className="h-8 rounded-lg border border-white/10 px-3 text-xs text-white/40 hover:text-white/70 transition">
+                Limpiar
+              </button>
+            )}
+            {movementsSearch.trim() && (
+              <span className="text-[10px] text-white/25">
+                {filteredMovements.length} de {movements.length}
+              </span>
+            )}
+          </div>
+          {filteredMovements.length === 0 ? (
+            <EmptyState message="Sin resultados." />
+          ) : (
+            <TableWrapper>
+              <table className="min-w-[900px] w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
+                    <th className="px-4 py-3 font-medium">Reloj</th>
+                    <th className="px-4 py-3 font-medium">Serie</th>
+                    <th className="px-4 py-3 font-medium">Cliente</th>
+                    <th className="px-4 py-3 font-medium">Etapa</th>
+                    <th className="px-4 py-3 font-medium text-right">Precio acordado</th>
+                    <th className="px-4 py-3 font-medium">Última actualización</th>
+                    <th className="px-4 py-3 font-medium">Creado</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrapper>
-        )
+                </thead>
+                <tbody>
+                  {filteredMovements.map((m) => (
+                    <tr key={m.dealId} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-white">{m.watch.brand}</div>
+                        <div className="text-xs text-muted">{m.watch.model}</div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted">{dash(m.watch.serialNumber)}</td>
+                      <td className="px-4 py-3">
+                        <div className="text-white">{m.client.name}</div>
+                        <div className="text-xs text-muted">{dash(m.client.email)}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STAGE_COLORS[m.stage] ?? 'bg-zinc-500/20 text-zinc-300'}`}>
+                          {STAGE_LABELS[m.stage] ?? m.stage}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
+                        {formatMoney(m.agreedPrice)}
+                      </td>
+                      <td className="px-4 py-3 text-muted">{formatDate(m.updatedAt)}</td>
+                      <td className="px-4 py-3 text-muted">{formatDate(m.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrapper>
+          )}
+        </>
       ) : null}
 
       {/* Sold tab */}
       {!loading && !error && activeTab === 'sold' ? (
-        sold.length === 0 ? (
-          <EmptyState message="Aún no hay relojes vendidos." />
-        ) : (
-          <TableWrapper>
-            <table className="min-w-[960px] w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Reloj</th>
-                  <th className="px-4 py-3 font-medium">Comprador</th>
-                  <th className="px-4 py-3 font-medium">Propiedad</th>
-                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
-                  <th className="px-4 py-3 font-medium text-right">Precio de venta</th>
-                  <th className="px-4 py-3 font-medium text-right">Margen</th>
-                  <th className="px-4 py-3 font-medium">Vendido</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sold.map((item) => {
-                  const effectiveCost = Number(item.watch.effectiveCost);
-                  const margin = Number(item.agreedPrice) - effectiveCost;
-                  const marginPct =
-                    effectiveCost > 0
-                      ? ((margin / effectiveCost) * 100).toFixed(1)
+        <>
+          {/* Filter bar */}
+          <div className="ui-card p-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="date" value={soldFilters.dateFrom}
+                onChange={(e) => setSoldFilter('dateFrom', e.target.value)}
+                title="Desde" className={`${filterInputClass} w-36`} />
+              <input type="date" value={soldFilters.dateTo}
+                onChange={(e) => setSoldFilter('dateTo', e.target.value)}
+                title="Hasta" className={`${filterInputClass} w-36`} />
+              <input type="text" value={soldFilters.watchSearch}
+                onChange={(e) => setSoldFilter('watchSearch', e.target.value)}
+                placeholder="Reloj, marca…" className={`${filterInputClass} w-28`} />
+              <input type="text" value={soldFilters.buyer}
+                onChange={(e) => setSoldFilter('buyer', e.target.value)}
+                placeholder="Comprador…" className={`${filterInputClass} w-28`} />
+              <select value={soldFilters.paymentMethod}
+                onChange={(e) => setSoldFilter('paymentMethod', e.target.value)}
+                className={`${filterInputClass} w-36`}>
+                <option value="">Método: Todos</option>
+                <option value="CASH">Efectivo</option>
+                <option value="BANCOS">Bancos</option>
+                <option value="CESAR">César</option>
+                <option value="CARD">Tarjeta</option>
+                <option value="TRANSFER">Transferencia</option>
+              </select>
+              <select value={soldFilters.currency}
+                onChange={(e) => setSoldFilter('currency', e.target.value)}
+                className={`${filterInputClass} w-32`}>
+                <option value="">Moneda: Todas</option>
+                <option value="MXN">Pesos</option>
+                <option value="USD">Dólares</option>
+              </select>
+              <input type="number" value={soldFilters.minAmount}
+                onChange={(e) => setSoldFilter('minAmount', e.target.value)}
+                placeholder="$ Mín" className={`${filterInputClass} w-20`} />
+              <input type="number" value={soldFilters.maxAmount}
+                onChange={(e) => setSoldFilter('maxAmount', e.target.value)}
+                placeholder="$ Máx" className={`${filterInputClass} w-20`} />
+              {soldActiveFilters > 0 && (
+                <button type="button" onClick={() => setSoldFilters(EMPTY_SOLD_FILTERS)}
+                  className="h-8 rounded-lg border border-white/10 px-3 text-xs text-white/40 hover:text-white/70 hover:border-white/20 transition whitespace-nowrap">
+                  Limpiar ({soldActiveFilters})
+                </button>
+              )}
+            </div>
+            {soldActiveFilters > 0 && (
+              <p className="text-[10px] text-white/25">
+                {filteredSold.length} de {sold.length} ventas
+              </p>
+            )}
+          </div>
+
+          {filteredSold.length === 0 ? (
+            <EmptyState message={sold.length === 0 ? 'Aún no hay relojes vendidos.' : 'Sin resultados para los filtros aplicados.'} />
+          ) : (
+            <TableWrapper>
+              {/* 9 columns: Reloj · Comprador · Propiedad · Costo · Precio · Comisión · Neto · Margen · Vendido */}
+              <table className="min-w-[1160px] w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
+                    <th className="px-4 py-3 font-medium">Reloj</th>
+                    <th className="px-4 py-3 font-medium">Comprador</th>
+                    <th className="px-4 py-3 font-medium">Propiedad</th>
+                    <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                    <th className="px-4 py-3 font-medium text-right">Precio de venta</th>
+                    <th className="px-4 py-3 font-medium text-right">Comisión</th>
+                    <th className="px-4 py-3 font-medium text-right">Neto recibido</th>
+                    <th className="px-4 py-3 font-medium text-right">Margen</th>
+                    <th className="px-4 py-3 font-medium">Vendido</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSold.map((item) => {
+                    const effectiveCost = Number(item.watch.effectiveCost);
+                    const bankFeeNum = Number(item.bankFee ?? 0);
+                    const agreedPriceNum = Number(item.agreedPrice);
+                    // Corrected margin deducts bank fee; percentage is margin / sale price
+                    const margin = agreedPriceNum - effectiveCost - bankFeeNum;
+                    const marginPct = agreedPriceNum > 0
+                      ? ((margin / agreedPriceNum) * 100).toFixed(1)
                       : '—';
-                  return (
-                    <tr key={item.dealId} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-white">{item.watch.brand}</div>
-                        <div className="text-xs text-muted">{item.watch.model}</div>
-                        <div className="font-mono text-xs text-muted/60">{dash(item.watch.serialNumber)}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-white">{item.buyer.name}</div>
-                        <div className="text-xs text-muted">{dash(item.buyer.email)}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs font-medium uppercase tracking-wide text-muted">
-                          {item.watch.ownershipType === 'CONSIGNMENT'
-                            ? `Consignación${item.watch.consignmentOwnerName ? ` · ${item.watch.consignmentOwnerName}` : ''}`
-                            : 'Propio'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted">
-                        {formatMoney(item.watch.effectiveCost)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
-                        {formatMoney(item.agreedPrice)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        <span className={margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatMoney(margin)}
-                          {marginPct !== '—' ? (
-                            <span className="ml-1 text-xs opacity-70">({marginPct}%)</span>
-                          ) : null}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-muted">{formatDate(item.soldAt)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </TableWrapper>
-        )
+                    const hasUsdMeta =
+                      item.originalCurrency === 'USD' &&
+                      !!item.originalAmount &&
+                      !!item.exchangeRate;
+                    return (
+                      <tr key={item.dealId} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-white">{item.watch.brand}</div>
+                          <div className="text-xs text-muted">{item.watch.model}</div>
+                          <div className="font-mono text-xs text-muted/60">{dash(item.watch.serialNumber)}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="text-white">{item.buyer.name}</div>
+                          <div className="text-xs text-muted">{dash(item.buyer.email)}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                            {item.watch.ownershipType === 'CONSIGNMENT'
+                              ? `Consignación${item.watch.consignmentOwnerName ? ` · ${item.watch.consignmentOwnerName}` : ''}`
+                              : 'Propio'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-muted">
+                          {formatMoney(item.watch.effectiveCost)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="font-medium tabular-nums text-white">
+                            {formatMoney(item.agreedPrice)}
+                          </div>
+                          {hasUsdMeta && (
+                            <div className="mt-0.5 text-[10px] tabular-nums text-white/30">
+                              {formatUsd(item.originalAmount)} @ ${Number(item.exchangeRate).toFixed(2)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {bankFeeNum > 0 ? (
+                            <span className="text-amber-400/80">{formatMoney(bankFeeNum)}</span>
+                          ) : (
+                            <span className="text-muted/50">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums font-medium text-emerald-400">
+                          {formatMoney(item.netReceived)}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          <span className={margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                            {formatMoney(margin)}
+                            {marginPct !== '—' ? (
+                              <span className="ml-1 text-xs opacity-70">({marginPct}%)</span>
+                            ) : null}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-muted">{formatDate(item.soldAt)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </TableWrapper>
+          )}
+        </>
       ) : null}
 
       {/* In Stock tab */}
       {!loading && !error && activeTab === 'stock' ? (
-        stock.length === 0 ? (
-          <EmptyState message="Actualmente no hay relojes en stock." />
-        ) : (
-          <TableWrapper>
-            <table className="min-w-[880px] w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Reloj</th>
-                  <th className="px-4 py-3 font-medium">Condición</th>
-                  <th className="px-4 py-3 font-medium">Propiedad</th>
-                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
-                  <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
-                  <th className="px-4 py-3 font-medium">Estado</th>
-                  <th className="px-4 py-3 font-medium">Adquirido</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stock.map((w) => (
-                  <tr key={w.id} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-white">{w.brand}</div>
-                      <div className="text-xs text-muted">{w.model}</div>
-                      <div className="font-mono text-xs text-muted/60">{dash(w.serialNumber)}</div>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{w.condition}</td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs font-medium uppercase tracking-wide text-muted">
-                        {w.ownershipType === 'CONSIGNMENT'
-                          ? `Consignación${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
-                          : 'Propio'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
-                      {w.priceMin === w.priceMax
-                        ? formatMoney(w.priceMin)
-                        : `${formatMoney(w.priceMin)} – ${formatMoney(w.priceMax)}`}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[w.status]}`}>
-                        {w.status.replaceAll('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{formatDate(w.createdAt)}</td>
+        <>
+          <div className="flex items-center gap-2">
+            <input type="text" value={stockSearch}
+              onChange={(e) => setStockSearch(e.target.value)}
+              placeholder="Buscar por marca o modelo…"
+              className={`${filterInputClass} w-56`} />
+            {stockSearch && (
+              <button type="button" onClick={() => setStockSearch('')}
+                className="h-8 rounded-lg border border-white/10 px-3 text-xs text-white/40 hover:text-white/70 transition">
+                Limpiar
+              </button>
+            )}
+            {stockSearch.trim() && (
+              <span className="text-[10px] text-white/25">
+                {filteredStock.length} de {stock.length}
+              </span>
+            )}
+          </div>
+          {filteredStock.length === 0 ? (
+            <EmptyState message={stock.length === 0 ? 'Actualmente no hay relojes en stock.' : 'Sin resultados.'} />
+          ) : (
+            <TableWrapper>
+              <table className="min-w-[880px] w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
+                    <th className="px-4 py-3 font-medium">Reloj</th>
+                    <th className="px-4 py-3 font-medium">Condición</th>
+                    <th className="px-4 py-3 font-medium">Propiedad</th>
+                    <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                    <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
+                    <th className="px-4 py-3 font-medium">Estado</th>
+                    <th className="px-4 py-3 font-medium">Adquirido</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrapper>
-        )
+                </thead>
+                <tbody>
+                  {filteredStock.map((w) => (
+                    <tr key={w.id} className="border-b border-white/5 hover:bg-white/[0.05] transition duration-150">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-white">{w.brand}</div>
+                        <div className="text-xs text-muted">{w.model}</div>
+                        <div className="font-mono text-xs text-muted/60">{dash(w.serialNumber)}</div>
+                      </td>
+                      <td className="px-4 py-3 text-muted">{w.condition}</td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                          {w.ownershipType === 'CONSIGNMENT'
+                            ? `Consignación${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
+                            : 'Propio'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
+                      <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
+                        {w.priceMin === w.priceMax
+                          ? formatMoney(w.priceMin)
+                          : `${formatMoney(w.priceMin)} – ${formatMoney(w.priceMax)}`}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[w.status]}`}>
+                          {w.status.replaceAll('_', ' ')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-muted">{formatDate(w.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrapper>
+          )}
+        </>
       ) : null}
 
       {/* Acquired tab */}
       {!loading && !error && activeTab === 'acquired' ? (
-        acquired.length === 0 ? (
-          <EmptyState message="Aún no hay relojes adquiridos." />
-        ) : (
-          <TableWrapper>
-            <table className="min-w-[880px] w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
-                  <th className="px-4 py-3 font-medium">Reloj</th>
-                  <th className="px-4 py-3 font-medium">Condición</th>
-                  <th className="px-4 py-3 font-medium">Propiedad</th>
-                  <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
-                  <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
-                  <th className="px-4 py-3 font-medium">Estado</th>
-                  <th className="px-4 py-3 font-medium">Adquirido</th>
-                </tr>
-              </thead>
-              <tbody>
-                {acquired.map((w) => (
-                  <tr
-                    key={w.id}
-                    className={`border-b border-white/5 transition duration-150 hover:bg-white/[0.05] ${w.deletedAt ? 'opacity-50' : ''}`}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-white">{w.brand}</div>
-                      <div className="text-xs text-muted">{w.model}</div>
-                      <div className="font-mono text-xs text-muted/60">{dash(w.serialNumber)}</div>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{w.condition}</td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs font-medium uppercase tracking-wide text-muted">
-                        {w.ownershipType === 'CONSIGNMENT'
-                          ? `Consignación${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
-                          : 'Propio'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
-                      {w.priceMin === w.priceMax
-                        ? formatMoney(w.priceMin)
-                        : `${formatMoney(w.priceMin)} – ${formatMoney(w.priceMax)}`}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[w.status]}`}>
-                        {w.status.replaceAll('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{formatDate(w.createdAt)}</td>
+        <>
+          <div className="flex items-center gap-2">
+            <input type="text" value={acquiredSearch}
+              onChange={(e) => setAcquiredSearch(e.target.value)}
+              placeholder="Buscar por marca o modelo…"
+              className={`${filterInputClass} w-56`} />
+            {acquiredSearch && (
+              <button type="button" onClick={() => setAcquiredSearch('')}
+                className="h-8 rounded-lg border border-white/10 px-3 text-xs text-white/40 hover:text-white/70 transition">
+                Limpiar
+              </button>
+            )}
+            {acquiredSearch.trim() && (
+              <span className="text-[10px] text-white/25">
+                {filteredAcquired.length} de {acquired.length}
+              </span>
+            )}
+          </div>
+          {filteredAcquired.length === 0 ? (
+            <EmptyState message={acquired.length === 0 ? 'Aún no hay relojes adquiridos.' : 'Sin resultados.'} />
+          ) : (
+            <TableWrapper>
+              <table className="min-w-[880px] w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-surface/80 text-xs uppercase tracking-wide text-muted">
+                    <th className="px-4 py-3 font-medium">Reloj</th>
+                    <th className="px-4 py-3 font-medium">Condición</th>
+                    <th className="px-4 py-3 font-medium">Propiedad</th>
+                    <th className="px-4 py-3 font-medium text-right">Costo efectivo</th>
+                    <th className="px-4 py-3 font-medium text-right">Rango de precio</th>
+                    <th className="px-4 py-3 font-medium">Estado</th>
+                    <th className="px-4 py-3 font-medium">Adquirido</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrapper>
-        )
+                </thead>
+                <tbody>
+                  {filteredAcquired.map((w) => (
+                    <tr
+                      key={w.id}
+                      className={`border-b border-white/5 transition duration-150 hover:bg-white/[0.05] ${w.deletedAt ? 'opacity-50' : ''}`}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-white">{w.brand}</div>
+                        <div className="text-xs text-muted">{w.model}</div>
+                        <div className="font-mono text-xs text-muted/60">{dash(w.serialNumber)}</div>
+                      </td>
+                      <td className="px-4 py-3 text-muted">{w.condition}</td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                          {w.ownershipType === 'CONSIGNMENT'
+                            ? `Consignación${w.consignmentOwnerName ? ` · ${w.consignmentOwnerName}` : ''}`
+                            : 'Propio'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-muted">{formatMoney(w.effectiveCost)}</td>
+                      <td className="px-4 py-3 text-right font-medium tabular-nums text-white">
+                        {w.priceMin === w.priceMax
+                          ? formatMoney(w.priceMin)
+                          : `${formatMoney(w.priceMin)} – ${formatMoney(w.priceMax)}`}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[w.status]}`}>
+                          {w.status.replaceAll('_', ' ')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-muted">{formatDate(w.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrapper>
+          )}
+        </>
       ) : null}
     </div>
   );

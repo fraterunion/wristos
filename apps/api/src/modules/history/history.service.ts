@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DealStage, OperatingExpenseCategory, Watch, WatchExpense, WatchStatus } from '@prisma/client';
+import { DealStage, OperatingExpenseCategory, Prisma, Watch, WatchExpense, WatchStatus } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -59,31 +59,47 @@ export class HistoryService {
         watch: { include: { expenses: { orderBy: { createdAt: 'asc' } } } },
         client: true,
         payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
+        operatingExpenses: { where: { category: OperatingExpenseCategory.BANK_FEES } },
       },
       orderBy: { updatedAt: 'desc' },
     });
 
-    return deals.map((deal) => ({
-      dealId: deal.id,
-      watch: this.serializeWatch(deal.watch),
-      buyer: {
-        id: deal.client.id,
-        name: deal.client.name,
-        email: deal.client.email,
-        phone: deal.client.phone,
-      },
-      agreedPrice: deal.agreedPrice.toString(),
-      notes: deal.notes,
-      soldAt: deal.updatedAt.toISOString(),
-      createdAt: deal.createdAt.toISOString(),
-      payments: deal.payments.map((p) => ({
-        id: p.id,
-        amount: p.amount.toString(),
-        method: p.method,
-        status: p.status,
-        paidAt: p.paidAt?.toISOString() ?? null,
-      })),
-    }));
+    return deals.map((deal) => {
+      // Sum BANK_FEES linked to this deal via FK (dealId).
+      // Existing rows with no dealId will contribute zero (empty array).
+      const bankFeeDecimal = deal.operatingExpenses.reduce(
+        (acc, e) => acc.plus(e.amount),
+        new Prisma.Decimal(0),
+      );
+      const netReceivedDecimal = deal.agreedPrice.minus(bankFeeDecimal);
+
+      return {
+        dealId: deal.id,
+        watch: this.serializeWatch(deal.watch),
+        buyer: {
+          id: deal.client.id,
+          name: deal.client.name,
+          email: deal.client.email,
+          phone: deal.client.phone,
+        },
+        agreedPrice: deal.agreedPrice.toString(),
+        originalCurrency: deal.originalCurrency,
+        originalAmount: deal.originalAmount?.toString() ?? null,
+        exchangeRate: deal.exchangeRate?.toString() ?? null,
+        bankFee: bankFeeDecimal.greaterThan(0) ? bankFeeDecimal.toString() : null,
+        netReceived: netReceivedDecimal.toString(),
+        notes: deal.notes,
+        soldAt: deal.updatedAt.toISOString(),
+        createdAt: deal.createdAt.toISOString(),
+        payments: deal.payments.map((p) => ({
+          id: p.id,
+          amount: p.amount.toString(),
+          method: p.method,
+          status: p.status,
+          paidAt: p.paidAt?.toISOString() ?? null,
+        })),
+      };
+    });
   }
 
   async getStock(tenantId: string) {

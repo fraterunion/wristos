@@ -282,6 +282,7 @@ export class DealsService {
         bankFeeExpense = await tx.operatingExpense.create({
           data: {
             tenant: { connect: { id: tenantId } },
+            deal: { connect: { id: deal.id } },
             category: OperatingExpenseCategory.BANK_FEES,
             amount: feeAmount,
             expenseDate: soldAt,
