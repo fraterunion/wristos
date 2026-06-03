@@ -212,6 +212,7 @@ export type OperatingExpenseCategory =
 
 export type VentaPaymentMethod = 'CASH' | 'BANCOS' | 'CESAR';
 export type VentaBankChannel = 'JOSE' | 'MAYTE';
+export type SaleCurrency = 'MXN' | 'USD';
 
 export type RegisterSalePayload = {
   watchId: string;
@@ -221,6 +222,7 @@ export type RegisterSalePayload = {
   bankChannel?: VentaBankChannel;
   saleDate?: string;
   notes?: string;
+  currency?: SaleCurrency;
 };
 
 export type RegisterSaleResponse = {
@@ -228,6 +230,9 @@ export type RegisterSaleResponse = {
   watchId: string;
   clientId: string;
   salePrice: string;
+  originalCurrency: string | null;
+  originalAmount: string | null;
+  exchangeRate: string | null;
   paymentMethod: VentaPaymentMethod;
   bankChannel: VentaBankChannel | null;
   bankFee: string | null;

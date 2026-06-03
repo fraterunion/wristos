@@ -9,6 +9,18 @@ import type {
 
 const AUTH = { authenticated: true } as const;
 
+export type FxRateResult = {
+  pair: string;
+  rate: number;
+  source: string;
+  fetchedAt: string;
+  stale?: boolean;
+};
+
+export function getFxUsdMxn(): Promise<FxRateResult> {
+  return apiGet<FxRateResult>('/fx/usd-mxn', AUTH);
+}
+
 export function registerSale(payload: RegisterSalePayload): Promise<RegisterSaleResponse> {
   return apiPost<RegisterSaleResponse>('/deals/register-sale', payload, AUTH);
 }
@@ -38,6 +50,10 @@ export type SoldItem = {
   };
   buyer: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
+  // Currency metadata — populated once /history/sold exposes these fields
+  originalCurrency?: string | null;
+  originalAmount?: string | null;
+  exchangeRate?: string | null;
   notes: string | null;
   soldAt: string;
   createdAt: string;

@@ -3,13 +3,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, apiGet } from '@/lib/api-client';
 import {
+  getFxUsdMxn,
   listClients,
   listRecentSales,
   listSellableWatches,
   registerSale,
+  type FxRateResult,
   type SoldItem,
 } from '@/lib/ventas-api';
-import type { Client, VentaBankChannel, VentaPaymentMethod, Watch } from '@/types/domain';
+import type {
+  Client,
+  SaleCurrency,
+  VentaBankChannel,
+  VentaPaymentMethod,
+  Watch,
+} from '@/types/domain';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -47,7 +55,7 @@ type HistorySummary = {
   totalProfit: string;
 };
 
-// ─── Icons (inline SVG — no external dependency) ─────────────────────────────
+// ─── Icons (inline SVG) ───────────────────────────────────────────────────────
 
 function IconBanknote() {
   return (
@@ -133,9 +141,16 @@ function formatMoney(value: string | number | null | undefined) {
   if (!Number.isFinite(n)) return '—';
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
+    currencyDisplay: 'narrowSymbol',
     maximumFractionDigits: 0,
   }).format(n);
+}
+
+function formatUsd(value: string | number | null | undefined) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `USD ${new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(n)}`;
 }
 
 function formatDate(iso: string | null | undefined) {
@@ -145,6 +160,15 @@ function formatDate(iso: string | null | undefined) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+function timeAgo(iso: string): string {
+  const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (diffMin < 1) return 'hace un momento';
+  if (diffMin === 1) return 'hace 1 min';
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  const diffHr = Math.floor(diffMin / 60);
+  return diffHr === 1 ? 'hace 1 hora' : `hace ${diffHr} horas`;
 }
 
 function todayIso() {
@@ -171,7 +195,7 @@ function KpiCard({
 
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-panel px-5 py-4 shadow-sm shadow-black/30">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">{label}</p>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/25">{label}</p>
       <p className={`mt-2.5 text-[22px] font-semibold tabular-nums leading-none ${valueClass}`}>
         {value}
       </p>
@@ -183,7 +207,7 @@ function KpiCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function VentasPage() {
-  // Data
+  // ── Data state ─────────────────────────────────────────────────────────────
   const [watches, setWatches] = useState<Watch[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [recentSales, setRecentSales] = useState<SoldItem[]>([]);
@@ -191,10 +215,16 @@ export default function VentasPage() {
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
 
-  // Form state
+  // ── FX state ───────────────────────────────────────────────────────────────
+  const [fxRate, setFxRate] = useState<FxRateResult | null>(null);
+  const [fxLoading, setFxLoading] = useState(true);
+  const [fxError, setFxError] = useState<string | null>(null);
+
+  // ── Form state ─────────────────────────────────────────────────────────────
   const [watchId, setWatchId] = useState('');
   const [clientId, setClientId] = useState('');
   const [salePrice, setSalePrice] = useState('');
+  const [saleCurrency, setSaleCurrency] = useState<SaleCurrency>('MXN');
   const [paymentMethod, setPaymentMethod] = useState<VentaPaymentMethod>('CASH');
   const [bankChannel, setBankChannel] = useState<VentaBankChannel | ''>('');
   const [saleDate, setSaleDate] = useState(todayIso());
@@ -202,7 +232,7 @@ export default function VentasPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Flash
+  // ── Flash ──────────────────────────────────────────────────────────────────
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -228,34 +258,60 @@ export default function VentasPage() {
     }
   }, []);
 
+  const loadFx = useCallback(async () => {
+    setFxLoading(true);
+    setFxError(null);
+    try {
+      const rate = await getFxUsdMxn();
+      setFxRate(rate);
+    } catch {
+      setFxError('No se pudo obtener el tipo de cambio. Intenta de nuevo más tarde.');
+    } finally {
+      setFxLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
   useEffect(() => {
+    void loadFx();
+  }, [loadFx]);
+
+  useEffect(() => {
     if (!flash) return;
-    const t = window.setTimeout(() => setFlash(null), 5000);
+    const t = window.setTimeout(() => setFlash(null), 7000);
     return () => window.clearTimeout(t);
   }, [flash]);
 
   // ── Derived calculations ───────────────────────────────────────────────────
 
   const salePriceNum = Number(salePrice) || 0;
+
+  // Canonical preview base in MXN — used for bank fee preview and conversion display
+  const previewMxn = saleCurrency === 'USD' && fxRate
+    ? salePriceNum * fxRate.rate
+    : salePriceNum;
+
   const commissionRate =
     paymentMethod === 'BANCOS' && bankChannel ? BANK_RATES[bankChannel] : 0;
-  const bankFeeAmt = salePriceNum * commissionRate;
-  const netReceivedAmt = salePriceNum - bankFeeAmt;
+  const bankFeeAmt = previewMxn * commissionRate;
+  const netReceivedAmt = previewMxn - bankFeeAmt;
 
   const isBancos = paymentMethod === 'BANCOS';
+  const usdBlocked = saleCurrency === 'USD' && !fxRate;
+
   const isDisabled =
     submitting ||
     !watchId ||
     !clientId ||
     salePriceNum <= 0 ||
     !salePrice.trim() ||
-    (isBancos && !bankChannel);
+    (isBancos && !bankChannel) ||
+    usdBlocked;
 
-  // ── KPI derivation from loaded sales ──────────────────────────────────────
+  // ── KPI derivation ─────────────────────────────────────────────────────────
 
   const now = new Date();
   const salesThisMonth = recentSales.filter((s) => {
@@ -273,10 +329,17 @@ export default function VentasPage() {
     if (m !== 'BANCOS') setBankChannel('');
   };
 
+  const handleCurrencyChange = (c: SaleCurrency) => {
+    setSaleCurrency(c);
+    // Refresh FX rate when switching to USD if we have an error or stale data
+    if (c === 'USD' && !fxRate) void loadFx();
+  };
+
   const resetForm = () => {
     setWatchId('');
     setClientId('');
     setSalePrice('');
+    setSaleCurrency('MXN');
     setPaymentMethod('CASH');
     setBankChannel('');
     setSaleDate(todayIso());
@@ -290,7 +353,7 @@ export default function VentasPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await registerSale({
+      const response = await registerSale({
         watchId,
         clientId,
         salePrice: salePriceNum,
@@ -298,8 +361,24 @@ export default function VentasPage() {
         bankChannel: isBancos && bankChannel ? bankChannel : undefined,
         saleDate: saleDate || undefined,
         notes: notes.trim() || undefined,
+        currency: saleCurrency,
       });
-      setFlash({ type: 'success', message: 'Venta registrada correctamente.' });
+
+      // Build flash message with conversion summary for USD sales
+      if (
+        saleCurrency === 'USD' &&
+        response.originalAmount &&
+        response.exchangeRate
+      ) {
+        const rate = Number(response.exchangeRate).toFixed(2);
+        setFlash({
+          type: 'success',
+          message: `Venta registrada. ${formatUsd(response.originalAmount)} convertido a ${formatMoney(response.salePrice)} con tipo de cambio $${rate}.`,
+        });
+      } else {
+        setFlash({ type: 'success', message: 'Venta registrada correctamente.' });
+      }
+
       resetForm();
       void loadData();
     } catch (err) {
@@ -446,9 +525,67 @@ export default function VentasPage() {
                 </select>
               </div>
 
+              {/* Currency selector */}
+              <div>
+                <label className="ui-field-label">Moneda</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleCurrencyChange('MXN')}
+                    disabled={submitting}
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
+                      saleCurrency === 'MXN'
+                        ? 'border-white/35 bg-white/10 font-semibold text-white'
+                        : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
+                    }`}
+                  >
+                    Pesos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCurrencyChange('USD')}
+                    disabled={submitting || (fxError !== null && !fxRate)}
+                    title={fxError && !fxRate ? fxError : undefined}
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
+                      saleCurrency === 'USD'
+                        ? 'border-white/35 bg-white/10 font-semibold text-white'
+                        : fxError && !fxRate
+                          ? 'border-white/5 text-white/20 cursor-not-allowed'
+                          : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
+                    }`}
+                  >
+                    Dólares
+                  </button>
+                </div>
+
+                {/* FX rate info — shown below currency selector */}
+                <div className="mt-2 min-h-[28px]">
+                  {fxLoading ? (
+                    <div className="h-4 w-48 rounded bg-white/[0.05] animate-pulse" />
+                  ) : fxRate ? (
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-xs text-white/50">
+                        Tipo de cambio:{' '}
+                        <span className={`font-semibold ${saleCurrency === 'USD' ? 'text-white/80' : 'text-white/40'}`}>
+                          ${fxRate.rate.toFixed(2)}
+                        </span>
+                      </span>
+                      <span className="text-[10px] text-white/25">
+                        {fxRate.source} · {timeAgo(fxRate.fetchedAt)}
+                        {fxRate.stale && ' · desactualizado'}
+                      </span>
+                    </div>
+                  ) : fxError ? (
+                    <p className="text-[11px] text-rose-300/80">{fxError}</p>
+                  ) : null}
+                </div>
+              </div>
+
               {/* Sale price */}
               <div>
-                <label className="ui-field-label">Precio de venta (USD)</label>
+                <label className="ui-field-label">
+                  {saleCurrency === 'USD' ? 'Precio de venta en dólares' : 'Precio de venta'}
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -460,7 +597,29 @@ export default function VentasPage() {
                   disabled={submitting}
                   required
                 />
+                <p className="mt-1 text-[11px] text-white/30">
+                  {saleCurrency === 'USD'
+                    ? 'Se convertirá automáticamente a pesos al registrar la venta.'
+                    : 'Se registrará en pesos.'}
+                </p>
               </div>
+
+              {/* USD conversion preview */}
+              {saleCurrency === 'USD' && salePriceNum > 0 && fxRate && (
+                <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-3 space-y-2">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-white/30">
+                      Venta estimada en pesos
+                    </p>
+                    <p className="mt-1 text-base font-semibold text-white">
+                      {formatMoney(previewMxn)}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-white/25">
+                      {formatUsd(salePriceNum)} × ${fxRate.rate.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Payment method */}
               <div>
@@ -511,7 +670,7 @@ export default function VentasPage() {
                     </div>
                   </div>
 
-                  {/* Commission preview */}
+                  {/* Commission preview — uses MXN canonical amount */}
                   {bankChannel && salePriceNum > 0 && (
                     <div className="grid grid-cols-2 gap-3 pt-1">
                       <div className="rounded-lg bg-white/[0.04] px-3 py-2.5">
@@ -563,6 +722,13 @@ export default function VentasPage() {
                 />
               </div>
 
+              {/* FX unavailable warning when USD selected */}
+              {saleCurrency === 'USD' && fxError && !fxRate && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/[0.08] px-3 py-2.5 text-xs text-rose-300/90">
+                  {fxError}
+                </div>
+              )}
+
               {/* Submit */}
               <button
                 type="submit"
@@ -597,10 +763,7 @@ export default function VentasPage() {
                 </p>
               </div>
             ) : (
-              /* table-fixed: columns use th widths, not content size.
-                 Reloj column (no explicit width) absorbs remaining space.
-                 overflow-x-auto only triggers on small screens where some columns
-                 are still visible but space is tight. */
+              /* table-fixed: columns use th widths; Reloj column absorbs remaining space */
               <div className="overflow-x-auto">
                 <table className="w-full table-fixed">
                   <thead>
@@ -634,6 +797,10 @@ export default function VentasPage() {
                       // Bank fee is stored as OperatingExpense.BANK_FEES and is not currently
                       // returned by /history/sold. Do not infer it from payments.
                       const isBancosRow = method === 'BANCOS';
+                      const hasUsdMeta =
+                        sale.originalCurrency === 'USD' &&
+                        !!sale.originalAmount &&
+                        !!sale.exchangeRate;
                       return (
                         <tr
                           key={sale.dealId}
@@ -662,6 +829,12 @@ export default function VentasPage() {
                             <span className="text-sm font-bold tabular-nums text-white">
                               {formatMoney(sale.agreedPrice)}
                             </span>
+                            {/* USD original amount — shown when /history/sold exposes these fields */}
+                            {hasUsdMeta && (
+                              <p className="mt-0.5 text-[10px] text-white/25 tabular-nums">
+                                {formatUsd(sale.originalAmount)} @ ${Number(sale.exchangeRate).toFixed(2)}
+                              </p>
+                            )}
                           </td>
                           <td className="px-3 py-4 align-middle hidden md:table-cell">
                             <PaymentBadge method={method} />
