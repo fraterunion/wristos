@@ -79,6 +79,8 @@ export class AnalyticsService {
     const watchWhere: Prisma.WatchWhereInput = { tenantId, deletedAt: null };
     const dealWhere: Prisma.DealWhereInput = { tenantId, deletedAt: null };
     const paymentWhere: Prisma.PaymentWhereInput = { tenantId, deletedAt: null };
+    // Revenue aggregate must include only closed sales — not open or lost pipeline.
+    const wonDealWhere: Prisma.DealWhereInput = { ...dealWhere, stage: DealStage.CLOSED_WON };
 
     const [
       totalWatches,
@@ -119,13 +121,18 @@ export class AnalyticsService {
         where: dealWhere,
         _count: { _all: true },
       }),
-      this.prisma.deal.aggregate({ where: dealWhere, _sum: { agreedPrice: true } }),
+      // totalAgreedRevenue: closed sales only — open/lost pipeline excluded
+      this.prisma.deal.aggregate({ where: wonDealWhere, _sum: { agreedPrice: true } }),
       this.prisma.payment.aggregate({
         where: { ...paymentWhere, status: PaymentStatus.PAID },
         _sum: { amount: true },
       }),
+      // totalPendingBalance: only real receivables (won or awaiting payment)
       this.prisma.deal.findMany({
-        where: dealWhere,
+        where: {
+          ...dealWhere,
+          stage: { in: [DealStage.CLOSED_WON, DealStage.PENDING_PAYMENT] },
+        },
         select: { id: true, agreedPrice: true },
       }),
       this.prisma.payment.groupBy({
@@ -370,8 +377,8 @@ export class AnalyticsService {
   }
 
   private formatWeekLabel(from: Date, to: Date): string {
-    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
     const fromMonth = MONTHS[from.getUTCMonth()];
     const toMonth   = MONTHS[to.getUTCMonth()];
     const fromDay   = from.getUTCDate();
