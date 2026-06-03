@@ -9,6 +9,11 @@ import type {
 
 const AUTH = { authenticated: true } as const;
 
+// FX types and helper live in fx-api.ts so they can be used outside Ventas.
+// Re-exported here for backwards compatibility with existing ventas/page.tsx imports.
+export type { FxRateResult } from './fx-api';
+export { getFxUsdMxn } from './fx-api';
+
 export function registerSale(payload: RegisterSalePayload): Promise<RegisterSaleResponse> {
   return apiPost<RegisterSaleResponse>('/deals/register-sale', payload, AUTH);
 }
@@ -38,6 +43,10 @@ export type SoldItem = {
   };
   buyer: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
+  // Currency metadata — populated once /history/sold exposes these fields
+  originalCurrency?: string | null;
+  originalAmount?: string | null;
+  exchangeRate?: string | null;
   notes: string | null;
   soldAt: string;
   createdAt: string;

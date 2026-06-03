@@ -41,4 +41,10 @@ export class RegisterSaleDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  // Optional for backwards compatibility: existing callers omit this field and
+  // the service defaults to 'MXN'. Commit 5 (frontend) will send it explicitly.
+  @IsOptional()
+  @IsIn(['MXN', 'USD'], { message: 'currency must be MXN or USD' })
+  currency?: 'MXN' | 'USD';
 }

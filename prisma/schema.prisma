@@ -358,9 +358,12 @@ model Deal {
   watchId         String
   stage           DealStage @default(LEAD)
   expectedCloseAt DateTime?
-  agreedPrice     Decimal   @db.Decimal(12, 2)
-  notes           String?
-  deletedAt       DateTime?
+  agreedPrice      Decimal   @db.Decimal(12, 2)
+  originalCurrency String?
+  originalAmount   Decimal?  @db.Decimal(12, 2)
+  exchangeRate     Decimal?  @db.Decimal(12, 6)
+  notes            String?
+  deletedAt        DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
