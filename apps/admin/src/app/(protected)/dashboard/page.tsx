@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -31,13 +31,14 @@ type DashboardData = {
   pipeline: PipelineSummary;
 };
 
-function formatCurrency(value: string | number) {
-  const numeric = typeof value === 'number' ? value : Number(value);
-  return new Intl.NumberFormat('en-US', {
+function fmtMxn(value: string | number | null | undefined) {
+  const n = Number(value);
+  return new Intl.NumberFormat('es-MX', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
+    currencyDisplay: 'narrowSymbol',
     maximumFractionDigits: 0,
-  }).format(Number.isFinite(numeric) ? numeric : 0);
+  }).format(Number.isFinite(n) ? n : 0);
 }
 
 function normalizePipeline(raw: unknown): PipelineSummary {
@@ -88,22 +89,26 @@ function normalizeInventoryAging(raw: unknown): InventoryAgingSummary {
 function KpiCard({
   label,
   value,
+  sub,
   tone = 'default',
 }: {
   label: string;
   value: string;
-  tone?: 'default' | 'success';
+  sub?: string;
+  tone?: 'default' | 'positive' | 'negative' | 'muted';
 }) {
+  const valueClass =
+    tone === 'positive' ? 'text-emerald-400' :
+    tone === 'negative' ? 'text-rose-400' :
+    tone === 'muted'    ? 'text-white/40' :
+    'text-white';
   return (
-    <article className="rounded-xl border border-white/10 bg-panel p-5">
-      <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
-      <p
-        className={`mt-3 text-2xl font-semibold ${
-          tone === 'success' ? 'text-emerald-300' : 'text-white'
-        }`}
-      >
+    <article className="rounded-xl border border-white/[0.07] bg-panel px-5 py-4">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/30">{label}</p>
+      <p className={`mt-2.5 text-[22px] font-semibold tabular-nums leading-none ${valueClass}`}>
         {value}
       </p>
+      {sub && <p className="mt-1.5 text-[11px] text-white/25">{sub}</p>}
     </article>
   );
 }
@@ -265,24 +270,8 @@ export default function DashboardPage() {
     void fetchChartData();
   }, [period]);
 
-  const kpis = useMemo(() => {
-    if (!data) return [];
-    return [
-      { label: 'Total de relojes', value: String(data.summary.totalWatches) },
-      { label: 'Relojes disponibles', value: String(data.summary.availableWatches) },
-      { label: 'Relojes vendidos', value: String(data.summary.soldWatches) },
-      { label: 'Clientes activos', value: String(data.summary.activeClients) },
-      {
-        label: 'Ingresos acordados totales',
-        value: formatCurrency(data.summary.totalAgreedRevenue),
-      },
-      {
-        label: 'Ingresos cobrados totales',
-        value: formatCurrency(data.summary.totalCollectedRevenue),
-        tone: 'success' as const,
-      },
-    ];
-  }, [data]);
+  const profitThisMonthNum = data ? Number(data.summary.profitThisMonth) : 0;
+  const accountsPayableNum = data ? Number(data.summary.accountsPayable) : 0;
 
   if (isLoading) {
     return <DashboardSkeleton />;
@@ -343,15 +332,65 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {kpis.map((kpi) => (
-          <KpiCard
-            key={kpi.label}
-            label={kpi.label}
-            value={kpi.value}
-            tone={kpi.tone}
-          />
-        ))}
+      {/* ── Row 1: cash position + receivables ─────────────────────────── */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <KpiCard
+          label="Efectivo"
+          value={fmtMxn(data?.summary.cashBalance)}
+          tone="positive"
+        />
+        <KpiCard
+          label="Bancos"
+          value={fmtMxn(data?.summary.bankBalance)}
+        />
+        <KpiCard
+          label="César"
+          value={fmtMxn(data?.summary.cesarBalance)}
+        />
+        <KpiCard
+          label="Cuentas por cobrar"
+          value={fmtMxn(data?.summary.totalPendingBalance)}
+          tone={Number(data?.summary.totalPendingBalance ?? 0) > 0 ? 'negative' : 'default'}
+        />
+        <KpiCard
+          label="Cuentas por pagar"
+          value={accountsPayableNum > 0 ? fmtMxn(accountsPayableNum) : '—'}
+          sub={accountsPayableNum === 0 ? 'Próximamente' : undefined}
+          tone="muted"
+        />
+      </section>
+
+      {/* ── Row 2: inventory + this-month performance ───────────────────── */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <KpiCard
+          label="Inventario"
+          value={fmtMxn(data?.summary.totalInventoryValue)}
+          sub="Valor de mercado (mín)"
+        />
+        <KpiCard
+          label="Ventas del mes"
+          value={fmtMxn(data?.summary.salesThisMonthRevenue)}
+          sub={`${data?.summary.salesThisMonthCount ?? 0} venta${(data?.summary.salesThisMonthCount ?? 0) !== 1 ? 's' : ''}`}
+        />
+        <KpiCard
+          label="Utilidad del mes"
+          value={fmtMxn(data?.summary.profitThisMonth)}
+          tone={profitThisMonthNum >= 0 ? 'positive' : 'negative'}
+        />
+        <KpiCard
+          label="Comisiones bancarias"
+          value={fmtMxn(data?.summary.bankFeesThisMonth)}
+          sub="Este mes"
+          tone={Number(data?.summary.bankFeesThisMonth ?? 0) > 0 ? 'negative' : 'default'}
+        />
+        <KpiCard
+          label="Relojes disponibles"
+          value={String(data?.summary.availableWatches ?? '—')}
+        />
+      </section>
+
+      {/* ── FX card ─────────────────────────────────────────────────────── */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <FxRateCard rate={fxRate} loading={fxLoading} error={fxError} />
       </section>
 
@@ -419,7 +458,7 @@ export default function DashboardPage() {
                         borderRadius: 8,
                         color: '#FAFAFA',
                       }}
-                      formatter={(value) => formatCurrency(Number(value))}
+                      formatter={(value) => fmtMxn(Number(value))}
                     />
                     <Area
                       type="monotone"

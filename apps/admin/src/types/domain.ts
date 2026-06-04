@@ -1,4 +1,5 @@
 export type AnalyticsSummary = {
+  // ── Existing fields (kept for backwards compat) ──
   totalWatches: number;
   availableWatches: number;
   reservedWatches: number;
@@ -12,6 +13,16 @@ export type AnalyticsSummary = {
   totalAgreedRevenue: string;
   totalCollectedRevenue: string;
   totalPendingBalance: string;
+  // ── New: financial-position KPIs ─────────────────
+  cashBalance: string;
+  bankBalance: string;
+  cesarBalance: string;
+  accountsPayable: string;
+  salesThisMonthCount: number;
+  salesThisMonthRevenue: string;
+  costOfSoldThisMonth: string;
+  bankFeesThisMonth: string;
+  profitThisMonth: string;
 };
 
 export type InventoryAgingSummary = {
