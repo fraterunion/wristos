@@ -39,6 +39,7 @@ export type SoldItem = {
     id: string;
     brand: string;
     model: string;
+    reference?: string | null;
     serialNumber: string | null;
     condition: string;
     cost: string;
@@ -70,6 +71,7 @@ export type SoldItem = {
     method: string;
     status: string;
     paidAt: string | null;
+    notes?: string | null;
   }[];
 };
 
