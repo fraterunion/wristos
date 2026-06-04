@@ -221,11 +221,16 @@ export type RegisterSalePayload = {
   watchId: string;
   clientId: string;
   salePrice: number;
-  paymentMethod: VentaPaymentMethod;
-  bankChannel?: VentaBankChannel;
+  currency?: SaleCurrency;
   saleDate?: string;
   notes?: string;
-  currency?: SaleCurrency;
+  // Partial payment fields (new)
+  initialPaymentAmount?: number;
+  initialPaymentMethod?: VentaPaymentMethod;
+  initialPaymentDate?: string;
+  bankChannel?: VentaBankChannel;
+  // Legacy: kept for backwards-compat callers; new UI sends initialPaymentMethod
+  paymentMethod?: VentaPaymentMethod;
 };
 
 export type RegisterSaleResponse = {
@@ -236,13 +241,39 @@ export type RegisterSaleResponse = {
   originalCurrency: string | null;
   originalAmount: string | null;
   exchangeRate: string | null;
-  paymentMethod: VentaPaymentMethod;
+  paymentMethod: VentaPaymentMethod | null;
   bankChannel: VentaBankChannel | null;
   bankFee: string | null;
   netReceived: string;
   paidAt: string | null;
+  paidTotal: string;
+  pendingAmount: string;
+  computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE';
   notes: string | null;
   createdAt: string;
+};
+
+export type AddPaymentPayload = {
+  amount: number;
+  method: VentaPaymentMethod;
+  paidAt?: string;
+  bankChannel?: VentaBankChannel;
+  notes?: string;
+};
+
+export type AddPaymentResponse = {
+  payment: {
+    id: string;
+    amount: string;
+    method: string;
+    status: string;
+    paidAt: string | null;
+    notes: string | null;
+  };
+  bankFee: string | null;
+  paidTotal: string;
+  pendingAmount: string;
+  computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE';
 };
 
 export type OperatingExpense = {

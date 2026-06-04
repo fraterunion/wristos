@@ -1,6 +1,7 @@
-import { apiGet } from '@/lib/api-client';
-import { apiPost } from '@/lib/api-client';
+import { apiGet, apiPost } from '@/lib/api-client';
 import type {
+  AddPaymentPayload,
+  AddPaymentResponse,
   Client,
   RegisterSalePayload,
   RegisterSaleResponse,
@@ -10,12 +11,18 @@ import type {
 const AUTH = { authenticated: true } as const;
 
 // FX types and helper live in fx-api.ts so they can be used outside Ventas.
-// Re-exported here for backwards compatibility with existing ventas/page.tsx imports.
 export type { FxRateResult } from './fx-api';
 export { getFxUsdMxn } from './fx-api';
 
 export function registerSale(payload: RegisterSalePayload): Promise<RegisterSaleResponse> {
   return apiPost<RegisterSaleResponse>('/deals/register-sale', payload, AUTH);
+}
+
+export function addPaymentToSale(
+  dealId: string,
+  payload: AddPaymentPayload,
+): Promise<AddPaymentResponse> {
+  return apiPost<AddPaymentResponse>(`/deals/${dealId}/payments`, payload, AUTH);
 }
 
 export function listSellableWatches(): Promise<Watch[]> {
@@ -26,7 +33,6 @@ export function listClients(): Promise<Client[]> {
   return apiGet<Client[]>('/crm/clients', AUTH);
 }
 
-// Re-export history/sold for the recent sales table
 export type SoldItem = {
   dealId: string;
   watch: {
@@ -43,12 +49,18 @@ export type SoldItem = {
   };
   buyer: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
-  // Currency metadata — returned by /history/sold since Commit A (dealId FK)
   originalCurrency: 'MXN' | 'USD' | null;
   originalAmount: string | null;
   exchangeRate: string | null;
-  bankFee: string | null;      // MXN bank commission; null when no fee
-  netReceived: string;         // agreedPrice − bankFee; always present
+  // Bank fee is the sum of all BANK_FEES OperatingExpenses linked to this deal
+  bankFee: string | null;
+  // netReceived = agreedPrice − bankFee
+  netReceived: string;
+  // Payment accounting — computed by /history/sold
+  paidTotal: string;
+  pendingAmount: string;
+  computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE';
+  paymentMethods: string[];
   notes: string | null;
   soldAt: string;
   createdAt: string;
