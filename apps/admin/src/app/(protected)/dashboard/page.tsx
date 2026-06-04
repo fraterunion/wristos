@@ -5,9 +5,9 @@ import { useEffect, useState } from 'react';
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,21 +15,20 @@ import {
 } from 'recharts';
 import { apiGet } from '@/lib/api-client';
 import { getFxUsdMxn, type FxRateResult } from '@/lib/fx-api';
-import { queryKeys } from '@/lib/query-keys';
 import {
   AnalyticsPeriod,
   AnalyticsSummary,
-  InventoryAgingSummary,
-  PipelineSummary,
   RevenueOverTimePoint,
-  SalesOverTimePoint,
 } from '@/types/domain';
 
 type DashboardData = {
   summary: AnalyticsSummary;
-  inventoryAging: InventoryAgingSummary;
-  pipeline: PipelineSummary;
 };
+
+function num(value: string | number | null | undefined) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
 
 function fmtMxn(value: string | number | null | undefined) {
   const n = Number(value);
@@ -41,75 +40,223 @@ function fmtMxn(value: string | number | null | undefined) {
   }).format(Number.isFinite(n) ? n : 0);
 }
 
-function normalizePipeline(raw: unknown): PipelineSummary {
-  const object = (raw ?? {}) as Record<string, unknown>;
-  const countsByStage =
-    (object.countsByStage as Record<string, number>) ??
-    (object.counts as Record<string, number>) ??
-    {};
-  const totalAgreedByStage =
-    (object.totalAgreedByStage as Record<string, string>) ??
-    (object.totalsByStage as Record<string, string>) ??
-    {};
-
-  const openDeals =
-    typeof object.openDeals === 'number'
-      ? object.openDeals
-      : Object.entries(countsByStage)
-          .filter(([stage]) => !stage.startsWith('CLOSED_'))
-          .reduce((sum, [, count]) => sum + (Number(count) || 0), 0);
-  const wonDeals =
-    typeof object.wonDeals === 'number'
-      ? object.wonDeals
-      : Number(countsByStage.CLOSED_WON ?? 0);
-  const lostDeals =
-    typeof object.lostDeals === 'number'
-      ? object.lostDeals
-      : Number(countsByStage.CLOSED_LOST ?? 0);
-
-  return {
-    countsByStage,
-    totalAgreedByStage,
-    openDeals,
-    wonDeals,
-    lostDeals,
-  };
+function ExecutiveSectionTitle({
+  title,
+  subtitle,
+}: {
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500/70">
+        {title}
+      </p>
+      {subtitle ? <p className="mt-1 text-sm text-white/35">{subtitle}</p> : null}
+    </div>
+  );
 }
 
-function normalizeInventoryAging(raw: unknown): InventoryAgingSummary {
-  const object = (raw ?? {}) as Record<string, unknown>;
-  return {
-    days0to30: Number(object.days0to30 ?? 0),
-    days31to60: Number(object.days31to60 ?? 0),
-    days61to90: Number(object.days61to90 ?? 0),
-    days90plus: Number(object.days90plus ?? 0),
-  };
+function FinancialPositionHero({ summary }: { summary: AnalyticsSummary }) {
+  const cash = num(summary.cashBalance);
+  const bank = num(summary.bankBalance);
+  const cesar = num(summary.cesarBalance);
+  const receivable = num(summary.totalPendingBalance);
+  const payable = num(summary.accountsPayable);
+  const liquidityTotal = cash + bank + cesar;
+
+  const positions = [
+    { label: 'Efectivo', value: fmtMxn(cash), tone: 'positive' as const },
+    { label: 'Bancos', value: fmtMxn(bank), tone: 'default' as const },
+    { label: 'César', value: fmtMxn(cesar), tone: 'default' as const },
+    {
+      label: 'Cuentas por cobrar',
+      value: fmtMxn(receivable),
+      tone: receivable > 0 ? ('negative' as const) : ('default' as const),
+    },
+    {
+      label: 'Cuentas por pagar',
+      value: payable > 0 ? fmtMxn(payable) : '—',
+      tone: 'muted' as const,
+    },
+  ];
+
+  const toneClass = (tone: 'default' | 'positive' | 'negative' | 'muted') =>
+    tone === 'positive' ? 'text-emerald-400' :
+    tone === 'negative' ? 'text-rose-400' :
+    tone === 'muted' ? 'text-white/40' :
+    'text-white';
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-amber-500/25 bg-panel/95 shadow-lg shadow-black/30">
+      <div className="border-b border-amber-500/15 px-5 py-3 md:px-6">
+        <ExecutiveSectionTitle title="Posición financiera" />
+      </div>
+
+      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-y-0">
+        {positions.map((item) => (
+          <div key={item.label} className="px-4 py-4 md:px-5 md:py-5">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
+              {item.label}
+            </p>
+            <p className={`mt-2 text-xl font-semibold tabular-nums leading-none md:text-2xl ${toneClass(item.tone)}`}>
+              {item.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-amber-500/15 bg-black/20 px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6 md:py-5">
+        <div>
+          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-amber-500/60">
+            Liquidez total
+          </p>
+          <p className="mt-1 text-[11px] text-white/25">Efectivo + Bancos + César</p>
+        </div>
+        <p className="text-2xl font-semibold tabular-nums text-white md:text-3xl">
+          {fmtMxn(liquidityTotal)}
+        </p>
+      </div>
+    </article>
+  );
 }
 
-function KpiCard({
+function SnapshotCard({
   label,
   value,
   sub,
   tone = 'default',
+  sparkline,
 }: {
   label: string;
   value: string;
   sub?: string;
-  tone?: 'default' | 'positive' | 'negative' | 'muted';
+  tone?: 'default' | 'positive' | 'negative';
+  sparkline?: RevenueOverTimePoint[];
 }) {
   const valueClass =
     tone === 'positive' ? 'text-emerald-400' :
     tone === 'negative' ? 'text-rose-400' :
-    tone === 'muted'    ? 'text-white/40' :
     'text-white';
+
   return (
-    <article className="rounded-xl border border-white/[0.07] bg-panel px-5 py-4">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/30">{label}</p>
-      <p className={`mt-2.5 text-[22px] font-semibold tabular-nums leading-none ${valueClass}`}>
-        {value}
-      </p>
-      {sub && <p className="mt-1.5 text-[11px] text-white/25">{sub}</p>}
+    <article className="flex min-h-[108px] flex-col justify-between rounded-xl border border-white/[0.07] bg-panel/90 px-4 py-3.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
+            {label}
+          </p>
+          <p className={`mt-2 text-lg font-semibold tabular-nums leading-none md:text-xl ${valueClass}`}>
+            {value}
+          </p>
+          {sub ? <p className="mt-1.5 truncate text-[11px] text-white/25">{sub}</p> : null}
+        </div>
+        {sparkline && sparkline.length > 0 ? (
+          <div className="h-10 w-16 shrink-0 opacity-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={sparkline}>
+                <Line
+                  type="monotone"
+                  dataKey="revenue"
+                  stroke="#34d399"
+                  strokeWidth={1.5}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : null}
+      </div>
     </article>
+  );
+}
+
+function BusinessSnapshot({
+  summary,
+  revenueSparkline,
+}: {
+  summary: AnalyticsSummary;
+  revenueSparkline: RevenueOverTimePoint[];
+}) {
+  const salesCount = summary.salesThisMonthCount ?? 0;
+  const profit = num(summary.profitThisMonth);
+
+  return (
+    <section className="space-y-3">
+      <ExecutiveSectionTitle
+        title="Business snapshot"
+        subtitle="Indicadores operativos del mes en curso."
+      />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <SnapshotCard
+          label="Inventario"
+          value={fmtMxn(summary.totalInventoryValue)}
+          sub="Valor de mercado (mín)"
+        />
+        <SnapshotCard
+          label="Ventas del mes"
+          value={fmtMxn(summary.salesThisMonthRevenue)}
+          sub={`${salesCount} venta${salesCount !== 1 ? 's' : ''}`}
+          sparkline={revenueSparkline}
+        />
+        <SnapshotCard
+          label="Utilidad del mes"
+          value={fmtMxn(summary.profitThisMonth)}
+          tone={profit >= 0 ? 'positive' : 'negative'}
+        />
+        <SnapshotCard
+          label="Comisiones bancarias"
+          value={fmtMxn(summary.bankFeesThisMonth)}
+          tone={num(summary.bankFeesThisMonth) > 0 ? 'negative' : 'default'}
+        />
+        <SnapshotCard
+          label="Relojes disponibles"
+          value={String(summary.availableWatches ?? '—')}
+        />
+      </div>
+    </section>
+  );
+}
+
+function CashFlowSummary({ summary }: { summary: AnalyticsSummary }) {
+  const entradas =
+    num(summary.cashBalance) + num(summary.bankBalance) + num(summary.cesarBalance);
+  const salidas = num(summary.costOfSoldThisMonth) + num(summary.bankFeesThisMonth);
+  const balance = entradas - salidas;
+
+  return (
+    <div className="flex h-full flex-col">
+      <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
+        Flujo de caja (este mes)
+      </h4>
+      <div className="mt-5 flex flex-1 flex-col justify-center gap-5">
+        <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] pb-4">
+          <span className="text-sm text-white/45">Entradas</span>
+          <span className="text-xl font-semibold tabular-nums text-emerald-400">
+            {fmtMxn(entradas)}
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] pb-4">
+          <span className="text-sm text-white/45">Salidas</span>
+          <span className="text-xl font-semibold tabular-nums text-rose-400">
+            {fmtMxn(salidas)}
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-sm font-medium text-white/60">Balance</span>
+          <span
+            className={`text-2xl font-semibold tabular-nums ${
+              balance >= 0 ? 'text-emerald-400' : 'text-rose-400'
+            }`}
+          >
+            {fmtMxn(balance)}
+          </span>
+        </div>
+      </div>
+      <p className="mt-4 text-[10px] leading-relaxed text-white/20">
+        Salidas estimadas: costo vendido + comisiones bancarias del mes.
+      </p>
+    </div>
   );
 }
 
@@ -117,14 +264,16 @@ function DashboardSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
       <div className="h-10 w-64 rounded bg-white/10" />
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, index) => (
+      <div className="h-44 rounded-2xl border border-white/10 bg-white/[0.06]" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => (
           <div key={index} className="h-28 rounded-xl bg-white/10" />
         ))}
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <div className="h-64 rounded-xl bg-white/10" />
-        <div className="h-64 rounded-xl bg-white/10" />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <div key={index} className="h-72 rounded-xl bg-white/10" />
+        ))}
       </div>
     </div>
   );
@@ -230,7 +379,6 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<AnalyticsPeriod>('month');
   const [revenueSeries, setRevenueSeries] = useState<RevenueOverTimePoint[]>([]);
-  const [salesSeries, setSalesSeries] = useState<SalesOverTimePoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
 
   const [fxRate, setFxRate] = useState<FxRateResult | null>(null);
@@ -242,23 +390,11 @@ export default function DashboardPage() {
     setError(null);
 
     try {
-      const [summary, inventoryAging, pipelineRaw] = await Promise.all([
-        apiGet<AnalyticsSummary>('/analytics/summary', {
-          authenticated: true,
-        }),
-        apiGet<InventoryAgingSummary>('/analytics/inventory-aging', {
-          authenticated: true,
-        }),
-        apiGet<unknown>('/analytics/pipeline', {
-          authenticated: true,
-        }),
-      ]);
-
-      setData({
-        summary,
-        inventoryAging: normalizeInventoryAging(inventoryAging),
-        pipeline: normalizePipeline(pipelineRaw),
+      const summary = await apiGet<AnalyticsSummary>('/analytics/summary', {
+        authenticated: true,
       });
+
+      setData({ summary });
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -284,21 +420,13 @@ export default function DashboardPage() {
     const fetchChartData = async () => {
       setChartLoading(true);
       try {
-        const [revenueData, salesData] = await Promise.all([
-          apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
-            authenticated: true,
-            query: { period },
-          }),
-          apiGet<SalesOverTimePoint[]>('/analytics/sales-over-time', {
-            authenticated: true,
-            query: { period },
-          }),
-        ]);
+        const revenueData = await apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
+          authenticated: true,
+          query: { period },
+        });
         setRevenueSeries(revenueData);
-        setSalesSeries(salesData);
       } catch {
         setRevenueSeries([]);
-        setSalesSeries([]);
       } finally {
         setChartLoading(false);
       }
@@ -306,9 +434,6 @@ export default function DashboardPage() {
 
     void fetchChartData();
   }, [period]);
-
-  const profitThisMonthNum = data ? Number(data.summary.profitThisMonth) : 0;
-  const accountsPayableNum = data ? Number(data.summary.accountsPayable) : 0;
 
   if (isLoading) {
     return <DashboardSkeleton />;
@@ -341,6 +466,16 @@ export default function DashboardPage() {
     );
   }
 
+  const profitThisMonthNum = num(data.summary.profitThisMonth);
+  const salesRevenueMonth = num(data.summary.salesThisMonthRevenue);
+  const profitMargin =
+    salesRevenueMonth > 0 ? profitThisMonthNum / salesRevenueMonth : 0;
+  const profitSeries = revenueSeries.map((point) => ({
+    label: point.label,
+    profit: Number((point.revenue * profitMargin).toFixed(2)),
+  }));
+  const hasProfitSeries = profitSeries.some((point) => point.profit !== 0);
+
   return (
     <section className="ui-page">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -372,71 +507,19 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* ── Row 1: cash position + receivables ─────────────────────────── */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        <KpiCard
-          label="Efectivo"
-          value={fmtMxn(data?.summary.cashBalance)}
-          tone="positive"
-        />
-        <KpiCard
-          label="Bancos"
-          value={fmtMxn(data?.summary.bankBalance)}
-        />
-        <KpiCard
-          label="César"
-          value={fmtMxn(data?.summary.cesarBalance)}
-        />
-        <KpiCard
-          label="Cuentas por cobrar"
-          value={fmtMxn(data?.summary.totalPendingBalance)}
-          tone={Number(data?.summary.totalPendingBalance ?? 0) > 0 ? 'negative' : 'default'}
-        />
-        <KpiCard
-          label="Cuentas por pagar"
-          value={accountsPayableNum > 0 ? fmtMxn(accountsPayableNum) : '—'}
-          sub={accountsPayableNum === 0 ? 'Próximamente' : undefined}
-          tone="muted"
-        />
-      </section>
+      <FinancialPositionHero summary={data.summary} />
 
-      {/* ── Row 2: inventory + this-month performance ───────────────────── */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        <KpiCard
-          label="Inventario"
-          value={fmtMxn(data?.summary.totalInventoryValue)}
-          sub="Valor de mercado (mín)"
-        />
-        <KpiCard
-          label="Ventas del mes"
-          value={fmtMxn(data?.summary.salesThisMonthRevenue)}
-          sub={`${data?.summary.salesThisMonthCount ?? 0} venta${(data?.summary.salesThisMonthCount ?? 0) !== 1 ? 's' : ''}`}
-        />
-        <KpiCard
-          label="Utilidad del mes"
-          value={fmtMxn(data?.summary.profitThisMonth)}
-          tone={profitThisMonthNum >= 0 ? 'positive' : 'negative'}
-        />
-        <KpiCard
-          label="Comisiones bancarias"
-          value={fmtMxn(data?.summary.bankFeesThisMonth)}
-          sub="Este mes"
-          tone={Number(data?.summary.bankFeesThisMonth ?? 0) > 0 ? 'negative' : 'default'}
-        />
-        <KpiCard
-          label="Relojes disponibles"
-          value={String(data?.summary.availableWatches ?? '—')}
-        />
-      </section>
+      <BusinessSnapshot
+        summary={data.summary}
+        revenueSparkline={revenueSeries}
+      />
 
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold">Tendencias de rendimiento</h3>
-            <p className="mt-1 text-sm text-muted">
-              Impulso de ingresos y ventas en el período seleccionado.
-            </p>
-          </div>
+          <ExecutiveSectionTitle
+            title="Analytics"
+            subtitle="Tendencias de ingresos, utilidad y flujo de caja."
+          />
           <div className="rounded-lg border border-white/10 bg-panel p-1">
             {(['week', 'month', 'year'] as const).map((option) => (
               <button
@@ -455,10 +538,10 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <article className="ui-card">
-            <h4 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Ingresos en el tiempo
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <article className="ui-card min-h-[320px]">
+            <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
+              Ventas en el tiempo
             </h4>
             <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
@@ -508,16 +591,22 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="ui-card">
-            <h4 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Relojes vendidos en el tiempo
+          <article className="ui-card min-h-[320px]">
+            <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
+              Utilidad en el tiempo
             </h4>
             <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
                 <div className="h-full animate-pulse rounded-lg bg-white/10" />
-              ) : (
+              ) : hasProfitSeries ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={salesSeries}>
+                  <AreaChart data={profitSeries}>
+                    <defs>
+                      <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#34d399" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                     <XAxis
                       dataKey="label"
@@ -526,7 +615,12 @@ export default function DashboardPage() {
                       axisLine={false}
                       minTickGap={24}
                     />
-                    <YAxis stroke="#737373" tickLine={false} axisLine={false} />
+                    <YAxis
+                      stroke="#737373"
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => `$${Number(value) / 1000}k`}
+                    />
                     <Tooltip
                       contentStyle={{
                         background: '#171717',
@@ -534,92 +628,32 @@ export default function DashboardPage() {
                         borderRadius: 8,
                         color: '#FAFAFA',
                       }}
+                      formatter={(value) => fmtMxn(Number(value))}
                     />
-                    <Bar dataKey="count" fill="#22c55e" radius={[8, 8, 0, 0]} barSize={22} />
-                  </BarChart>
+                    <Area
+                      type="monotone"
+                      dataKey="profit"
+                      stroke="#34d399"
+                      strokeWidth={1.5}
+                      fill="url(#profitGradient)"
+                    />
+                  </AreaChart>
                 </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-white/10 bg-black/20 px-4 text-center">
+                  <p className="text-sm text-white/40">Sin datos de utilidad en el período</p>
+                  <p className="mt-1 text-[11px] text-white/25">
+                    Ingresos − costo − comisiones bancarias
+                  </p>
+                </div>
               )}
             </div>
           </article>
+
+          <article className="ui-card min-h-[320px]">
+            <CashFlowSummary summary={data.summary} />
+          </article>
         </div>
-      </section>
-
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article className="ui-card">
-          <h3 className="text-lg font-semibold">Resumen del pipeline</h3>
-          <p className="mt-1 text-sm text-muted">
-            Movimiento de oportunidades y distribución por etapa en tu pipeline activo.
-          </p>
-
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Abiertas</p>
-              <p className="mt-2 text-xl font-semibold">{data.pipeline.openDeals}</p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Ganadas</p>
-              <p className="mt-2 text-xl font-semibold text-emerald-300">
-                {data.pipeline.wonDeals}
-              </p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Perdidas</p>
-              <p className="mt-2 text-xl font-semibold text-rose-300">
-                {data.pipeline.lostDeals}
-              </p>
-            </div>
-          </div>
-
-          <div
-            className="mt-5 space-y-2"
-            data-query-key={queryKeys.analytics.pipeline.join(':')}
-          >
-            {Object.keys(data.pipeline.countsByStage).length === 0 ? (
-              <p className="text-sm text-muted">Aún no hay registros en el pipeline.</p>
-            ) : (
-              Object.entries(data.pipeline.countsByStage).map(([stage, count]) => (
-                <div
-                  key={stage}
-                  className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2"
-                >
-                  <span className="text-sm text-muted">{stage.replaceAll('_', ' ')}</span>
-                  <span className="text-sm font-semibold">{count}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </article>
-
-        <article className="ui-card">
-          <h3 className="text-lg font-semibold">Antigüedad del inventario</h3>
-          <p className="mt-1 text-sm text-muted">
-            Relojes agrupados por tiempo en inventario para identificar stock sin movimiento.
-          </p>
-
-          <div
-            className="mt-5 grid grid-cols-2 gap-3"
-            data-query-key={queryKeys.analytics.inventoryAging.join(':')}
-          >
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">0-30 días</p>
-              <p className="mt-2 text-xl font-semibold">{data.inventoryAging.days0to30}</p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">31-60 días</p>
-              <p className="mt-2 text-xl font-semibold">{data.inventoryAging.days31to60}</p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">61-90 días</p>
-              <p className="mt-2 text-xl font-semibold">{data.inventoryAging.days61to90}</p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">90+ días</p>
-              <p className="mt-2 text-xl font-semibold text-amber-300">
-                {data.inventoryAging.days90plus}
-              </p>
-            </div>
-          </div>
-        </article>
       </section>
     </section>
   );
