@@ -113,6 +113,7 @@ export class HistoryService {
           method: p.method,
           status: p.status,
           paidAt: p.paidAt?.toISOString() ?? null,
+          notes: p.notes ?? null,
         })),
       };
     });
@@ -172,6 +173,7 @@ export class HistoryService {
       id: watch.id,
       brand: watch.brand,
       model: watch.model,
+      reference: watch.reference ?? null,
       serialNumber: watch.serialNumber,
       condition: watch.condition,
       cost: watch.cost.toString(),

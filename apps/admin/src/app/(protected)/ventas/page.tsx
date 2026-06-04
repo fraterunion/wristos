@@ -5,6 +5,7 @@ import { ApiError, apiGet } from '@/lib/api-client';
 import { listRecentSales, type SoldItem } from '@/lib/ventas-api';
 import { AddPaymentModal } from '@/components/ventas/AddPaymentModal';
 import { RegisterSaleModal } from '@/components/ventas/RegisterSaleModal';
+import { SaleDetailDrawer } from '@/components/ventas/SaleDetailDrawer';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,7 @@ export default function VentasPage() {
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [addPaymentSale, setAddPaymentSale] = useState<SoldItem | null>(null);
+  const [drawerSale, setDrawerSale] = useState<SoldItem | null>(null);
 
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -143,6 +145,10 @@ export default function VentasPage() {
       ]);
       setSales(salesData);
       setSummary(summaryData);
+      setDrawerSale((current) => {
+        if (!current) return null;
+        return salesData.find((s) => s.dealId === current.dealId) ?? null;
+      });
     } catch (err) {
       setDataError(err instanceof ApiError ? err.message : 'No se pudieron cargar los datos.');
     } finally {
@@ -390,7 +396,11 @@ export default function VentasPage() {
                     const pendingNum = Number(sale.pendingAmount);
 
                     return (
-                      <tr key={sale.dealId} className="transition-colors duration-150 hover:bg-white/[0.02]">
+                      <tr
+                        key={sale.dealId}
+                        onClick={() => setDrawerSale(sale)}
+                        className="cursor-pointer transition-colors duration-150 hover:bg-white/[0.02]"
+                      >
 
                         {/* Fecha */}
                         <td className="px-3 py-3.5 align-top pt-4">
@@ -487,7 +497,10 @@ export default function VentasPage() {
                             {status !== 'PAGADO' && (
                               <button
                                 type="button"
-                                onClick={() => setAddPaymentSale(sale)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAddPaymentSale(sale);
+                                }}
                                 className="rounded-md border border-white/10 px-2 py-1 text-[11px] font-medium text-white/60 hover:border-white/20 hover:text-white transition whitespace-nowrap"
                               >
                                 + Pago
@@ -507,6 +520,13 @@ export default function VentasPage() {
       )}
 
       {/* Modals */}
+      <SaleDetailDrawer
+        sale={drawerSale}
+        open={!!drawerSale}
+        onClose={() => setDrawerSale(null)}
+        onAddPayment={(sale) => setAddPaymentSale(sale)}
+      />
+
       <RegisterSaleModal
         open={registerOpen}
         onClose={() => setRegisterOpen(false)}
