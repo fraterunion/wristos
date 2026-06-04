@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   DealStage,
+  OperatingExpenseCategory,
   PaymentStatus,
   Prisma,
   WatchOwnershipType,
@@ -76,11 +77,21 @@ export class AnalyticsService {
   }
 
   async getSummary(tenantId: string) {
+    const now = new Date();
+    // First day of the current calendar month in UTC — used for all "this month" KPIs.
+    // Mirrors the soldAt field used by /history/sold, which is deal.updatedAt.
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
     const watchWhere: Prisma.WatchWhereInput = { tenantId, deletedAt: null };
     const dealWhere: Prisma.DealWhereInput = { tenantId, deletedAt: null };
     const paymentWhere: Prisma.PaymentWhereInput = { tenantId, deletedAt: null };
     // Revenue aggregate must include only closed sales — not open or lost pipeline.
     const wonDealWhere: Prisma.DealWhereInput = { ...dealWhere, stage: DealStage.CLOSED_WON };
+    // Active inventory: everything a dealer still holds (excludes SOLD).
+    const activeInventoryWhere: Prisma.WatchWhereInput = {
+      ...watchWhere,
+      status: { not: WatchStatus.SOLD },
+    };
 
     const [
       totalWatches,
@@ -94,24 +105,26 @@ export class AnalyticsService {
       dealsByStageRows,
       totalAgreedRevenueAgg,
       totalCollectedRevenueAgg,
-      deals,
+      receivableDeals,
       paidByDealRows,
+      // ── New: payment method balances ──────────────────────────────────────
+      paymentsByMethod,
+      // ── New: this-month KPIs ─────────────────────────────────────────────
+      salesThisMonthCountAgg,
+      salesThisMonthRevenueAgg,
+      dealsThisMonth,
+      bankFeesThisMonthAgg,
     ] = await Promise.all([
       this.prisma.watch.count({ where: watchWhere }),
-      this.prisma.watch.count({
-        where: { ...watchWhere, status: WatchStatus.AVAILABLE },
-      }),
-      this.prisma.watch.count({
-        where: { ...watchWhere, status: WatchStatus.RESERVED },
-      }),
-      this.prisma.watch.count({
-        where: { ...watchWhere, status: WatchStatus.SOLD },
-      }),
+      this.prisma.watch.count({ where: { ...watchWhere, status: WatchStatus.AVAILABLE } }),
+      this.prisma.watch.count({ where: { ...watchWhere, status: WatchStatus.RESERVED } }),
+      this.prisma.watch.count({ where: { ...watchWhere, status: WatchStatus.SOLD } }),
       this.prisma.watch.count({
         where: { ...watchWhere, ownershipType: WatchOwnershipType.CONSIGNMENT },
       }),
+      // Active inventory value: sum priceMin for watches not yet SOLD.
       this.prisma.watch.aggregate({
-        where: watchWhere,
+        where: activeInventoryWhere,
         _sum: { priceMin: true, cost: true },
       }),
       this.prisma.client.count({ where: { tenantId, deletedAt: null } }),
@@ -121,13 +134,14 @@ export class AnalyticsService {
         where: dealWhere,
         _count: { _all: true },
       }),
-      // totalAgreedRevenue: closed sales only — open/lost pipeline excluded
+      // All-time agreed revenue: CLOSED_WON deals only
       this.prisma.deal.aggregate({ where: wonDealWhere, _sum: { agreedPrice: true } }),
+      // All-time collected revenue: all PAID payments
       this.prisma.payment.aggregate({
         where: { ...paymentWhere, status: PaymentStatus.PAID },
         _sum: { amount: true },
       }),
-      // totalPendingBalance: only real receivables (won or awaiting payment)
+      // Accounts receivable: CLOSED_WON + PENDING_PAYMENT deals with outstanding balance
       this.prisma.deal.findMany({
         where: {
           ...dealWhere,
@@ -137,14 +151,50 @@ export class AnalyticsService {
       }),
       this.prisma.payment.groupBy({
         by: ['dealId'],
+        where: { ...paymentWhere, status: PaymentStatus.PAID },
+        _sum: { amount: true },
+      }),
+      // ── Payment method balances (all-time, PAID only) ─────────────────────
+      this.prisma.payment.groupBy({
+        by: ['method'],
+        where: { ...paymentWhere, status: PaymentStatus.PAID },
+        _sum: { amount: true },
+      }),
+      // ── Sales this month: count ───────────────────────────────────────────
+      // deal.updatedAt is used as soldAt by /history/sold, so we match that field.
+      this.prisma.deal.count({
+        where: { ...wonDealWhere, updatedAt: { gte: monthStart } },
+      }),
+      // ── Sales this month: revenue ─────────────────────────────────────────
+      this.prisma.deal.aggregate({
+        where: { ...wonDealWhere, updatedAt: { gte: monthStart } },
+        _sum: { agreedPrice: true },
+      }),
+      // ── Cost of sold this month: need watch.cost + watch expenses ─────────
+      // Same effective-cost pattern as history.service.ts getSummary().
+      this.prisma.deal.findMany({
+        where: { ...wonDealWhere, updatedAt: { gte: monthStart } },
+        select: {
+          watch: {
+            select: {
+              cost: true,
+              expenses: { select: { amount: true } },
+            },
+          },
+        },
+      }),
+      // ── Bank fees this month ──────────────────────────────────────────────
+      this.prisma.operatingExpense.aggregate({
         where: {
-          ...paymentWhere,
-          status: PaymentStatus.PAID,
+          tenantId,
+          category: OperatingExpenseCategory.BANK_FEES,
+          expenseDate: { gte: monthStart },
         },
         _sum: { amount: true },
       }),
     ]);
 
+    // ── Accounts receivable: pending balance across all real-receivable deals ──
     const dealsByStage = this.buildDealStageCounts(dealsByStageRows);
 
     const paidMap = new Map<string, Prisma.Decimal>();
@@ -153,7 +203,7 @@ export class AnalyticsService {
     }
 
     let totalPendingBalance = new Prisma.Decimal(0);
-    for (const deal of deals) {
+    for (const deal of receivableDeals) {
       const paid = paidMap.get(deal.id) ?? new Prisma.Decimal(0);
       const pending = deal.agreedPrice.minus(paid);
       if (pending.greaterThan(0)) {
@@ -161,24 +211,68 @@ export class AnalyticsService {
       }
     }
 
+    // ── Payment method balances ───────────────────────────────────────────────
+    const methodMap = new Map<string, Prisma.Decimal>();
+    for (const row of paymentsByMethod) {
+      methodMap.set(row.method, row._sum.amount ?? new Prisma.Decimal(0));
+    }
+    const zero = new Prisma.Decimal(0);
+    const cashBalance   = (methodMap.get('CASH')   ?? zero).toString();
+    const bankBalance   = (methodMap.get('BANCOS') ?? zero).toString();
+    const cesarBalance  = (methodMap.get('CESAR')  ?? zero).toString();
+
+    // ── This-month sales KPIs ─────────────────────────────────────────────────
+    const salesThisMonthRevenue = (
+      salesThisMonthRevenueAgg._sum.agreedPrice ?? zero
+    );
+
+    const costOfSoldThisMonth = dealsThisMonth.reduce((sum, deal) => {
+      const watchCost = Number(deal.watch.cost);
+      const expenseSum = deal.watch.expenses.reduce(
+        (es, e) => es + Number(e.amount),
+        0,
+      );
+      return sum + watchCost + expenseSum;
+    }, 0);
+
+    const bankFeesThisMonthDecimal = bankFeesThisMonthAgg._sum.amount ?? zero;
+
+    const profitThisMonth = salesThisMonthRevenue
+      .minus(new Prisma.Decimal(costOfSoldThisMonth))
+      .minus(bankFeesThisMonthDecimal);
+
     return {
+      // ── Existing fields (backwards-compatible) ──────────────────────────────
       totalWatches,
       availableWatches,
       reservedWatches,
       soldWatches,
       consignmentWatches,
-      totalInventoryValue: (inventorySums._sum.priceMin ?? new Prisma.Decimal(0)).toString(),
-      totalInventoryCost: (inventorySums._sum.cost ?? new Prisma.Decimal(0)).toString(),
+      // totalInventoryValue now reflects active (non-SOLD) inventory only
+      totalInventoryValue: (inventorySums._sum.priceMin ?? zero).toString(),
+      totalInventoryCost:  (inventorySums._sum.cost    ?? zero).toString(),
       activeClients,
       totalDeals,
       dealsByStage,
       totalAgreedRevenue: (
-        totalAgreedRevenueAgg._sum.agreedPrice ?? new Prisma.Decimal(0)
+        totalAgreedRevenueAgg._sum.agreedPrice ?? zero
       ).toString(),
       totalCollectedRevenue: (
-        totalCollectedRevenueAgg._sum.amount ?? new Prisma.Decimal(0)
+        totalCollectedRevenueAgg._sum.amount ?? zero
       ).toString(),
       totalPendingBalance: totalPendingBalance.toString(),
+      // ── New: payment method balances (all-time, PAID) ──────────────────────
+      cashBalance,
+      bankBalance,
+      cesarBalance,
+      // ── New: accounts payable — no schema yet; placeholder ─────────────────
+      accountsPayable: '0',
+      // ── New: this-month KPIs ───────────────────────────────────────────────
+      salesThisMonthCount:   salesThisMonthCountAgg,
+      salesThisMonthRevenue: salesThisMonthRevenue.toString(),
+      costOfSoldThisMonth:   costOfSoldThisMonth.toFixed(2),
+      bankFeesThisMonth:     bankFeesThisMonthDecimal.toString(),
+      profitThisMonth:       profitThisMonth.toString(),
     };
   }
 
