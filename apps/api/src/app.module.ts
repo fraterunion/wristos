@@ -17,6 +17,7 @@ import { HistoryModule } from './modules/history/history.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { RadarModule } from './modules/radar/radar.module';
 import { FxModule } from './modules/fx/fx.module';
+import { CapitalModule } from './modules/capital/capital.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { FxModule } from './modules/fx/fx.module';
     ExpensesModule,
     RadarModule,
     FxModule,
+    CapitalModule,
   ],
   controllers: [AppController],
 })
