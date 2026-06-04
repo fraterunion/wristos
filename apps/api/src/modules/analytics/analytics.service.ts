@@ -276,6 +276,95 @@ export class AnalyticsService {
     };
   }
 
+  async getInventoryByBrand(tenantId: string) {
+    const watches = await this.prisma.watch.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { not: WatchStatus.SOLD },
+      },
+      select: {
+        brand: true,
+        priceMin: true,
+      },
+    });
+
+    const byBrand = new Map<string, { count: number; value: Prisma.Decimal }>();
+    const zero = new Prisma.Decimal(0);
+
+    for (const watch of watches) {
+      const current = byBrand.get(watch.brand) ?? { count: 0, value: zero };
+      current.count += 1;
+      current.value = current.value.plus(watch.priceMin);
+      byBrand.set(watch.brand, current);
+    }
+
+    return Array.from(byBrand.entries())
+      .map(([brand, { count, value }]) => ({
+        brand,
+        count,
+        inventoryValue: value.toString(),
+      }))
+      .sort((a, b) => Number(b.inventoryValue) - Number(a.inventoryValue));
+  }
+
+  async getSalesByBrand(tenantId: string) {
+    const deals = await this.prisma.deal.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        stage: DealStage.CLOSED_WON,
+      },
+      select: {
+        agreedPrice: true,
+        watch: { select: { brand: true } },
+      },
+    });
+
+    const byBrand = new Map<string, { count: number; revenue: Prisma.Decimal }>();
+    const zero = new Prisma.Decimal(0);
+
+    for (const deal of deals) {
+      const brand = deal.watch.brand;
+      const current = byBrand.get(brand) ?? { count: 0, revenue: zero };
+      current.count += 1;
+      current.revenue = current.revenue.plus(deal.agreedPrice);
+      byBrand.set(brand, current);
+    }
+
+    return Array.from(byBrand.entries())
+      .map(([brand, { count, revenue }]) => ({
+        brand,
+        count,
+        revenue: revenue.toString(),
+      }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  async getTopModels(tenantId: string) {
+    const deals = await this.prisma.deal.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        stage: DealStage.CLOSED_WON,
+      },
+      select: {
+        watch: { select: { model: true } },
+      },
+    });
+
+    const byModel = new Map<string, number>();
+    for (const deal of deals) {
+      const model = deal.watch.model;
+      byModel.set(model, (byModel.get(model) ?? 0) + 1);
+    }
+
+    return Array.from(byModel.entries())
+      .map(([model, count]) => ({ model, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }
+
   async getInventoryAging(tenantId: string) {
     const watches = await this.prisma.watch.findMany({
       where: { tenantId, deletedAt: null },

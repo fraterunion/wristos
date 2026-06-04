@@ -40,4 +40,19 @@ export class AnalyticsController {
   ) {
     return this.analyticsService.getSalesOverTime(user.tenantId, query.period);
   }
+
+  @Get('inventory-by-brand')
+  inventoryByBrand(@CurrentUser() user: CurrentUserType) {
+    return this.analyticsService.getInventoryByBrand(user.tenantId);
+  }
+
+  @Get('sales-by-brand')
+  salesByBrand(@CurrentUser() user: CurrentUserType) {
+    return this.analyticsService.getSalesByBrand(user.tenantId);
+  }
+
+  @Get('top-models')
+  topModels(@CurrentUser() user: CurrentUserType) {
+    return this.analyticsService.getTopModels(user.tenantId);
+  }
 }

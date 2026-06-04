@@ -52,6 +52,23 @@ export type SalesOverTimePoint = {
   count: number;
 };
 
+export type InventoryByBrandPoint = {
+  brand: string;
+  count: number;
+  inventoryValue: string;
+};
+
+export type SalesByBrandPoint = {
+  brand: string;
+  count: number;
+  revenue: string;
+};
+
+export type TopModelPoint = {
+  model: string;
+  count: number;
+};
+
 export type WatchStatus =
   | 'AVAILABLE'
   | 'RESERVED'

@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { CommercialIntelligenceSection } from '@/components/dashboard/CommercialIntelligenceSection';
 import { apiGet } from '@/lib/api-client';
 import { getFxUsdMxn, type FxRateResult } from '@/lib/fx-api';
 import {
@@ -632,6 +633,8 @@ export default function DashboardPage() {
           </article>
         </div>
       </section>
+
+      <CommercialIntelligenceSection />
     </section>
   );
 }
