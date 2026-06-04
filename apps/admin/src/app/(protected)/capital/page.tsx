@@ -1,77 +1,38 @@
 'use client';
 
-import { useState } from 'react';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type InvestorId = 'cesar' | 'edgar';
-type CapitalMethod = 'CASH' | 'BANCOS' | 'CESAR';
-
-type Aporte = {
-  id: string;
-  investorId: InvestorId;
-  amount: number;
-  method: CapitalMethod;
-  date: string;    // YYYY-MM-DD
-  notes: string | null;
-};
-
-type Retiro = {
-  id: string;
-  investorId: InvestorId;
-  amount: number;
-  method: CapitalMethod;
-  paidAt: string;  // YYYY-MM-DD
-  notes: string | null;
-};
-
-// ─── Mock business profit ─────────────────────────────────────────────────────
-// In production these come from GET /history/summary
-
-const TOTAL_REVENUE          = 2_450_000;
-const TOTAL_COST_OF_SOLD     = 1_640_000;
-const TOTAL_BANK_FEES        =    48_500;
-const TOTAL_BUSINESS_PROFIT  = TOTAL_REVENUE - TOTAL_COST_OF_SOLD - TOTAL_BANK_FEES; // 761,500
-
-// ─── Mock investors ───────────────────────────────────────────────────────────
-
-const INVESTORS: Array<{ id: InvestorId; name: string; sharePercent: number }> = [
-  { id: 'cesar', name: 'César', sharePercent: 75 },
-  { id: 'edgar', name: 'Edgar', sharePercent: 25 },
-];
-
-// ─── Initial mock data ────────────────────────────────────────────────────────
-
-const INITIAL_APORTES: Aporte[] = [
-  { id: 'a1', investorId: 'cesar', amount: 500_000, method: 'BANCOS', date: '2026-01-15', notes: 'Capital inicial' },
-  { id: 'a2', investorId: 'edgar', amount: 200_000, method: 'BANCOS', date: '2026-01-15', notes: 'Capital inicial' },
-  { id: 'a3', investorId: 'cesar', amount: 200_000, method: 'CESAR',  date: '2026-02-28', notes: 'Refuerzo de capital Q1' },
-  { id: 'a4', investorId: 'edgar', amount:  50_000, method: 'CASH',   date: '2026-03-05', notes: null },
-  { id: 'a5', investorId: 'cesar', amount: 100_000, method: 'CASH',   date: '2026-04-10', notes: null },
-];
-
-const INITIAL_RETIROS: Retiro[] = [
-  { id: 'r1', investorId: 'cesar', amount: 100_000, method: 'CESAR',  paidAt: '2026-02-01', notes: 'Distribución enero' },
-  { id: 'r2', investorId: 'edgar', amount:  60_000, method: 'BANCOS', paidAt: '2026-03-01', notes: 'Distribución Q1' },
-  { id: 'r3', investorId: 'cesar', amount: 120_000, method: 'BANCOS', paidAt: '2026-03-01', notes: 'Distribución feb–mar' },
-  { id: 'r4', investorId: 'cesar', amount:  80_000, method: 'CESAR',  paidAt: '2026-04-01', notes: null },
-  { id: 'r5', investorId: 'edgar', amount:  35_000, method: 'CASH',   paidAt: '2026-05-10', notes: null },
-  { id: 'r6', investorId: 'cesar', amount:  20_000, method: 'CASH',   paidAt: '2026-05-15', notes: 'Anticipo' },
-];
+import { useCallback, useEffect, useState } from 'react';
+import { ApiError } from '@/lib/api-client';
+import {
+  createCapitalContribution,
+  createCapitalDistribution,
+  createCapitalInvestor,
+  deleteCapitalContribution,
+  deleteCapitalDistribution,
+  getCapitalSummary,
+  listCapitalContributions,
+  listCapitalDistributions,
+  updateCapitalContribution,
+  updateCapitalDistribution,
+  type CapitalAccount,
+  type CapitalContribution,
+  type CapitalDistribution,
+  type CapitalInvestorBalance,
+  type CapitalSummary,
+} from '@/lib/capital-api';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmtMxn(value: number) {
+function fmtMxn(value: string | number) {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',
     currency: 'MXN',
     currencyDisplay: 'narrowSymbol',
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(Number(value));
 }
 
 function fmtDate(iso: string) {
-  const [y, m, d] = iso.split('-');
+  const [y, m, d] = iso.split('T')[0].split('-');
   return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString('es-MX', {
     day: 'numeric',
     month: 'short',
@@ -79,25 +40,25 @@ function fmtDate(iso: string) {
   });
 }
 
+function isoToDateInput(iso: string) {
+  return iso.split('T')[0];
+}
+
 function todayIso() {
   return new Date().toISOString().split('T')[0];
 }
 
-const METHOD_LABELS: Record<CapitalMethod, string> = {
-  CASH:   'Efectivo',
-  BANCOS: 'Bancos',
-  CESAR:  'Cuenta César',
+const ACCOUNT_LABELS: Record<CapitalAccount, string> = {
+  CASH: 'Efectivo',
+  BANK: 'Bancos',
+  CESAR_ACCOUNT: 'Cuenta César',
 };
 
-const METHOD_OPTIONS: Array<{ value: CapitalMethod; label: string }> = [
-  { value: 'CASH',   label: 'Efectivo' },
-  { value: 'BANCOS', label: 'Bancos' },
-  { value: 'CESAR',  label: 'Cuenta César' },
+const ACCOUNT_OPTIONS: Array<{ value: CapitalAccount; label: string }> = [
+  { value: 'CASH', label: 'Efectivo' },
+  { value: 'BANK', label: 'Bancos' },
+  { value: 'CESAR_ACCOUNT', label: 'Cuenta César' },
 ];
-
-function investorName(id: InvestorId) {
-  return INVESTORS.find((i) => i.id === id)?.name ?? id;
-}
 
 // ─── PillBtn ──────────────────────────────────────────────────────────────────
 
@@ -128,49 +89,57 @@ function PillBtn({
   );
 }
 
-// ─── Investor badge pill ──────────────────────────────────────────────────────
+// ─── InvestorPill ─────────────────────────────────────────────────────────────
 
-function InvestorPill({ investorId }: { investorId: InvestorId }) {
+function InvestorPill({ name, isPrimary = false }: { name: string; isPrimary?: boolean }) {
   return (
-    <span className={`inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-medium ${
-      investorId === 'cesar'
-        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-        : 'border-white/15 bg-white/[0.05] text-white/60'
-    }`}>
-      {investorName(investorId)}
+    <span
+      className={`inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-medium ${
+        isPrimary
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+          : 'border-white/15 bg-white/[0.05] text-white/60'
+      }`}
+    >
+      {name}
     </span>
   );
 }
 
-// ─── Method pill ──────────────────────────────────────────────────────────────
+// ─── AccountPill ──────────────────────────────────────────────────────────────
 
-function MethodPill({ method }: { method: CapitalMethod }) {
+function AccountPill({ account }: { account: CapitalAccount }) {
   return (
     <span className="inline-flex items-center rounded-md border border-white/[0.07] bg-white/[0.03] px-2 py-[3px] text-[10px] font-medium tracking-wide text-white/50">
-      {METHOD_LABELS[method]}
+      {ACCOUNT_LABELS[account]}
     </span>
   );
 }
 
-// ─── Capital Hero ─────────────────────────────────────────────────────────────
+// ─── CapitalHero ──────────────────────────────────────────────────────────────
 
 function CapitalHero({
   totalCapitalContributed,
+  totalBusinessProfit,
   totalDistributionsPaid,
   totalPendingToPartners,
   capitalNeto,
 }: {
-  totalCapitalContributed: number;
-  totalDistributionsPaid: number;
-  totalPendingToPartners: number;
-  capitalNeto: number;
+  totalCapitalContributed: string;
+  totalBusinessProfit: string;
+  totalDistributionsPaid: string;
+  totalPendingToPartners: string;
+  capitalNeto: string;
 }) {
   const cells = [
-    { label: 'Capital aportado',    value: fmtMxn(totalCapitalContributed),  tone: 'default' },
-    { label: 'Utilidad acumulada',  value: fmtMxn(TOTAL_BUSINESS_PROFIT),    tone: 'positive' },
-    { label: 'Retirado a socios',   value: fmtMxn(totalDistributionsPaid),   tone: 'default' },
-    { label: 'Por pagar a socios',  value: fmtMxn(totalPendingToPartners),   tone: totalPendingToPartners > 0 ? 'negative' : 'default' },
-    { label: 'Capital neto',        value: fmtMxn(capitalNeto),              tone: 'default' },
+    { label: 'Capital aportado',   value: fmtMxn(totalCapitalContributed), tone: 'default' },
+    { label: 'Utilidad acumulada', value: fmtMxn(totalBusinessProfit),     tone: 'positive' },
+    { label: 'Retirado a socios',  value: fmtMxn(totalDistributionsPaid),  tone: 'default' },
+    {
+      label: 'Por pagar a socios',
+      value: fmtMxn(totalPendingToPartners),
+      tone: Number(totalPendingToPartners) > 0 ? 'negative' : 'default',
+    },
+    { label: 'Capital neto', value: fmtMxn(capitalNeto), tone: 'default' },
   ] as const;
 
   const toneClass = (tone: 'default' | 'positive' | 'negative') =>
@@ -185,7 +154,6 @@ function CapitalHero({
           Posición de capital
         </p>
       </div>
-
       <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-y-0">
         {cells.map((cell) => (
           <div key={cell.label} className="px-4 py-4 md:px-5 md:py-5">
@@ -198,7 +166,6 @@ function CapitalHero({
           </div>
         ))}
       </div>
-
       <div className="flex flex-col gap-1 border-t border-white/[0.06] bg-black/20 px-5 py-3 md:px-6">
         <p className="text-[10px] text-white/20">
           Capital neto = capital aportado + utilidad acumulada − retiros
@@ -208,96 +175,86 @@ function CapitalHero({
   );
 }
 
-// ─── Investor Card ────────────────────────────────────────────────────────────
+// ─── InvestorCard ─────────────────────────────────────────────────────────────
 
 function InvestorCard({
-  id,
-  name,
-  sharePercent,
-  capitalContributed,
-  profitEntitlement,
-  distributionsPaid,
-  pendingProfit,
+  investor,
+  isPrimary,
 }: {
-  id: InvestorId;
-  name: string;
-  sharePercent: number;
-  capitalContributed: number;
-  profitEntitlement: number;
-  distributionsPaid: number;
-  pendingProfit: number;
+  investor: CapitalInvestorBalance;
+  isPrimary: boolean;
 }) {
   const rows = [
-    { label: 'Aportado',          value: fmtMxn(capitalContributed), tone: 'default' },
-    { label: 'Utilidad asignada', value: fmtMxn(profitEntitlement),  tone: 'default' },
-    { label: 'Retirado',          value: fmtMxn(distributionsPaid),  tone: 'default' },
-  ] as const;
+    { label: 'Aportado',          value: fmtMxn(investor.capitalContributed) },
+    { label: 'Utilidad asignada', value: fmtMxn(investor.profitEntitlement) },
+    { label: 'Retirado',          value: fmtMxn(investor.distributionsPaid) },
+  ];
+  const pending = Number(investor.pendingProfit);
 
   return (
     <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95">
-      {/* Card header */}
       <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm font-semibold ${
-            id === 'cesar'
-              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-              : 'border-white/15 bg-white/[0.06] text-white/60'
-          }`}>
-            {name[0]}
+          <div
+            className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm font-semibold ${
+              isPrimary
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : 'border-white/15 bg-white/[0.06] text-white/60'
+            }`}
+          >
+            {investor.name[0]}
           </div>
           <div>
-            <p className="text-base font-semibold text-white">{name}</p>
-            <p className="text-[11px] text-white/35">Socio · {sharePercent}%</p>
+            <p className="text-base font-semibold text-white">{investor.name}</p>
+            <p className="text-[11px] text-white/35">Socio · {investor.ownershipPercent}%</p>
           </div>
         </div>
         <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[10px] font-semibold text-white/40">
-          {sharePercent}%
+          {investor.ownershipPercent}%
         </span>
       </div>
-
-      {/* Metrics */}
       <div className="space-y-0 divide-y divide-white/[0.04]">
         {rows.map((row) => (
           <div key={row.label} className="flex items-center justify-between px-5 py-3">
             <span className="text-sm text-white/45">{row.label}</span>
-            <span className="text-sm font-semibold tabular-nums text-white">
-              {row.value}
-            </span>
+            <span className="text-sm font-semibold tabular-nums text-white">{row.value}</span>
           </div>
         ))}
       </div>
-
-      {/* Por cobrar footer */}
-      <div className="border-t border-white/[0.06] bg-black/20 flex items-center justify-between px-5 py-4">
+      <div className="flex items-center justify-between border-t border-white/[0.06] bg-black/20 px-5 py-4">
         <span className="text-sm font-medium text-white/60">Por cobrar</span>
-        <span className={`text-xl font-semibold tabular-nums ${
-          pendingProfit > 0 ? 'text-emerald-400' : pendingProfit < 0 ? 'text-rose-400' : 'text-white/30'
-        }`}>
-          {fmtMxn(pendingProfit)}
+        <span
+          className={`text-xl font-semibold tabular-nums ${
+            pending > 0 ? 'text-emerald-400' : pending < 0 ? 'text-rose-400' : 'text-white/30'
+          }`}
+        >
+          {fmtMxn(investor.pendingProfit)}
         </span>
       </div>
     </article>
   );
 }
 
-// ─── Aportes table ────────────────────────────────────────────────────────────
+// ─── AportesTable ─────────────────────────────────────────────────────────────
 
 function AportesTable({
-  aportes,
+  contributions,
+  primaryInvestorId,
   deletingId,
   onEdit,
   onDeleteRequest,
   onDeleteConfirm,
   onDeleteCancel,
 }: {
-  aportes: Aporte[];
+  contributions: CapitalContribution[];
+  primaryInvestorId: string | undefined;
   deletingId: string | null;
-  onEdit: (a: Aporte) => void;
+  onEdit: (c: CapitalContribution) => void;
   onDeleteRequest: (id: string) => void;
   onDeleteConfirm: (id: string) => void;
   onDeleteCancel: () => void;
 }) {
-  if (aportes.length === 0) {
+  if (contributions.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-white/10 bg-panel/50 px-4 py-16 text-center">
         <p className="text-sm font-medium text-white/40">Sin aportes registrados.</p>
@@ -309,7 +266,7 @@ function AportesTable({
   }
 
   return (
-    <div className="rounded-2xl border border-white/[0.07] bg-panel overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-panel">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
           <thead>
@@ -323,21 +280,24 @@ function AportesTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-white/[0.04]">
-            {aportes.map((row) => (
+            {contributions.map((row) => (
               <tr key={row.id} className="group transition-colors hover:bg-white/[0.02]">
-                <td className="px-4 py-3.5 text-xs tabular-nums text-white/35 whitespace-nowrap">
-                  {fmtDate(row.date)}
+                <td className="whitespace-nowrap px-4 py-3.5 text-xs tabular-nums text-white/35">
+                  {fmtDate(row.contributedAt)}
                 </td>
                 <td className="px-4 py-3.5">
-                  <InvestorPill investorId={row.investorId} />
+                  <InvestorPill
+                    name={row.investorName}
+                    isPrimary={row.investorId === primaryInvestorId}
+                  />
                 </td>
-                <td className="px-4 py-3.5 text-right font-semibold tabular-nums text-white whitespace-nowrap">
+                <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums text-white">
                   {fmtMxn(row.amount)}
                 </td>
                 <td className="px-4 py-3.5">
-                  <MethodPill method={row.method} />
+                  <AccountPill account={row.account} />
                 </td>
-                <td className="px-4 py-3.5 text-sm text-white/35 max-w-[180px] truncate">
+                <td className="max-w-[180px] truncate px-4 py-3.5 text-sm text-white/35">
                   {row.notes ?? <span className="text-white/20">—</span>}
                 </td>
                 <td className="px-4 py-3.5 text-right">
@@ -347,14 +307,14 @@ function AportesTable({
                       <button
                         type="button"
                         onClick={() => onDeleteConfirm(row.id)}
-                        className="text-rose-400 hover:text-rose-300 font-medium transition"
+                        className="font-medium text-rose-400 transition hover:text-rose-300"
                       >
                         Sí
                       </button>
                       <button
                         type="button"
                         onClick={onDeleteCancel}
-                        className="text-white/30 hover:text-white/60 transition"
+                        className="text-white/30 transition hover:text-white/60"
                       >
                         No
                       </button>
@@ -364,14 +324,14 @@ function AportesTable({
                       <button
                         type="button"
                         onClick={() => onEdit(row)}
-                        className="rounded px-2 py-1 text-xs text-white/40 hover:bg-white/8 hover:text-white transition"
+                        className="rounded px-2 py-1 text-xs text-white/40 transition hover:bg-white/8 hover:text-white"
                       >
                         Editar
                       </button>
                       <button
                         type="button"
                         onClick={() => onDeleteRequest(row.id)}
-                        className="rounded px-2 py-1 text-xs text-rose-400/70 hover:bg-rose-400/10 hover:text-rose-300 transition"
+                        className="rounded px-2 py-1 text-xs text-rose-400/70 transition hover:bg-rose-400/10 hover:text-rose-300"
                       >
                         Eliminar
                       </button>
@@ -387,24 +347,26 @@ function AportesTable({
   );
 }
 
-// ─── Retiros table ────────────────────────────────────────────────────────────
+// ─── RetirosTable ─────────────────────────────────────────────────────────────
 
 function RetirosTable({
-  retiros,
+  distributions,
+  primaryInvestorId,
   deletingId,
   onEdit,
   onDeleteRequest,
   onDeleteConfirm,
   onDeleteCancel,
 }: {
-  retiros: Retiro[];
+  distributions: CapitalDistribution[];
+  primaryInvestorId: string | undefined;
   deletingId: string | null;
-  onEdit: (r: Retiro) => void;
+  onEdit: (d: CapitalDistribution) => void;
   onDeleteRequest: (id: string) => void;
   onDeleteConfirm: (id: string) => void;
   onDeleteCancel: () => void;
 }) {
-  if (retiros.length === 0) {
+  if (distributions.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-white/10 bg-panel/50 px-4 py-16 text-center">
         <p className="text-sm font-medium text-white/40">Sin retiros registrados.</p>
@@ -416,7 +378,7 @@ function RetirosTable({
   }
 
   return (
-    <div className="rounded-2xl border border-white/[0.07] bg-panel overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-panel">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
           <thead>
@@ -430,21 +392,24 @@ function RetirosTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-white/[0.04]">
-            {retiros.map((row) => (
+            {distributions.map((row) => (
               <tr key={row.id} className="group transition-colors hover:bg-white/[0.02]">
-                <td className="px-4 py-3.5 text-xs tabular-nums text-white/35 whitespace-nowrap">
+                <td className="whitespace-nowrap px-4 py-3.5 text-xs tabular-nums text-white/35">
                   {fmtDate(row.paidAt)}
                 </td>
                 <td className="px-4 py-3.5">
-                  <InvestorPill investorId={row.investorId} />
+                  <InvestorPill
+                    name={row.investorName}
+                    isPrimary={row.investorId === primaryInvestorId}
+                  />
                 </td>
-                <td className="px-4 py-3.5 text-right font-semibold tabular-nums text-white whitespace-nowrap">
+                <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums text-white">
                   {fmtMxn(row.amount)}
                 </td>
                 <td className="px-4 py-3.5">
-                  <MethodPill method={row.method} />
+                  <AccountPill account={row.account} />
                 </td>
-                <td className="px-4 py-3.5 text-sm text-white/35 max-w-[180px] truncate">
+                <td className="max-w-[180px] truncate px-4 py-3.5 text-sm text-white/35">
                   {row.notes ?? <span className="text-white/20">—</span>}
                 </td>
                 <td className="px-4 py-3.5 text-right">
@@ -454,14 +419,14 @@ function RetirosTable({
                       <button
                         type="button"
                         onClick={() => onDeleteConfirm(row.id)}
-                        className="text-rose-400 hover:text-rose-300 font-medium transition"
+                        className="font-medium text-rose-400 transition hover:text-rose-300"
                       >
                         Sí
                       </button>
                       <button
                         type="button"
                         onClick={onDeleteCancel}
-                        className="text-white/30 hover:text-white/60 transition"
+                        className="text-white/30 transition hover:text-white/60"
                       >
                         No
                       </button>
@@ -471,14 +436,14 @@ function RetirosTable({
                       <button
                         type="button"
                         onClick={() => onEdit(row)}
-                        className="rounded px-2 py-1 text-xs text-white/40 hover:bg-white/8 hover:text-white transition"
+                        className="rounded px-2 py-1 text-xs text-white/40 transition hover:bg-white/8 hover:text-white"
                       >
                         Editar
                       </button>
                       <button
                         type="button"
                         onClick={() => onDeleteRequest(row.id)}
-                        className="rounded px-2 py-1 text-xs text-rose-400/70 hover:bg-rose-400/10 hover:text-rose-300 transition"
+                        className="rounded px-2 py-1 text-xs text-rose-400/70 transition hover:bg-rose-400/10 hover:text-rose-300"
                       >
                         Eliminar
                       </button>
@@ -494,83 +459,50 @@ function RetirosTable({
   );
 }
 
-// ─── Aporte Modal ─────────────────────────────────────────────────────────────
+// ─── InvestorSetupModal ───────────────────────────────────────────────────────
 
-type AporteForm = {
-  investorId: InvestorId | '';
-  amount: string;
-  method: CapitalMethod | '';
-  date: string;
-  notes: string;
-};
+type SetupForm = { name: string; ownershipPercent: string; notes: string };
+const EMPTY_SETUP: SetupForm = { name: '', ownershipPercent: '', notes: '' };
 
-const EMPTY_APORTE_FORM: AporteForm = {
-  investorId: '',
-  amount: '',
-  method: '',
-  date: todayIso(),
-  notes: '',
-};
-
-function AporteModal({
+function InvestorSetupModal({
   open,
-  editing,
   onClose,
   onSave,
 }: {
   open: boolean;
-  editing: Aporte | null;
   onClose: () => void;
-  onSave: (data: Omit<Aporte, 'id'>) => void;
+  onSave: (data: SetupForm) => Promise<void>;
 }) {
-  const [form, setForm] = useState<AporteForm>(EMPTY_APORTE_FORM);
+  const [form, setForm] = useState<SetupForm>(EMPTY_SETUP);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  // Sync form when modal opens
-  if (open && editing && form.amount === '' && !form.investorId) {
-    setForm({
-      investorId: editing.investorId,
-      amount: String(editing.amount),
-      method: editing.method,
-      date: editing.date,
-      notes: editing.notes ?? '',
-    });
-  }
+  useEffect(() => {
+    if (!open) {
+      setForm(EMPTY_SETUP);
+      setError(null);
+    }
+  }, [open]);
 
-  function reset() {
-    setForm(EMPTY_APORTE_FORM);
-    setError(null);
-  }
-
-  function handleClose() {
-    reset();
-    onClose();
-  }
-
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.investorId) { setError('Selecciona un socio.'); return; }
-    const amount = Number(form.amount);
-    if (!form.amount || !Number.isFinite(amount) || amount <= 0) {
-      setError('Ingresa un monto válido mayor a 0.');
+    if (!form.name.trim()) { setError('Ingresa el nombre del socio.'); return; }
+    const pct = Number(form.ownershipPercent);
+    if (!form.ownershipPercent || !Number.isFinite(pct) || pct < 0 || pct > 100) {
+      setError('El porcentaje debe ser un número entre 0 y 100.');
       return;
     }
-    if (!form.method) { setError('Selecciona una cuenta.'); return; }
-    if (!form.date) { setError('Selecciona una fecha.'); return; }
-    onSave({
-      investorId: form.investorId,
-      amount,
-      method: form.method,
-      date: form.date,
-      notes: form.notes.trim() || null,
-    });
-    reset();
+    setSaving(true);
+    try {
+      await onSave(form);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error creando socio.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!open) return null;
-
-  const isEdit = editing !== null;
-  const canSubmit = !!form.investorId && Number(form.amount) > 0 && !!form.method && !!form.date;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
@@ -578,10 +510,165 @@ function AporteModal({
         type="button"
         aria-label="Cerrar"
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={handleClose}
+        onClick={onClose}
+      />
+      <div className="relative w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 shadow-2xl backdrop-blur">
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold tracking-tight">Configurar socio</h2>
+            <p className="mt-0.5 text-xs text-white/40">Agrega un socio del negocio.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-white/40 transition hover:bg-white/8 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
+          {error && (
+            <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              {error}
+            </div>
+          )}
+          <div>
+            <label className="ui-field-label">Nombre</label>
+            <input
+              type="text"
+              placeholder="Ej: César"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              className="ui-input mt-1.5"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="ui-field-label">Porcentaje de utilidad (%)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              placeholder="Ej: 75"
+              value={form.ownershipPercent}
+              onChange={(e) => setForm((f) => ({ ...f, ownershipPercent: e.target.value }))}
+              className="ui-input mt-1.5"
+            />
+          </div>
+          <div>
+            <label className="ui-field-label">Notas (opcional)</label>
+            <textarea
+              rows={2}
+              placeholder="Descripción…"
+              value={form.notes}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              className="ui-input mt-1.5 resize-none"
+            />
+          </div>
+          <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4">
+            <button type="button" onClick={onClose} className="ui-btn-ghost px-4 py-2">
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !form.name.trim() || !form.ownershipPercent}
+              className="ui-btn-primary px-5 py-2 disabled:opacity-50"
+            >
+              {saving ? 'Guardando…' : 'Guardar socio'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── AporteModal ──────────────────────────────────────────────────────────────
+
+type AporteForm = {
+  investorId: string;
+  amount: string;
+  account: CapitalAccount | '';
+  contributedAt: string;
+  notes: string;
+};
+
+const EMPTY_APORTE: AporteForm = {
+  investorId: '',
+  amount: '',
+  account: '',
+  contributedAt: todayIso(),
+  notes: '',
+};
+
+function AporteModal({
+  open,
+  editing,
+  investors,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  editing: CapitalContribution | null;
+  investors: CapitalInvestorBalance[];
+  onClose: () => void;
+  onSave: (form: AporteForm) => Promise<void>;
+}) {
+  const [form, setForm] = useState<AporteForm>(EMPTY_APORTE);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open && editing) {
+      setForm({
+        investorId: editing.investorId,
+        amount: editing.amount,
+        account: editing.account,
+        contributedAt: isoToDateInput(editing.contributedAt),
+        notes: editing.notes ?? '',
+      });
+    } else if (!open) {
+      setForm(EMPTY_APORTE);
+      setError(null);
+    }
+  }, [open, editing]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.investorId) { setError('Selecciona un socio.'); return; }
+    const amount = Number(form.amount);
+    if (!form.amount || !Number.isFinite(amount) || amount <= 0) {
+      setError('Ingresa un monto válido mayor a 0.');
+      return;
+    }
+    if (!form.account) { setError('Selecciona una cuenta.'); return; }
+    if (!form.contributedAt) { setError('Selecciona una fecha.'); return; }
+    setSaving(true);
+    try {
+      await onSave(form);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error al guardar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) return null;
+
+  const isEdit = editing !== null;
+  const canSubmit =
+    !!form.investorId && Number(form.amount) > 0 && !!form.account && !!form.contributedAt;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
+      <button
+        type="button"
+        aria-label="Cerrar"
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={onClose}
       />
       <div className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 shadow-2xl backdrop-blur">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
             <h2 className="text-base font-semibold tracking-tight">
@@ -595,34 +682,33 @@ function AporteModal({
           </div>
           <button
             type="button"
-            onClick={handleClose}
-            className="rounded-lg p-1.5 text-white/40 hover:bg-white/8 hover:text-white transition"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-white/40 transition hover:bg-white/8 hover:text-white"
           >
             ✕
           </button>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
           {error && (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {error}
             </div>
           )}
-
-          {/* Socio */}
           <div>
             <label className="ui-field-label">Socio</label>
-            <div className="mt-1.5 flex gap-2">
-              {INVESTORS.map((inv) => (
-                <PillBtn
-                  key={inv.id}
-                  active={form.investorId === inv.id}
-                  disabled={isEdit}
-                  onClick={() => setForm((f) => ({ ...f, investorId: inv.id }))}
-                >
-                  {inv.name}
-                </PillBtn>
-              ))}
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {investors
+                .filter((i) => i.isActive || form.investorId === i.id)
+                .map((inv) => (
+                  <PillBtn
+                    key={inv.id}
+                    active={form.investorId === inv.id}
+                    disabled={isEdit}
+                    onClick={() => setForm((f) => ({ ...f, investorId: inv.id }))}
+                  >
+                    {inv.name}
+                  </PillBtn>
+                ))}
             </div>
             {isEdit && (
               <p className="mt-1.5 text-[11px] text-white/25">
@@ -630,8 +716,6 @@ function AporteModal({
               </p>
             )}
           </div>
-
-          {/* Monto */}
           <div>
             <label className="ui-field-label">Monto</label>
             <input
@@ -645,35 +729,29 @@ function AporteModal({
               required
             />
           </div>
-
-          {/* Cuenta destino */}
           <div>
             <label className="ui-field-label">Cuenta destino</label>
             <div className="mt-1.5 flex flex-wrap gap-2">
-              {METHOD_OPTIONS.map((opt) => (
+              {ACCOUNT_OPTIONS.map((opt) => (
                 <PillBtn
                   key={opt.value}
-                  active={form.method === opt.value}
-                  onClick={() => setForm((f) => ({ ...f, method: opt.value }))}
+                  active={form.account === opt.value}
+                  onClick={() => setForm((f) => ({ ...f, account: opt.value }))}
                 >
                   {opt.label}
                 </PillBtn>
               ))}
             </div>
           </div>
-
-          {/* Fecha */}
           <div>
             <label className="ui-field-label">Fecha</label>
             <input
               type="date"
-              value={form.date}
-              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+              value={form.contributedAt}
+              onChange={(e) => setForm((f) => ({ ...f, contributedAt: e.target.value }))}
               className="ui-input mt-1.5"
             />
           </div>
-
-          {/* Notas */}
           <div>
             <label className="ui-field-label">Notas (opcional)</label>
             <textarea
@@ -684,17 +762,16 @@ function AporteModal({
               className="ui-input mt-1.5 resize-none"
             />
           </div>
-
           <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4">
-            <button type="button" onClick={handleClose} className="ui-btn-ghost px-4 py-2">
+            <button type="button" onClick={onClose} className="ui-btn-ghost px-4 py-2">
               Cancelar
             </button>
             <button
               type="submit"
-              disabled={!canSubmit}
+              disabled={!canSubmit || saving}
               className="ui-btn-primary px-5 py-2 disabled:opacity-50"
             >
-              {isEdit ? 'Guardar cambios' : 'Registrar aporte'}
+              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Registrar aporte'}
             </button>
           </div>
         </form>
@@ -703,20 +780,20 @@ function AporteModal({
   );
 }
 
-// ─── Retiro Modal ─────────────────────────────────────────────────────────────
+// ─── RetiroModal ──────────────────────────────────────────────────────────────
 
 type RetiroForm = {
-  investorId: InvestorId | '';
+  investorId: string;
   amount: string;
-  method: CapitalMethod | '';
+  account: CapitalAccount | '';
   paidAt: string;
   notes: string;
 };
 
-const EMPTY_RETIRO_FORM: RetiroForm = {
+const EMPTY_RETIRO: RetiroForm = {
   investorId: '',
   amount: '',
-  method: '',
+  account: '',
   paidAt: todayIso(),
   notes: '',
 };
@@ -724,40 +801,36 @@ const EMPTY_RETIRO_FORM: RetiroForm = {
 function RetiroModal({
   open,
   editing,
-  pendingByInvestor,
+  investors,
   onClose,
   onSave,
 }: {
   open: boolean;
-  editing: Retiro | null;
-  pendingByInvestor: Record<InvestorId, number>;
+  editing: CapitalDistribution | null;
+  investors: CapitalInvestorBalance[];
   onClose: () => void;
-  onSave: (data: Omit<Retiro, 'id'>) => void;
+  onSave: (form: RetiroForm) => Promise<void>;
 }) {
-  const [form, setForm] = useState<RetiroForm>(EMPTY_RETIRO_FORM);
+  const [form, setForm] = useState<RetiroForm>(EMPTY_RETIRO);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  if (open && editing && form.amount === '' && !form.investorId) {
-    setForm({
-      investorId: editing.investorId,
-      amount: String(editing.amount),
-      method: editing.method,
-      paidAt: editing.paidAt,
-      notes: editing.notes ?? '',
-    });
-  }
+  useEffect(() => {
+    if (open && editing) {
+      setForm({
+        investorId: editing.investorId,
+        amount: editing.amount,
+        account: editing.account,
+        paidAt: isoToDateInput(editing.paidAt),
+        notes: editing.notes ?? '',
+      });
+    } else if (!open) {
+      setForm(EMPTY_RETIRO);
+      setError(null);
+    }
+  }, [open, editing]);
 
-  function reset() {
-    setForm(EMPTY_RETIRO_FORM);
-    setError(null);
-  }
-
-  function handleClose() {
-    reset();
-    onClose();
-  }
-
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.investorId) { setError('Selecciona un socio.'); return; }
     const amount = Number(form.amount);
@@ -765,25 +838,26 @@ function RetiroModal({
       setError('Ingresa un monto válido mayor a 0.');
       return;
     }
-    if (!form.method) { setError('Selecciona una cuenta.'); return; }
+    if (!form.account) { setError('Selecciona una cuenta.'); return; }
     if (!form.paidAt) { setError('Selecciona una fecha.'); return; }
-    onSave({
-      investorId: form.investorId,
-      amount,
-      method: form.method,
-      paidAt: form.paidAt,
-      notes: form.notes.trim() || null,
-    });
-    reset();
+    setSaving(true);
+    try {
+      await onSave(form);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error al guardar.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!open) return null;
 
   const isEdit = editing !== null;
   const amountNum = Number(form.amount) || 0;
-  const pending = form.investorId ? (pendingByInvestor[form.investorId] ?? 0) : null;
+  const selectedInvestor = investors.find((i) => i.id === form.investorId);
+  const pending = selectedInvestor ? Number(selectedInvestor.pendingProfit) : null;
   const overage = pending !== null && amountNum > pending ? amountNum - pending : 0;
-  const canSubmit = !!form.investorId && amountNum > 0 && !!form.method && !!form.paidAt;
+  const canSubmit = !!form.investorId && amountNum > 0 && !!form.account && !!form.paidAt;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
@@ -791,10 +865,9 @@ function RetiroModal({
         type="button"
         aria-label="Cerrar"
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={handleClose}
+        onClick={onClose}
       />
       <div className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 shadow-2xl backdrop-blur">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
             <h2 className="text-base font-semibold tracking-tight">
@@ -808,44 +881,46 @@ function RetiroModal({
           </div>
           <button
             type="button"
-            onClick={handleClose}
-            className="rounded-lg p-1.5 text-white/40 hover:bg-white/8 hover:text-white transition"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-white/40 transition hover:bg-white/8 hover:text-white"
           >
             ✕
           </button>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
           {error && (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {error}
             </div>
           )}
-
-          {/* Socio */}
           <div>
             <label className="ui-field-label">Socio</label>
-            <div className="mt-1.5 flex gap-2">
-              {INVESTORS.map((inv) => (
-                <PillBtn
-                  key={inv.id}
-                  active={form.investorId === inv.id}
-                  disabled={isEdit}
-                  onClick={() => setForm((f) => ({ ...f, investorId: inv.id }))}
-                >
-                  {inv.name}
-                </PillBtn>
-              ))}
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {investors
+                .filter((i) => i.isActive || form.investorId === i.id)
+                .map((inv) => (
+                  <PillBtn
+                    key={inv.id}
+                    active={form.investorId === inv.id}
+                    disabled={isEdit}
+                    onClick={() => setForm((f) => ({ ...f, investorId: inv.id }))}
+                  >
+                    {inv.name}
+                  </PillBtn>
+                ))}
             </div>
-            {/* Pending context */}
             {pending !== null && form.investorId && !isEdit && (
               <p className="mt-1.5 text-[11px] text-white/30">
-                Por cobrar: <span className="text-emerald-400/80">{fmtMxn(pending)}</span>
+                Por cobrar:{' '}
+                <span className="text-emerald-400/80">{fmtMxn(String(pending))}</span>
+              </p>
+            )}
+            {isEdit && (
+              <p className="mt-1.5 text-[11px] text-white/25">
+                El socio no se puede cambiar. Elimina y crea un nuevo retiro si es necesario.
               </p>
             )}
           </div>
-
-          {/* Monto */}
           <div>
             <label className="ui-field-label">Monto</label>
             <input
@@ -858,31 +933,27 @@ function RetiroModal({
               className="ui-input mt-1.5"
               required
             />
-            {/* Overpayment warning */}
             {overage > 0 && (
               <p className="mt-1.5 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-[11px] text-amber-200/80">
-                ⚠ Este retiro supera la utilidad pendiente de {investorName(form.investorId as InvestorId)} por {fmtMxn(overage)}.
+                ⚠ Este retiro supera la utilidad pendiente de {selectedInvestor?.name ?? ''} por{' '}
+                {fmtMxn(overage)}.
               </p>
             )}
           </div>
-
-          {/* Cuenta origen */}
           <div>
             <label className="ui-field-label">Cuenta origen</label>
             <div className="mt-1.5 flex flex-wrap gap-2">
-              {METHOD_OPTIONS.map((opt) => (
+              {ACCOUNT_OPTIONS.map((opt) => (
                 <PillBtn
                   key={opt.value}
-                  active={form.method === opt.value}
-                  onClick={() => setForm((f) => ({ ...f, method: opt.value }))}
+                  active={form.account === opt.value}
+                  onClick={() => setForm((f) => ({ ...f, account: opt.value }))}
                 >
                   {opt.label}
                 </PillBtn>
               ))}
             </div>
           </div>
-
-          {/* Fecha */}
           <div>
             <label className="ui-field-label">Fecha del retiro</label>
             <input
@@ -892,8 +963,6 @@ function RetiroModal({
               className="ui-input mt-1.5"
             />
           </div>
-
-          {/* Notas */}
           <div>
             <label className="ui-field-label">Notas (opcional)</label>
             <textarea
@@ -904,17 +973,16 @@ function RetiroModal({
               className="ui-input mt-1.5 resize-none"
             />
           </div>
-
           <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4">
-            <button type="button" onClick={handleClose} className="ui-btn-ghost px-4 py-2">
+            <button type="button" onClick={onClose} className="ui-btn-ghost px-4 py-2">
               Cancelar
             </button>
             <button
               type="submit"
-              disabled={!canSubmit}
+              disabled={!canSubmit || saving}
               className="ui-btn-primary px-5 py-2 disabled:opacity-50"
             >
-              {isEdit ? 'Guardar cambios' : 'Registrar retiro'}
+              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Registrar retiro'}
             </button>
           </div>
         </form>
@@ -926,86 +994,231 @@ function RetiroModal({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CapitalPage() {
-  // ── State ───────────────────────────────────────────────────────────────────
-  const [aportes, setAportes] = useState<Aporte[]>(INITIAL_APORTES);
-  const [retiros, setRetiros] = useState<Retiro[]>(INITIAL_RETIROS);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<CapitalSummary | null>(null);
+  const [contributions, setContributions] = useState<CapitalContribution[]>([]);
+  const [distributions, setDistributions] = useState<CapitalDistribution[]>([]);
   const [activeTab, setActiveTab] = useState<'aportes' | 'retiros'>('aportes');
 
-  const [aporteModal, setAporteModal] = useState<{ open: boolean; editing: Aporte | null }>({
-    open: false, editing: null,
-  });
-  const [retiroModal, setRetiroModal] = useState<{ open: boolean; editing: Retiro | null }>({
-    open: false, editing: null,
-  });
-
+  const [aporteModal, setAporteModal] = useState<{
+    open: boolean;
+    editing: CapitalContribution | null;
+  }>({ open: false, editing: null });
+  const [retiroModal, setRetiroModal] = useState<{
+    open: boolean;
+    editing: CapitalDistribution | null;
+  }>({ open: false, editing: null });
+  const [setupModal, setSetupModal] = useState(false);
   const [deletingAporteId, setDeletingAporteId] = useState<string | null>(null);
   const [deletingRetiroId, setDeletingRetiroId] = useState<string | null>(null);
 
-  // ── Computed values ─────────────────────────────────────────────────────────
-  const totalCapitalContributed = aportes.reduce((sum, a) => sum + a.amount, 0);
-  const totalDistributionsPaid  = retiros.reduce((sum, r) => sum + r.amount, 0);
+  // ── Data loading ─────────────────────────────────────────────────────────────
 
-  const investorBalances = INVESTORS.map((inv) => {
-    const capitalContributed = aportes
-      .filter((a) => a.investorId === inv.id)
-      .reduce((sum, a) => sum + a.amount, 0);
-    const profitEntitlement = TOTAL_BUSINESS_PROFIT * inv.sharePercent / 100;
-    const distributionsPaid = retiros
-      .filter((r) => r.investorId === inv.id)
-      .reduce((sum, r) => sum + r.amount, 0);
-    const pendingProfit = profitEntitlement - distributionsPaid;
-    return { ...inv, capitalContributed, profitEntitlement, distributionsPaid, pendingProfit };
-  });
-
-  const totalPendingToPartners = investorBalances.reduce((sum, inv) => sum + inv.pendingProfit, 0);
-  const capitalNeto = totalCapitalContributed + TOTAL_BUSINESS_PROFIT - totalDistributionsPaid;
-
-  const pendingByInvestor: Record<InvestorId, number> = {
-    cesar: investorBalances.find((i) => i.id === 'cesar')?.pendingProfit ?? 0,
-    edgar: investorBalances.find((i) => i.id === 'edgar')?.pendingProfit ?? 0,
-  };
-
-  // ── Handlers ────────────────────────────────────────────────────────────────
-  function handleSaveAporte(data: Omit<Aporte, 'id'>) {
-    if (aporteModal.editing) {
-      setAportes((prev) => prev.map((a) =>
-        a.id === aporteModal.editing!.id ? { ...a, ...data } : a,
-      ));
-    } else {
-      setAportes((prev) => [
-        { id: `a${Date.now()}`, ...data },
-        ...prev,
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [summaryData, contribData, distroData] = await Promise.all([
+        getCapitalSummary(),
+        listCapitalContributions(),
+        listCapitalDistributions(),
       ]);
+      setSummary(summaryData);
+      setContributions(contribData);
+      setDistributions(distroData);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error cargando datos de capital.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // ── Derived ──────────────────────────────────────────────────────────────────
+
+  const investors = summary?.investors ?? [];
+  const primaryInvestorId = investors[0]?.id;
+  const activeOwnershipSum = investors
+    .filter((i) => i.isActive)
+    .reduce((sum, i) => sum + Number(i.ownershipPercent), 0);
+  const showOwnershipWarning =
+    investors.length > 0 && Math.abs(activeOwnershipSum - 100) > 0.01;
+
+  // ── Mutation handlers ────────────────────────────────────────────────────────
+
+  async function handleSaveAporte(form: AporteForm) {
+    if (aporteModal.editing) {
+      await updateCapitalContribution(aporteModal.editing.id, {
+        amount: Number(form.amount),
+        account: form.account as CapitalAccount,
+        contributedAt: form.contributedAt,
+        notes: form.notes.trim() || undefined,
+      });
+    } else {
+      await createCapitalContribution({
+        investorId: form.investorId,
+        amount: Number(form.amount),
+        account: form.account as CapitalAccount,
+        contributedAt: form.contributedAt,
+        notes: form.notes.trim() || undefined,
+      });
     }
     setAporteModal({ open: false, editing: null });
+    await loadData();
   }
 
-  function handleSaveRetiro(data: Omit<Retiro, 'id'>) {
+  async function handleSaveRetiro(form: RetiroForm) {
     if (retiroModal.editing) {
-      setRetiros((prev) => prev.map((r) =>
-        r.id === retiroModal.editing!.id ? { ...r, ...data } : r,
-      ));
+      await updateCapitalDistribution(retiroModal.editing.id, {
+        amount: Number(form.amount),
+        account: form.account as CapitalAccount,
+        paidAt: form.paidAt,
+        notes: form.notes.trim() || undefined,
+      });
     } else {
-      setRetiros((prev) => [
-        { id: `r${Date.now()}`, ...data },
-        ...prev,
-      ]);
+      await createCapitalDistribution({
+        investorId: form.investorId,
+        amount: Number(form.amount),
+        account: form.account as CapitalAccount,
+        paidAt: form.paidAt,
+        notes: form.notes.trim() || undefined,
+      });
     }
     setRetiroModal({ open: false, editing: null });
+    await loadData();
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  async function handleDeleteAporte(id: string) {
+    try {
+      await deleteCapitalContribution(id);
+      setDeletingAporteId(null);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error eliminando aporte.');
+      setDeletingAporteId(null);
+    }
+  }
+
+  async function handleDeleteRetiro(id: string) {
+    try {
+      await deleteCapitalDistribution(id);
+      setDeletingRetiroId(null);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error eliminando retiro.');
+      setDeletingRetiroId(null);
+    }
+  }
+
+  async function handleCreateInvestor(form: SetupForm) {
+    await createCapitalInvestor({
+      name: form.name.trim(),
+      ownershipPercent: Number(form.ownershipPercent),
+      notes: form.notes.trim() || undefined,
+    });
+    setSetupModal(false);
+    await loadData();
+  }
+
+  // ── Loading skeleton ─────────────────────────────────────────────────────────
+
+  if (loading && !summary) {
+    return (
+      <div className="ui-page">
+        <header className="ui-page-header">
+          <div>
+            <h1 className="ui-title">Capital de socios</h1>
+            <p className="ui-subtitle">Aportes, retiros y utilidades de los socios del negocio.</p>
+          </div>
+        </header>
+        <div className="flex items-center justify-center py-32">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-emerald-400" />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Fatal error state ────────────────────────────────────────────────────────
+
+  if (error && !summary) {
+    return (
+      <div className="ui-page">
+        <header className="ui-page-header">
+          <div>
+            <h1 className="ui-title">Capital de socios</h1>
+            <p className="ui-subtitle">Aportes, retiros y utilidades de los socios del negocio.</p>
+          </div>
+        </header>
+        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 px-5 py-10 text-center">
+          <p className="text-sm text-rose-300">{error}</p>
+          <button
+            type="button"
+            onClick={loadData}
+            className="mt-4 rounded-lg border border-white/10 px-4 py-2 text-sm text-white/60 transition hover:border-white/20 hover:text-white"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── First-run empty state ────────────────────────────────────────────────────
+
+  if (!loading && summary && investors.length === 0) {
+    return (
+      <div className="ui-page">
+        <header className="ui-page-header">
+          <div>
+            <h1 className="ui-title">Capital de socios</h1>
+            <p className="ui-subtitle">Aportes, retiros y utilidades de los socios del negocio.</p>
+          </div>
+        </header>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-panel/50 px-6 py-24 text-center">
+          <p className="text-lg font-semibold text-white/60">Sin socios configurados</p>
+          <p className="mt-2 max-w-sm text-sm text-white/35">
+            Configura los socios del negocio para empezar a registrar aportes, retiros y calcular
+            utilidades.
+          </p>
+          <button
+            type="button"
+            onClick={() => setSetupModal(true)}
+            className="ui-btn-primary mt-6 px-5 py-2"
+          >
+            Configurar socios
+          </button>
+        </div>
+        <InvestorSetupModal
+          open={setupModal}
+          onClose={() => setSetupModal(false)}
+          onSave={handleCreateInvestor}
+        />
+      </div>
+    );
+  }
+
+  // ── Main view ────────────────────────────────────────────────────────────────
+
+  const s = summary!;
+
   return (
     <div className="ui-page">
       {/* Header */}
       <header className="ui-page-header">
         <div>
           <h1 className="ui-title">Capital de socios</h1>
-          <p className="ui-subtitle">
-            Aportes, retiros y utilidades de los socios del negocio.
-          </p>
+          <p className="ui-subtitle">Aportes, retiros y utilidades de los socios del negocio.</p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            type="button"
+            className="ui-btn-ghost px-3 py-2 text-sm"
+            onClick={() => setSetupModal(true)}
+          >
+            + Socio
+          </button>
           <button
             type="button"
             className="ui-btn-secondary px-4 py-2"
@@ -1023,35 +1236,61 @@ export default function CapitalPage() {
         </div>
       </header>
 
+      {/* Inline error banner (mutation errors) */}
+      {error && (
+        <div className="flex items-center justify-between rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+          <p className="text-sm text-rose-200">{error}</p>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="ml-4 text-sm text-rose-300 transition hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Ownership sum warning */}
+      {showOwnershipWarning && (
+        <div className="rounded-xl border border-amber-500/25 bg-amber-500/8 px-4 py-3">
+          <p className="text-[12px] text-amber-200/80">
+            Los porcentajes activos suman {activeOwnershipSum.toFixed(2)}%. Para asignar el 100%
+            de las utilidades deben sumar 100%.
+          </p>
+        </div>
+      )}
+
       {/* Summary hero */}
       <CapitalHero
-        totalCapitalContributed={totalCapitalContributed}
-        totalDistributionsPaid={totalDistributionsPaid}
-        totalPendingToPartners={totalPendingToPartners}
-        capitalNeto={capitalNeto}
+        totalCapitalContributed={s.totalCapitalContributed}
+        totalBusinessProfit={s.totalBusinessProfit}
+        totalDistributionsPaid={s.totalDistributionsPaid}
+        totalPendingToPartners={s.totalPendingToPartners}
+        capitalNeto={s.capitalNeto}
       />
 
       {/* Investor cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {investorBalances.map((inv) => (
-          <InvestorCard key={inv.id} {...inv} />
+        {investors.map((inv, idx) => (
+          <InvestorCard key={inv.id} investor={inv} isPrimary={idx === 0} />
         ))}
       </div>
 
       {/* Tabs + Tables */}
       <div className="space-y-4">
-        {/* Tab bar */}
         <div className="border-b border-white/10">
           <nav className="-mb-px flex gap-1">
-            {([
-              { id: 'aportes' as const, label: 'Aportes', count: aportes.length },
-              { id: 'retiros' as const, label: 'Retiros', count: retiros.length },
-            ] as const).map((tab) => (
+            {(
+              [
+                { id: 'aportes' as const, label: 'Aportes', count: contributions.length },
+                { id: 'retiros' as const, label: 'Retiros', count: distributions.length },
+              ] as const
+            ).map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition whitespace-nowrap ${
+                className={`shrink-0 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition ${
                   activeTab === tab.id
                     ? 'border-emerald-400 text-emerald-400'
                     : 'border-transparent text-muted hover:text-white'
@@ -1066,32 +1305,26 @@ export default function CapitalPage() {
           </nav>
         </div>
 
-        {/* Aportes tab */}
         {activeTab === 'aportes' && (
           <AportesTable
-            aportes={aportes}
+            contributions={contributions}
+            primaryInvestorId={primaryInvestorId}
             deletingId={deletingAporteId}
-            onEdit={(a) => setAporteModal({ open: true, editing: a })}
+            onEdit={(c) => setAporteModal({ open: true, editing: c })}
             onDeleteRequest={setDeletingAporteId}
-            onDeleteConfirm={(id) => {
-              setAportes((prev) => prev.filter((a) => a.id !== id));
-              setDeletingAporteId(null);
-            }}
+            onDeleteConfirm={handleDeleteAporte}
             onDeleteCancel={() => setDeletingAporteId(null)}
           />
         )}
 
-        {/* Retiros tab */}
         {activeTab === 'retiros' && (
           <RetirosTable
-            retiros={retiros}
+            distributions={distributions}
+            primaryInvestorId={primaryInvestorId}
             deletingId={deletingRetiroId}
-            onEdit={(r) => setRetiroModal({ open: true, editing: r })}
+            onEdit={(d) => setRetiroModal({ open: true, editing: d })}
             onDeleteRequest={setDeletingRetiroId}
-            onDeleteConfirm={(id) => {
-              setRetiros((prev) => prev.filter((r) => r.id !== id));
-              setDeletingRetiroId(null);
-            }}
+            onDeleteConfirm={handleDeleteRetiro}
             onDeleteCancel={() => setDeletingRetiroId(null)}
           />
         )}
@@ -1101,6 +1334,7 @@ export default function CapitalPage() {
       <AporteModal
         open={aporteModal.open}
         editing={aporteModal.editing}
+        investors={investors}
         onClose={() => setAporteModal({ open: false, editing: null })}
         onSave={handleSaveAporte}
       />
@@ -1108,9 +1342,15 @@ export default function CapitalPage() {
       <RetiroModal
         open={retiroModal.open}
         editing={retiroModal.editing}
-        pendingByInvestor={pendingByInvestor}
+        investors={investors}
         onClose={() => setRetiroModal({ open: false, editing: null })}
         onSave={handleSaveRetiro}
+      />
+
+      <InvestorSetupModal
+        open={setupModal}
+        onClose={() => setSetupModal(false)}
+        onSave={handleCreateInvestor}
       />
     </div>
   );
