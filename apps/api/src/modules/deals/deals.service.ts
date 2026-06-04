@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FxService } from '../fx/fx.service';
+import { AddPaymentDto } from './dto/add-payment.dto';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
 import { RegisterSaleDto } from './dto/register-sale.dto';
@@ -348,6 +349,89 @@ export class DealsService {
       computedStatus,
       notes: deal.notes,
       createdAt: deal.createdAt.toISOString(),
+    };
+  }
+
+  async addPayment(dealId: string, tenantId: string, dto: AddPaymentDto) {
+    const deal = await this.prisma.deal.findFirst({
+      where: { id: dealId, tenantId, deletedAt: null },
+      select: { id: true, agreedPrice: true, stage: true },
+    });
+    if (!deal) throw new NotFoundException('Deal not found');
+    if (deal.stage !== DealStage.CLOSED_WON) {
+      throw new BadRequestException('Payments can only be added to CLOSED_WON deals');
+    }
+
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paymentAmount = new Prisma.Decimal(dto.amount);
+
+    const BANK_RATES: Record<'JOSE' | 'MAYTE', number> = {
+      JOSE: 0.02,
+      MAYTE: 0.01,
+    };
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          tenant: { connect: { id: tenantId } },
+          deal: { connect: { id: dealId } },
+          amount: paymentAmount,
+          method: dto.method as PaymentMethod,
+          status: PaymentStatus.PAID,
+          paidAt,
+          notes: dto.notes ?? null,
+        },
+      });
+
+      let bankFeeExpense: { amount: Prisma.Decimal } | null = null;
+      if (dto.method === 'BANCOS' && dto.bankChannel) {
+        const bankRate = BANK_RATES[dto.bankChannel];
+        const feeAmount = paymentAmount.mul(new Prisma.Decimal(bankRate));
+        const pct = (bankRate * 100).toFixed(0);
+        bankFeeExpense = await tx.operatingExpense.create({
+          data: {
+            tenant: { connect: { id: tenantId } },
+            deal: { connect: { id: dealId } },
+            category: OperatingExpenseCategory.BANK_FEES,
+            amount: feeAmount,
+            expenseDate: paidAt,
+            notes: `Comisión ${dto.bankChannel} ${pct}% — venta ${dealId}`,
+          },
+        });
+      }
+
+      return { payment, bankFeeExpense };
+    });
+
+    // Compute updated payment summary
+    const paidAgg = await this.prisma.payment.aggregate({
+      where: { tenantId, dealId, status: PaymentStatus.PAID, deletedAt: null },
+      _sum: { amount: true },
+    });
+    const paidTotal = paidAgg._sum.amount ?? new Prisma.Decimal(0);
+    const rawPending = deal.agreedPrice.minus(paidTotal);
+    const pendingAmount = rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
+    const computedStatus =
+      paidTotal.gte(deal.agreedPrice) ? 'PAGADO' :
+      paidTotal.greaterThan(0) ? 'PARCIAL' :
+      'PENDIENTE';
+
+    const { payment, bankFeeExpense } = result;
+    const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
+
+    return {
+      payment: {
+        id: payment.id,
+        amount: payment.amount.toString(),
+        method: payment.method,
+        status: payment.status,
+        paidAt: payment.paidAt?.toISOString() ?? null,
+        notes: payment.notes,
+      },
+      bankFee: bankFeeExpense ? bankFeeDecimal.toString() : null,
+      paidTotal: paidTotal.toString(),
+      pendingAmount: pendingAmount.toString(),
+      computedStatus,
     };
   }
 
