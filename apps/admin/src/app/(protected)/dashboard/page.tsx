@@ -87,7 +87,7 @@ function FinancialPositionHero({
     },
     {
       label: 'Por pagar socios',
-      value: pendingToPartners !== null ? (pendingPartners > 0 ? fmtMxn(pendingPartners) : '—') : '—',
+      value: pendingToPartners !== null ? fmtMxn(pendingPartners) : '—',
       tone: pendingToPartners !== null && pendingPartners > 0 ? ('negative' as const) : ('muted' as const),
     },
   ];
