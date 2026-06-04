@@ -24,15 +24,11 @@ export class RegisterSaleDto {
   @Min(0.01, { message: 'salePrice must be greater than 0' })
   salePrice!: number;
 
-  @IsIn(['CASH', 'BANCOS', 'CESAR'], {
-    message: 'paymentMethod must be one of: CASH, BANCOS, CESAR',
-  })
-  paymentMethod!: 'CASH' | 'BANCOS' | 'CESAR';
-
-  @ValidateIf((o: RegisterSaleDto) => o.paymentMethod === 'BANCOS')
-  @IsNotEmpty({ message: 'bankChannel is required when paymentMethod is BANCOS' })
-  @IsIn(['JOSE', 'MAYTE'], { message: 'bankChannel must be JOSE or MAYTE' })
-  bankChannel?: 'JOSE' | 'MAYTE';
+  // Optional for backwards compatibility: existing callers omit this field and
+  // the service defaults to 'MXN'. Frontend sends it explicitly.
+  @IsOptional()
+  @IsIn(['MXN', 'USD'], { message: 'currency must be MXN or USD' })
+  currency?: 'MXN' | 'USD';
 
   @IsOptional()
   @IsDateString()
@@ -42,9 +38,46 @@ export class RegisterSaleDto {
   @IsString()
   notes?: string;
 
-  // Optional for backwards compatibility: existing callers omit this field and
-  // the service defaults to 'MXN'. Commit 5 (frontend) will send it explicitly.
+  // ── Initial payment (new partial-payment fields) ──────────────────────────
+
   @IsOptional()
-  @IsIn(['MXN', 'USD'], { message: 'currency must be MXN or USD' })
-  currency?: 'MXN' | 'USD';
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  initialPaymentAmount?: number;
+
+  // Required when initialPaymentAmount > 0
+  @ValidateIf(
+    (o: RegisterSaleDto) =>
+      o.initialPaymentAmount !== undefined && o.initialPaymentAmount > 0,
+  )
+  @IsNotEmpty({ message: 'initialPaymentMethod is required when initialPaymentAmount > 0' })
+  @IsIn(['CASH', 'BANCOS', 'CESAR'], {
+    message: 'initialPaymentMethod must be one of: CASH, BANCOS, CESAR',
+  })
+  initialPaymentMethod?: 'CASH' | 'BANCOS' | 'CESAR';
+
+  @IsOptional()
+  @IsDateString()
+  initialPaymentDate?: string;
+
+  // Required when initialPaymentMethod === BANCOS
+  @ValidateIf(
+    (o: RegisterSaleDto) =>
+      o.initialPaymentMethod === 'BANCOS' ||
+      o.paymentMethod === 'BANCOS',
+  )
+  @IsNotEmpty({ message: 'bankChannel is required when payment method is BANCOS' })
+  @IsIn(['JOSE', 'MAYTE'], { message: 'bankChannel must be JOSE or MAYTE' })
+  bankChannel?: 'JOSE' | 'MAYTE';
+
+  // ── Legacy field (deprecated) ──────────────────────────────────────────────
+  // Old callers send paymentMethod without initialPaymentAmount.
+  // The service treats this as a full payment for backwards compatibility.
+  // Do not remove until all callers have migrated.
+  @IsOptional()
+  @IsIn(['CASH', 'BANCOS', 'CESAR'], {
+    message: 'paymentMethod must be one of: CASH, BANCOS, CESAR',
+  })
+  paymentMethod?: 'CASH' | 'BANCOS' | 'CESAR';
 }

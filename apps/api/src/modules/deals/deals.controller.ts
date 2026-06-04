@@ -15,6 +15,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { PaymentsService } from '../payments/payments.service';
+import { AddPaymentDto } from './dto/add-payment.dto';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
 import { RegisterSaleDto } from './dto/register-sale.dto';
@@ -56,6 +57,15 @@ export class DealsController {
   @Get(':id/payment-summary')
   paymentSummary(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
     return this.paymentsService.getDealPaymentSummary(id, user.tenantId);
+  }
+
+  @Post(':id/payments')
+  addPayment(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') id: string,
+    @Body() dto: AddPaymentDto,
+  ) {
+    return this.dealsService.addPayment(id, user.tenantId, dto);
   }
 
   @Patch(':id')

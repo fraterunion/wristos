@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DealStage, OperatingExpenseCategory, Prisma, Watch, WatchExpense, WatchStatus } from '@prisma/client';
+import { DealStage, OperatingExpenseCategory, PaymentStatus, Prisma, Watch, WatchExpense, WatchStatus } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -65,13 +65,25 @@ export class HistoryService {
     });
 
     return deals.map((deal) => {
-      // Sum BANK_FEES linked to this deal via FK (dealId).
-      // Existing rows with no dealId will contribute zero (empty array).
+      // Bank fees: sum BANK_FEES expenses linked to this deal via dealId FK.
       const bankFeeDecimal = deal.operatingExpenses.reduce(
         (acc, e) => acc.plus(e.amount),
         new Prisma.Decimal(0),
       );
       const netReceivedDecimal = deal.agreedPrice.minus(bankFeeDecimal);
+
+      // Payment summary computed from the payments already loaded.
+      // The payments query has `where: { deletedAt: null }` so all are active.
+      const paidTotal = deal.payments
+        .filter((p) => p.status === PaymentStatus.PAID)
+        .reduce((acc, p) => acc.plus(p.amount), new Prisma.Decimal(0));
+      const rawPending = deal.agreedPrice.minus(paidTotal);
+      const pendingAmount = rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
+      const computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE' =
+        paidTotal.gte(deal.agreedPrice) ? 'PAGADO' :
+        paidTotal.greaterThan(0) ? 'PARCIAL' :
+        'PENDIENTE';
+      const paymentMethods = [...new Set(deal.payments.map((p) => p.method as string))];
 
       return {
         dealId: deal.id,
@@ -88,6 +100,10 @@ export class HistoryService {
         exchangeRate: deal.exchangeRate?.toString() ?? null,
         bankFee: bankFeeDecimal.greaterThan(0) ? bankFeeDecimal.toString() : null,
         netReceived: netReceivedDecimal.toString(),
+        paidTotal: paidTotal.toString(),
+        pendingAmount: pendingAmount.toString(),
+        computedStatus,
+        paymentMethods,
         notes: deal.notes,
         soldAt: deal.updatedAt.toISOString(),
         createdAt: deal.createdAt.toISOString(),
