@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -19,6 +21,7 @@ import {
   AnalyticsPeriod,
   AnalyticsSummary,
   RevenueOverTimePoint,
+  SalesOverTimePoint,
 } from '@/types/domain';
 
 type DashboardData = {
@@ -379,6 +382,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<AnalyticsPeriod>('month');
   const [revenueSeries, setRevenueSeries] = useState<RevenueOverTimePoint[]>([]);
+  const [salesSeries, setSalesSeries] = useState<SalesOverTimePoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
 
   const [fxRate, setFxRate] = useState<FxRateResult | null>(null);
@@ -420,13 +424,21 @@ export default function DashboardPage() {
     const fetchChartData = async () => {
       setChartLoading(true);
       try {
-        const revenueData = await apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
-          authenticated: true,
-          query: { period },
-        });
+        const [revenueData, salesData] = await Promise.all([
+          apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
+            authenticated: true,
+            query: { period },
+          }),
+          apiGet<SalesOverTimePoint[]>('/analytics/sales-over-time', {
+            authenticated: true,
+            query: { period },
+          }),
+        ]);
         setRevenueSeries(revenueData);
+        setSalesSeries(salesData);
       } catch {
         setRevenueSeries([]);
+        setSalesSeries([]);
       } finally {
         setChartLoading(false);
       }
@@ -465,16 +477,6 @@ export default function DashboardPage() {
       </section>
     );
   }
-
-  const profitThisMonthNum = num(data.summary.profitThisMonth);
-  const salesRevenueMonth = num(data.summary.salesThisMonthRevenue);
-  const profitMargin =
-    salesRevenueMonth > 0 ? profitThisMonthNum / salesRevenueMonth : 0;
-  const profitSeries = revenueSeries.map((point) => ({
-    label: point.label,
-    profit: Number((point.revenue * profitMargin).toFixed(2)),
-  }));
-  const hasProfitSeries = profitSeries.some((point) => point.profit !== 0);
 
   return (
     <section className="ui-page">
@@ -518,7 +520,7 @@ export default function DashboardPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <ExecutiveSectionTitle
             title="Analytics"
-            subtitle="Tendencias de ingresos, utilidad y flujo de caja."
+            subtitle="Tendencias de ingresos, ventas y flujo de caja."
           />
           <div className="rounded-lg border border-white/10 bg-panel p-1">
             {(['week', 'month', 'year'] as const).map((option) => (
@@ -593,20 +595,14 @@ export default function DashboardPage() {
 
           <article className="ui-card min-h-[320px]">
             <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
-              Utilidad en el tiempo
+              Relojes vendidos en el tiempo
             </h4>
             <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
                 <div className="h-full animate-pulse rounded-lg bg-white/10" />
-              ) : hasProfitSeries ? (
+              ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={profitSeries}>
-                    <defs>
-                      <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#34d399" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
+                  <BarChart data={salesSeries}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                     <XAxis
                       dataKey="label"
@@ -615,12 +611,7 @@ export default function DashboardPage() {
                       axisLine={false}
                       minTickGap={24}
                     />
-                    <YAxis
-                      stroke="#737373"
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(value) => `$${Number(value) / 1000}k`}
-                    />
+                    <YAxis stroke="#737373" tickLine={false} axisLine={false} allowDecimals={false} />
                     <Tooltip
                       contentStyle={{
                         background: '#171717',
@@ -628,24 +619,10 @@ export default function DashboardPage() {
                         borderRadius: 8,
                         color: '#FAFAFA',
                       }}
-                      formatter={(value) => fmtMxn(Number(value))}
                     />
-                    <Area
-                      type="monotone"
-                      dataKey="profit"
-                      stroke="#34d399"
-                      strokeWidth={1.5}
-                      fill="url(#profitGradient)"
-                    />
-                  </AreaChart>
+                    <Bar dataKey="count" fill="#34d399" radius={[8, 8, 0, 0]} barSize={22} />
+                  </BarChart>
                 </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-white/10 bg-black/20 px-4 text-center">
-                  <p className="text-sm text-white/40">Sin datos de utilidad en el período</p>
-                  <p className="mt-1 text-[11px] text-white/25">
-                    Ingresos − costo − comisiones bancarias
-                  </p>
-                </div>
               )}
             </div>
           </article>
