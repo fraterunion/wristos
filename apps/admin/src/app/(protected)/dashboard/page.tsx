@@ -337,8 +337,8 @@ export default function DashboardPage() {
           >
             Agregar cliente
           </Link>
-          <Link href="/deals" className="ui-btn-primary px-3 py-2">
-            Crear oportunidad
+          <Link href="/ventas" className="ui-btn-primary px-3 py-2">
+            Registrar venta
           </Link>
         </div>
       </header>
