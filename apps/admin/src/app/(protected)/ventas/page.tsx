@@ -90,16 +90,18 @@ function StatusBadge({ status }: { status: ComputedStatus }) {
   );
 }
 
+const NEUTRAL_METHOD_PILL_CLS = 'border-white/[0.07] bg-white/[0.03] text-white/50';
+
 const METHOD_CONFIG: Record<string, { label: string; cls: string }> = {
-  CASH:     { label: 'Efectivo',  cls: 'border-emerald-700/50 bg-emerald-950 text-emerald-300' },
-  BANCOS:   { label: 'Bancos',    cls: 'border-white/[0.07] bg-white/[0.03] text-white/50' },
-  CESAR:    { label: 'César',     cls: 'border-white/[0.07] bg-white/[0.03] text-white/50' },
-  TRANSFER: { label: 'Transfer',  cls: 'border-white/[0.07] bg-white/[0.03] text-white/50' },
-  CARD:     { label: 'Tarjeta',   cls: 'border-white/[0.07] bg-white/[0.03] text-white/50' },
+  CASH:     { label: 'Efectivo',  cls: NEUTRAL_METHOD_PILL_CLS },
+  BANCOS:   { label: 'Bancos',    cls: NEUTRAL_METHOD_PILL_CLS },
+  CESAR:    { label: 'César',     cls: NEUTRAL_METHOD_PILL_CLS },
+  TRANSFER: { label: 'Transfer',  cls: NEUTRAL_METHOD_PILL_CLS },
+  CARD:     { label: 'Tarjeta',   cls: NEUTRAL_METHOD_PILL_CLS },
 };
 
 function MethodPill({ method }: { method: string }) {
-  const cfg = METHOD_CONFIG[method] ?? { label: method, cls: 'border-white/[0.07] bg-white/[0.03] text-white/50' };
+  const cfg = METHOD_CONFIG[method] ?? { label: method, cls: NEUTRAL_METHOD_PILL_CLS };
   return (
     <span className={`inline-flex items-center rounded-md border px-2 py-[3px] text-[10px] font-medium tracking-wide ${cfg.cls}`}>
       {cfg.label}

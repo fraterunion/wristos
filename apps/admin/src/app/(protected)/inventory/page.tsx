@@ -6,16 +6,23 @@ import { DeleteConfirmDialog } from '@/components/inventory/DeleteConfirmDialog'
 import { StatusBadge } from '@/components/inventory/StatusBadge';
 import { WatchFormModal } from '@/components/inventory/WatchFormModal';
 import { WatchImageLightbox } from '@/components/inventory/WatchImageLightbox';
-import { WATCH_STATUS_VALUES } from '@/components/inventory/watch-form-schema';
 import { apiDelete, apiGet, ApiError } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import type { Watch, WatchStatus } from '@/types/domain';
 
 type AppliedFilters = {
-  status: '' | WatchStatus;
+  status: '' | 'AVAILABLE' | 'RESERVED';
   brand: string;
   model: string;
 };
+
+const ACTIVE_INVENTORY_STATUSES: WatchStatus[] = ['AVAILABLE', 'RESERVED'];
+
+const INVENTORY_STATUS_FILTER_OPTIONS = [
+  { value: '', label: 'Todos' },
+  { value: 'AVAILABLE', label: 'Disponible' },
+  { value: 'RESERVED', label: 'Reservado' },
+] as const;
 
 function formatMoney(value: string) {
   const n = Number(value);
@@ -167,7 +174,12 @@ export default function InventoryPage() {
     }
   };
 
-  const empty = !loading && !error && watches.length === 0;
+  const visibleWatches = useMemo(
+    () => watches.filter((w) => ACTIVE_INVENTORY_STATUSES.includes(w.status)),
+    [watches],
+  );
+
+  const empty = !loading && !error && visibleWatches.length === 0;
 
   return (
     <div className="ui-page">
@@ -251,10 +263,10 @@ export default function InventoryPage() {
               }
               className="ui-input"
             >
-              <option value="">Todos los estados</option>
-              {WATCH_STATUS_VALUES.map((s) => (
-                <option key={s} value={s}>
-                  {s.replaceAll('_', ' ')}
+              <option value="">Todos</option>
+              {INVENTORY_STATUS_FILTER_OPTIONS.filter((o) => o.value !== '').map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
@@ -323,7 +335,7 @@ export default function InventoryPage() {
         </div>
       ) : null}
 
-      {!loading && !error && watches.length > 0 ? (
+      {!loading && !error && visibleWatches.length > 0 ? (
         <div className="ui-card overflow-hidden p-0">
           <div className="overflow-x-auto">
             <table className="min-w-[860px] w-full border-collapse text-left text-sm">
@@ -341,7 +353,7 @@ export default function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {watches.map((watch) => (
+                {visibleWatches.map((watch) => (
                   <tr
                     key={watch.id}
                     className="border-b border-white/5 transition duration-150 hover:bg-white/[0.05]"
