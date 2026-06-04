@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api-client';
 import {
   getFxUsdMxn,
@@ -9,6 +9,7 @@ import {
   registerSale,
   type FxRateResult,
 } from '@/lib/ventas-api';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import type { Client, SaleCurrency, VentaBankChannel, VentaPaymentMethod, Watch } from '@/types/domain';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -42,6 +43,40 @@ function fmtUsd(n: number) {
 
 function todayIso() {
   return new Date().toISOString().split('T')[0];
+}
+
+function watchReference(watch: Watch): string | null {
+  return 'reference' in watch
+    ? ((watch as Watch & { reference?: string | null }).reference ?? null)
+    : null;
+}
+
+function buildWatchOptions(watches: Watch[]) {
+  return watches
+    .map((watch) => {
+      const reference = watchReference(watch);
+      const subParts = [watch.serialNumber, reference].filter(Boolean);
+      return {
+        value: watch.id,
+        label: `${watch.brand} ${watch.model}`.trim(),
+        subLabel: subParts.length ? subParts.join(' · ') : null,
+        searchText: [watch.brand, watch.model, watch.serialNumber, reference]
+          .filter(Boolean)
+          .join(' '),
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+}
+
+function buildClientOptions(clients: Client[]) {
+  return clients
+    .map((client) => ({
+      value: client.id,
+      label: client.name,
+      subLabel: [client.email, client.phone].filter(Boolean).join(' · ') || null,
+      searchText: [client.name, client.email, client.phone].filter(Boolean).join(' '),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
 }
 
 function timeAgo(iso: string) {
@@ -162,6 +197,9 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
     !submitting && watchId && clientId && salePriceNum > 0 &&
     !usdBlocked && !needsMethod && !needsChannel;
 
+  const watchOptions = useMemo(() => buildWatchOptions(watches), [watches]);
+  const clientOptions = useMemo(() => buildClientOptions(clients), [clients]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
@@ -225,40 +263,34 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
 
           {/* Reloj */}
           <div>
-            <label className="ui-field-label">Reloj vendido</label>
-            <select
+            <label className="ui-field-label" htmlFor="register-sale-watch">
+              Reloj vendido
+            </label>
+            <SearchableSelect
+              id="register-sale-watch"
               value={watchId}
-              onChange={(e) => setWatchId(e.target.value)}
-              className="ui-input"
-              disabled={dataLoading || submitting}
-              required
-            >
-              <option value="">{dataLoading ? 'Cargando…' : 'Seleccionar reloj'}</option>
-              {watches.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.brand} {w.model}{w.serialNumber ? ` — ${w.serialNumber}` : ''}
-                </option>
-              ))}
-            </select>
+              onChange={setWatchId}
+              options={watchOptions}
+              placeholder="Seleccionar reloj"
+              disabled={submitting}
+              loading={dataLoading}
+            />
           </div>
 
           {/* Comprador */}
           <div>
-            <label className="ui-field-label">Comprador</label>
-            <select
+            <label className="ui-field-label" htmlFor="register-sale-client">
+              Comprador
+            </label>
+            <SearchableSelect
+              id="register-sale-client"
               value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="ui-input"
-              disabled={dataLoading || submitting}
-              required
-            >
-              <option value="">{dataLoading ? 'Cargando…' : 'Seleccionar comprador'}</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}{c.phone ? ` — ${c.phone}` : ''}
-                </option>
-              ))}
-            </select>
+              onChange={setClientId}
+              options={clientOptions}
+              placeholder="Seleccionar comprador"
+              disabled={submitting}
+              loading={dataLoading}
+            />
           </div>
 
           {/* Moneda */}
