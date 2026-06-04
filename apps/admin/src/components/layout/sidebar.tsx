@@ -1,18 +1,30 @@
 'use client';
 
 import Link from 'next/link';
+import {
+  Bot,
+  Boxes,
+  History,
+  LayoutDashboard,
+  Radar,
+  ReceiptText,
+  ScanSearch,
+  Users,
+  WalletCards,
+  type LucideIcon,
+} from 'lucide-react';
 import { usePathname } from 'next/navigation';
 
-const navItems = [
-  { href: '/dashboard', label: 'Panel' },
-  { href: '/inventory', label: 'Inventario' },
-  { href: '/crm', label: 'CRM' },
-  { href: '/ventas', label: 'Ventas' },
-  { href: '/matching', label: 'Coincidencias' },
-  { href: '/automations', label: 'Automatizaciones' },
-  { href: '/history', label: 'Historial' },
-  { href: '/expenses', label: 'Gastos' },
-  { href: '/radar', label: 'Radar' },
+const navItems: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: '/dashboard', label: 'Panel', icon: LayoutDashboard },
+  { href: '/inventory', label: 'Inventario', icon: Boxes },
+  { href: '/crm', label: 'CRM', icon: Users },
+  { href: '/ventas', label: 'Ventas', icon: ReceiptText },
+  { href: '/matching', label: 'Coincidencias', icon: ScanSearch },
+  { href: '/automations', label: 'Automatizaciones', icon: Bot },
+  { href: '/history', label: 'Historial', icon: History },
+  { href: '/expenses', label: 'Gastos', icon: WalletCards },
+  { href: '/radar', label: 'Radar', icon: Radar },
 ];
 
 export function Sidebar() {
@@ -26,17 +38,25 @@ export function Sidebar() {
       <nav className="-mx-1 flex flex-row gap-1 overflow-x-auto pb-1 lg:mx-0 lg:flex-col lg:space-y-1.5 lg:overflow-visible lg:pb-0">
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+          const Icon = item.icon;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`shrink-0 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition lg:block lg:whitespace-normal ${
+              className={`inline-flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition lg:flex lg:w-full lg:whitespace-normal ${
                 isActive
                   ? 'bg-emerald-500/[0.12] font-medium text-emerald-400'
                   : 'text-muted hover:bg-white/8 hover:text-white'
               }`}
             >
-              {item.label}
+              <Icon
+                className={`h-[18px] w-[18px] shrink-0 ${
+                  isActive ? 'text-emerald-400' : 'text-white/45'
+                }`}
+                strokeWidth={1.75}
+                aria-hidden
+              />
+              <span>{item.label}</span>
             </Link>
           );
         })}
