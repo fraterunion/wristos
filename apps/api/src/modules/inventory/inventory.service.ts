@@ -275,7 +275,7 @@ export class InventoryService {
       imageUrl: watch.imageUrl,
       condition: watch.condition,
       cost: watch.cost.toString(),
-      costCurrency: watch.costCurrency ?? null,
+      costCurrency: watch.costCurrency ?? 'USD',
       costOriginalAmount: watch.costOriginalAmount?.toString() ?? null,
       costExchangeRate: watch.costExchangeRate?.toString() ?? null,
       priceMin: watch.priceMin.toString(),

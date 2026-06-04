@@ -15,6 +15,11 @@ export const WATCH_OWNERSHIP_VALUES = ['OWNED', 'CONSIGNMENT'] as const;
 export const COST_CURRENCY_VALUES = ['MXN', 'USD'] as const;
 export type CostCurrency = (typeof COST_CURRENCY_VALUES)[number];
 
+/** NULL/unknown costCurrency is treated as legacy USD for display. */
+export function inferWatchCostCurrency(costCurrency?: string | null): CostCurrency {
+  return costCurrency === 'MXN' ? 'MXN' : 'USD';
+}
+
 const numericField = (label: string) =>
   z.preprocess((val) => {
     if (val === '' || val === null || val === undefined) return 0;
@@ -87,9 +92,8 @@ export function watchToFormValues(watch: Watch): WatchFormValues {
     serialNumber: watch.serialNumber ?? '',
     imageUrl: watch.imageUrl ?? '',
     condition: watch.condition,
-    costCurrency: watch.costCurrency === 'USD' ? 'USD' : 'MXN',
-    // In edit mode, the cost field always shows the canonical MXN value.
-    // If the user re-saves in USD mode, they must re-enter the USD amount.
+    costCurrency: inferWatchCostCurrency(watch.costCurrency),
+    // Legacy NULL rows store USD amounts in cost/price fields (not converted to MXN).
     cost: Number(watch.cost),
     priceMin: Number(watch.priceMin),
     priceMax: Number(watch.priceMax),

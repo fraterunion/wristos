@@ -270,7 +270,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           {/* Legacy warning */}
           {isLegacy ? (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2.5 text-xs text-amber-200/80">
-              Este reloj fue registrado sin moneda especificada. Verifica el costo antes de guardar.
+              Este reloj fue registrado sin moneda especificada. Se muestra como dólares (USD). Verifica el costo antes de guardar.
             </div>
           ) : null}
 
@@ -423,7 +423,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Precio mínimo (MXN)
+                Precio mínimo ({costCurrency === 'MXN' ? 'MXN' : 'USD'})
               </span>
               <input
                 type="number"
@@ -438,7 +438,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
-                Precio máximo (MXN)
+                Precio máximo ({costCurrency === 'MXN' ? 'MXN' : 'USD'})
               </span>
               <input
                 type="number"
