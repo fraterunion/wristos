@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 import { CommercialIntelligenceSection } from '@/components/dashboard/CommercialIntelligenceSection';
 import { apiGet } from '@/lib/api-client';
+import { getCapitalSummary, type CapitalSummary } from '@/lib/capital-api';
 import { getFxUsdMxn, type FxRateResult } from '@/lib/fx-api';
 import {
   AnalyticsPeriod,
@@ -61,13 +62,19 @@ function ExecutiveSectionTitle({
   );
 }
 
-function FinancialPositionHero({ summary }: { summary: AnalyticsSummary }) {
+function FinancialPositionHero({
+  summary,
+  pendingToPartners,
+}: {
+  summary: AnalyticsSummary;
+  pendingToPartners: string | null;
+}) {
   const cash = num(summary.cashBalance);
   const bank = num(summary.bankBalance);
   const cesar = num(summary.cesarBalance);
   const receivable = num(summary.totalPendingBalance);
-  const payable = num(summary.accountsPayable);
   const liquidityTotal = cash + bank + cesar;
+  const pendingPartners = num(pendingToPartners);
 
   const positions = [
     { label: 'Efectivo', value: fmtMxn(cash), tone: 'positive' as const },
@@ -79,9 +86,9 @@ function FinancialPositionHero({ summary }: { summary: AnalyticsSummary }) {
       tone: receivable > 0 ? ('negative' as const) : ('default' as const),
     },
     {
-      label: 'Cuentas por pagar',
-      value: payable > 0 ? fmtMxn(payable) : '—',
-      tone: 'muted' as const,
+      label: 'Por pagar socios',
+      value: pendingToPartners !== null ? (pendingPartners > 0 ? fmtMxn(pendingPartners) : '—') : '—',
+      tone: pendingToPartners !== null && pendingPartners > 0 ? ('negative' as const) : ('muted' as const),
     },
   ];
 
@@ -386,6 +393,8 @@ export default function DashboardPage() {
   const [salesSeries, setSalesSeries] = useState<SalesOverTimePoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
 
+  const [capitalSummary, setCapitalSummary] = useState<CapitalSummary | null>(null);
+
   const [fxRate, setFxRate] = useState<FxRateResult | null>(null);
   const [fxLoading, setFxLoading] = useState(true);
   const [fxError, setFxError] = useState<string | null>(null);
@@ -413,6 +422,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void fetchDashboard();
+  }, []);
+
+  useEffect(() => {
+    getCapitalSummary()
+      .then((s) => setCapitalSummary(s))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -510,7 +525,10 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <FinancialPositionHero summary={data.summary} />
+      <FinancialPositionHero
+        summary={data.summary}
+        pendingToPartners={capitalSummary?.totalPendingToPartners ?? null}
+      />
 
       <BusinessSnapshot
         summary={data.summary}
