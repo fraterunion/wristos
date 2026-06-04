@@ -139,7 +139,26 @@ function timeAgo(iso: string): string {
   return diffHr === 1 ? 'hace 1 hora' : `hace ${diffHr} horas`;
 }
 
-function FxRateCard({
+function CalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className={className}
+      aria-hidden
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8 2v3m8-3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
+      />
+    </svg>
+  );
+}
+
+function DashboardContextBar({
   rate,
   loading,
   error,
@@ -148,42 +167,60 @@ function FxRateCard({
   loading: boolean;
   error: string | null;
 }) {
-  return (
-    <article className="rounded-xl border border-white/10 bg-panel p-5">
-      <p className="text-xs uppercase tracking-wide text-muted">Tipo de cambio</p>
+  const todayLabel = new Date().toLocaleDateString('es-MX', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
 
-      {loading ? (
-        <div className="mt-3 space-y-2 animate-pulse">
-          <div className="h-8 w-28 rounded bg-white/10" />
-          <div className="h-3 w-16 rounded bg-white/10" />
-          <div className="h-3 w-44 rounded bg-white/[0.06]" />
+  return (
+    <div className="flex min-h-[56px] w-full flex-col gap-3 rounded-xl border border-white/[0.07] bg-panel/90 px-4 py-3 shadow-sm shadow-black/20 backdrop-blur-sm sm:min-h-[60px] sm:flex-row sm:items-center sm:gap-0 lg:mx-2 lg:max-w-2xl lg:flex-1 xl:mx-4">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-sm font-semibold text-white/65"
+          aria-hidden
+        >
+          $
         </div>
-      ) : !rate ? (
-        <>
-          <p className="mt-3 text-2xl font-semibold text-white/25">No disponible</p>
-          <p className="mt-1 text-xs text-muted/60">USD/MXN</p>
-        </>
-      ) : (
-        <>
-          <div className="mt-3 flex items-baseline gap-2">
-            <p className="text-2xl font-semibold text-white tabular-nums">
-              ${rate.rate.toFixed(2)}
-            </p>
-            {rate.stale && (
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400/80">
-                Dato en caché
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 text-xs text-muted">USD/MXN</p>
-          <p className="mt-3 text-[11px] text-muted/60">
-            Fuente: {rate.source}
-            <span className="mx-1 opacity-40">·</span>
-            Actualizado {timeAgo(rate.fetchedAt)}
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/30">
+            Tipo de cambio
           </p>
-        </>
-      )}
-    </article>
+          {loading ? (
+            <div className="mt-1.5 h-4 w-28 animate-pulse rounded bg-white/10" />
+          ) : error || !rate ? (
+            <p className="mt-0.5 truncate text-sm font-medium text-white/35">No disponible</p>
+          ) : (
+            <>
+              <div className="mt-0.5 flex items-center gap-2">
+                <p className="truncate text-sm font-semibold tabular-nums text-white">
+                  ${rate.rate.toFixed(2)} USD/MXN
+                </p>
+                {!rate.stale ? (
+                  <span className="inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/90" title="Actualizado" />
+                ) : null}
+              </div>
+              <p className="mt-0.5 truncate text-[10px] text-white/25">
+                Actualizado {timeAgo(rate.fetchedAt)}
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="hidden h-10 w-px shrink-0 bg-white/10 sm:mx-4 sm:block" />
+      <div className="h-px w-full bg-white/10 sm:hidden" />
+
+      <div className="flex min-w-0 flex-1 items-center gap-3 sm:pl-0">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/55">
+          <CalendarIcon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/30">Hoy</p>
+          <p className="mt-0.5 truncate text-sm font-medium capitalize text-white/80">{todayLabel}</p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -306,14 +343,17 @@ export default function DashboardPage() {
 
   return (
     <section className="ui-page">
-      <header className="ui-page-header">
-        <div>
+      <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="min-w-0 shrink-0">
           <h2 className="ui-title">Panel de rendimiento</h2>
           <p className="ui-subtitle">
             Instantánea en vivo de inventario, pipeline e ingresos.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+
+        <DashboardContextBar rate={fxRate} loading={fxLoading} error={fxError} />
+
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Link
             href="/inventory?action=create"
             className="ui-btn-secondary px-3 py-2"
@@ -387,11 +427,6 @@ export default function DashboardPage() {
           label="Relojes disponibles"
           value={String(data?.summary.availableWatches ?? '—')}
         />
-      </section>
-
-      {/* ── FX card ─────────────────────────────────────────────────────── */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-        <FxRateCard rate={fxRate} loading={fxLoading} error={fxError} />
       </section>
 
       <section className="space-y-4">
