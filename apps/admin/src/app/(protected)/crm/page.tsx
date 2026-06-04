@@ -3,6 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { z } from 'zod';
 import { DeleteConfirmDialog } from '@/components/inventory/DeleteConfirmDialog';
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api-client';
@@ -98,6 +99,10 @@ function toDatetimeLocalValue(iso: string) {
 }
 
 export default function CrmPage() {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+
   const [clients, setClients] = useState<Client[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
   const [clientsError, setClientsError] = useState<string | null>(null);
@@ -206,6 +211,14 @@ export default function CrmPage() {
     }
     void loadClientDetails(selectedClientId);
   }, [selectedClientId, loadClientDetails]);
+
+  useEffect(() => {
+    if (searchParams.get('action') !== 'create') return;
+    setClientModalMode('create');
+    clientForm.reset({ name: '', email: '', phone: '', notes: '', tagsInput: '', budgetRange: '' });
+    setClientModalOpen(true);
+    router.replace(pathname, { scroll: false });
+  }, [searchParams, pathname, router]);
 
   const openCreateModal = () => {
     setClientModalMode('create');

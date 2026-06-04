@@ -326,18 +326,18 @@ export default function DashboardPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            href="/inventory"
+            href="/inventory?action=create"
             className="ui-btn-secondary px-3 py-2"
           >
             Agregar reloj
           </Link>
           <Link
-            href="/crm"
+            href="/crm?action=create"
             className="ui-btn-secondary px-3 py-2"
           >
             Agregar cliente
           </Link>
-          <Link href="/ventas" className="ui-btn-primary px-3 py-2">
+          <Link href="/ventas?action=create" className="ui-btn-primary px-3 py-2">
             Registrar venta
           </Link>
         </div>
