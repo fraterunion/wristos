@@ -9,6 +9,7 @@ import {
   Radar,
   ReceiptText,
   ScanSearch,
+  TrendingUp,
   Users,
   WalletCards,
   type LucideIcon,
@@ -24,6 +25,7 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/automations', label: 'Automatizaciones', icon: Bot },
   { href: '/history', label: 'Historial', icon: History },
   { href: '/expenses', label: 'Gastos', icon: WalletCards },
+  { href: '/capital', label: 'Capital', icon: TrendingUp },
   { href: '/radar', label: 'Radar', icon: Radar },
 ];
 
