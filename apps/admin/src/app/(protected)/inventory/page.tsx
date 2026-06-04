@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 import { DeleteConfirmDialog } from '@/components/inventory/DeleteConfirmDialog';
 import { StatusBadge } from '@/components/inventory/StatusBadge';
@@ -39,6 +40,10 @@ function dash(value: string | null | undefined) {
 }
 
 export default function InventoryPage() {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+
   const [watches, setWatches] = useState<Watch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +109,14 @@ export default function InventoryPage() {
     const timer = window.setTimeout(() => setFlash(null), 4500);
     return () => window.clearTimeout(timer);
   }, [flash]);
+
+  useEffect(() => {
+    if (searchParams.get('action') !== 'create') return;
+    setFormMode('create');
+    setEditingWatch(null);
+    setFormOpen(true);
+    router.replace(pathname, { scroll: false });
+  }, [searchParams, pathname, router]);
 
   const applyFilters = () => {
     setAppliedFilters({ ...draftFilters });

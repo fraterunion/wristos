@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, apiGet } from '@/lib/api-client';
 import { listRecentSales, type SoldItem } from '@/lib/ventas-api';
 import { AddPaymentModal } from '@/components/ventas/AddPaymentModal';
@@ -116,6 +117,10 @@ const filterInputCls =
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function VentasPage() {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+
   const [sales, setSales] = useState<SoldItem[]>([]);
   const [summary, setSummary] = useState<HistorySummary | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
@@ -157,6 +162,12 @@ export default function VentasPage() {
   }, []);
 
   useEffect(() => { void loadData(); }, [loadData]);
+
+  useEffect(() => {
+    if (searchParams.get('action') !== 'create') return;
+    setRegisterOpen(true);
+    router.replace(pathname, { scroll: false });
+  }, [searchParams, pathname, router]);
 
   // ── KPI derivations ────────────────────────────────────────────────────────
 
