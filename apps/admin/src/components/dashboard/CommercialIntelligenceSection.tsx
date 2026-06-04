@@ -49,7 +49,7 @@ function ExecutiveSectionTitle({
 }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500/70">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
         {title}
       </p>
       {subtitle ? <p className="mt-1 text-sm text-white/35">{subtitle}</p> : null}
@@ -69,9 +69,9 @@ function PanelShell({
   children: React.ReactNode;
 }) {
   return (
-    <article className="overflow-hidden rounded-2xl border border-amber-500/25 bg-panel/95 shadow-lg shadow-black/30">
-      <div className="border-b border-amber-500/15 px-5 py-3 md:px-6">
-        <h4 className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500/70">
+    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
+      <div className="border-b border-white/[0.06] px-5 py-3 md:px-6">
+        <h4 className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/40">
           {title}
         </h4>
       </div>

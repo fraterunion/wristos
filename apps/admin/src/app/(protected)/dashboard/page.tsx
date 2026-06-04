@@ -53,7 +53,7 @@ function ExecutiveSectionTitle({
 }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500/70">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
         {title}
       </p>
       {subtitle ? <p className="mt-1 text-sm text-white/35">{subtitle}</p> : null}
@@ -92,8 +92,8 @@ function FinancialPositionHero({ summary }: { summary: AnalyticsSummary }) {
     'text-white';
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-amber-500/25 bg-panel/95 shadow-lg shadow-black/30">
-      <div className="border-b border-amber-500/15 px-5 py-3 md:px-6">
+    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
+      <div className="border-b border-white/[0.06] px-5 py-3 md:px-6">
         <ExecutiveSectionTitle title="Posición financiera" />
       </div>
 
@@ -110,9 +110,9 @@ function FinancialPositionHero({ summary }: { summary: AnalyticsSummary }) {
         ))}
       </div>
 
-      <div className="flex flex-col gap-2 border-t border-amber-500/15 bg-black/20 px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6 md:py-5">
+      <div className="flex flex-col gap-2 border-t border-white/[0.06] bg-black/20 px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6 md:py-5">
         <div>
-          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-amber-500/60">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/35">
             Liquidez total
           </p>
           <p className="mt-1 text-[11px] text-white/25">Efectivo + Bancos + César</p>

@@ -32,7 +32,7 @@ export function Sidebar() {
               href={item.href}
               className={`shrink-0 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition lg:block lg:whitespace-normal ${
                 isActive
-                  ? 'bg-accent/20 font-medium text-accent'
+                  ? 'bg-emerald-500/[0.12] font-medium text-emerald-400'
                   : 'text-muted hover:bg-white/8 hover:text-white'
               }`}
             >
