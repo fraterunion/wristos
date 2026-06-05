@@ -119,6 +119,7 @@ function FinancialKpiCard({
   tone,
   group,
   iconBubbleClass,
+  valueType = 'monetary',
   Icon,
 }: {
   label: string;
@@ -127,8 +128,14 @@ function FinancialKpiCard({
   tone: FinancialTone;
   group: FinancialGroup;
   iconBubbleClass: string;
+  valueType?: 'monetary' | 'percentage';
   Icon: LucideIcon;
 }) {
+  const valueClass =
+    valueType === 'percentage'
+      ? 'text-xl font-semibold tabular-nums leading-none xl:text-[1.75rem]'
+      : 'text-2xl font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[2rem]';
+
   return (
     <div
       className={`flex min-h-[145px] min-w-0 flex-col rounded-xl border border-white/[0.04] bg-gradient-to-b from-white/[0.03] to-transparent p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`}
@@ -141,9 +148,7 @@ function FinancialKpiCard({
       <p className="mt-3 text-[11px] font-medium uppercase tracking-[0.16em] text-white/50">
         {label}
       </p>
-      <p
-        className={`mt-2 text-3xl font-semibold tabular-nums leading-none tracking-tight ${financialToneClass(tone)}`}
-      >
+      <p className={`mt-2 ${valueClass} ${financialToneClass(tone)}`}>
         {value}
       </p>
       <p className="mt-2 text-xs text-white/35">{helper}</p>
@@ -184,6 +189,7 @@ function FinancialPositionHero({
     tone: FinancialTone;
     group: FinancialGroup;
     iconBubbleClass: string;
+    valueType?: 'monetary' | 'percentage';
     Icon: LucideIcon;
   }> = [
     {
@@ -260,6 +266,7 @@ function FinancialPositionHero({
       value: roi !== null ? fmtRoiPct(roi) : '—',
       helper: 'Retorno sobre capital',
       group: 'performance',
+      valueType: 'percentage',
       iconBubbleClass: 'bg-purple-500/15 text-purple-400',
       tone:
         roi === null ? 'muted' :
@@ -342,6 +349,7 @@ function FinancialPositionHero({
             tone={item.tone}
             group={item.group}
             iconBubbleClass={item.iconBubbleClass}
+            valueType={item.valueType}
             Icon={item.Icon}
           />
         ))}
