@@ -18,6 +18,7 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { RadarModule } from './modules/radar/radar.module';
 import { FxModule } from './modules/fx/fx.module';
 import { CapitalModule } from './modules/capital/capital.module';
+import { CuentasModule } from './modules/cuentas/cuentas.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { CapitalModule } from './modules/capital/capital.module';
     RadarModule,
     FxModule,
     CapitalModule,
+    CuentasModule,
   ],
   controllers: [AppController],
 })
