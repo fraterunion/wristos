@@ -1418,13 +1418,18 @@ function AnnualPartnerPerformanceTable({
     : null;
 
   const thClass =
-    'whitespace-nowrap px-3 py-2.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30';
-  const tdClass = 'whitespace-nowrap px-3 py-2.5 text-right text-xs tabular-nums';
-  const tdMonthClass = 'whitespace-nowrap px-3 py-2.5 text-xs font-medium text-white/60';
+    'whitespace-nowrap px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/35';
+  const thSticky =
+    'sticky left-0 z-20 bg-[#121212] shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)]';
+  const tdClass = 'whitespace-nowrap px-3 py-2 text-right text-xs tabular-nums';
+  const tdMonthSticky =
+    'sticky left-0 z-10 bg-panel/95 px-3 py-2 text-xs font-medium text-white/60 shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] group-hover:bg-[#141414]';
+  const tdMonthStickyFoot =
+    'sticky left-0 z-10 bg-[#161616] px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)]';
 
   return (
     <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/20">
-      <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6">
+      <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
         <div>
           <h2 className="text-base font-semibold tracking-tight text-white">
             Performance anual de socios
@@ -1452,33 +1457,39 @@ function AnnualPartnerPerformanceTable({
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-emerald-400" />
         </div>
       ) : !breakdown ? (
-        <div className="px-5 py-14 text-center md:px-6">
-          <p className="text-sm text-white/35">No se pudo cargar el desglose anual.</p>
+        <div className="px-5 py-10 md:px-6">
+          <div className="rounded-lg border border-dashed border-white/[0.08] bg-black/15 px-4 py-8 text-center">
+            <p className="text-sm text-white/35">No se pudo cargar el desglose anual.</p>
+          </div>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+        <div className="overflow-x-auto overscroll-x-contain">
+          <table className="w-full min-w-[800px] border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-white/[0.06] bg-black/20">
-                <th className={thClass}>Mes</th>
+              <tr className="border-b border-white/[0.06] bg-black/25">
+                <th className={`${thClass} ${thSticky}`}>Mes</th>
                 <th className={`${thClass} text-right`}>Utilidad total</th>
                 <th className={`${thClass} text-right`}>Cobrado total</th>
                 <th className={`${thClass} text-right`}>Pendiente total</th>
                 {investors.map((inv) => (
-                  <th key={inv.id} colSpan={3} className={`${thClass} border-l border-white/[0.06] text-center`}>
+                  <th
+                    key={inv.id}
+                    colSpan={3}
+                    className={`${thClass} border-l border-white/[0.08] px-4 text-center text-[10px] text-white/45`}
+                  >
                     {inv.name}
                   </th>
                 ))}
               </tr>
-              <tr className="border-b border-white/[0.06]">
-                <th className={thClass} />
+              <tr className="border-b border-white/[0.06] bg-black/15">
+                <th className={`${thClass} ${thSticky}`} />
                 <th className={thClass} />
                 <th className={thClass} />
                 <th className={thClass} />
                 {investors.flatMap((inv) => [
                   <th
                     key={`${inv.id}-util`}
-                    className={`${thClass} border-l border-white/[0.06] text-right`}
+                    className={`${thClass} border-l border-white/[0.08] text-right`}
                   >
                     Utilidad
                   </th>,
@@ -1493,8 +1504,8 @@ function AnnualPartnerPerformanceTable({
             </thead>
             <tbody className="divide-y divide-white/[0.04]">
               {breakdown.months.map((row) => (
-                <tr key={row.month} className="transition-colors hover:bg-white/[0.02]">
-                  <td className={tdMonthClass}>{MONTH_LABELS[row.month - 1]}</td>
+                <tr key={row.month} className="group transition-colors hover:bg-white/[0.02]">
+                  <td className={tdMonthSticky}>{MONTH_LABELS[row.month - 1]}</td>
                   <td className={`${tdClass} font-medium ${profitToneClass(row.businessProfit)}`}>
                     {fmtMxn(row.businessProfit)}
                   </td>
@@ -1507,7 +1518,7 @@ function AnnualPartnerPerformanceTable({
                   {row.investors.flatMap((inv) => [
                     <td
                       key={`${row.month}-${inv.id}-util`}
-                      className={`${tdClass} border-l border-white/[0.04] ${profitToneClass(inv.profitEntitlement)}`}
+                      className={`${tdClass} border-l border-white/[0.08] ${profitToneClass(inv.profitEntitlement)}`}
                     >
                       {fmtMxn(inv.profitEntitlement)}
                     </td>,
@@ -1529,33 +1540,33 @@ function AnnualPartnerPerformanceTable({
             </tbody>
             {totals && (
               <tfoot>
-                <tr className="border-t border-white/[0.08] bg-black/25">
-                  <td className={`${tdMonthClass} font-semibold text-white`}>TOTAL</td>
-                  <td className={`${tdClass} font-semibold ${profitToneClass(String(totals.businessProfit))}`}>
+                <tr className="border-t-2 border-white/10 bg-black/40">
+                  <td className={tdMonthStickyFoot}>TOTAL</td>
+                  <td className={`${tdClass} text-sm font-semibold ${profitToneClass(String(totals.businessProfit))}`}>
                     {fmtMxn(totals.businessProfit)}
                   </td>
-                  <td className={`${tdClass} font-semibold ${paidToneClass(String(totals.totalDistributionsPaid))}`}>
+                  <td className={`${tdClass} text-sm font-semibold ${paidToneClass(String(totals.totalDistributionsPaid))}`}>
                     {fmtMxn(totals.totalDistributionsPaid)}
                   </td>
-                  <td className={`${tdClass} font-semibold ${pendingToneClass(String(totals.totalPendingToPartners))}`}>
+                  <td className={`${tdClass} text-sm font-semibold ${pendingToneClass(String(totals.totalPendingToPartners))}`}>
                     {fmtMxn(totals.totalPendingToPartners)}
                   </td>
                   {totals.investors.flatMap((inv) => [
                     <td
                       key={`total-${inv.id}-util`}
-                      className={`${tdClass} border-l border-white/[0.06] font-semibold ${profitToneClass(String(inv.profitEntitlement))}`}
+                      className={`${tdClass} border-l border-white/[0.08] text-sm font-semibold ${profitToneClass(String(inv.profitEntitlement))}`}
                     >
                       {fmtMxn(inv.profitEntitlement)}
                     </td>,
                     <td
                       key={`total-${inv.id}-cob`}
-                      className={`${tdClass} font-semibold ${paidToneClass(String(inv.distributionsPaid))}`}
+                      className={`${tdClass} text-sm font-semibold ${paidToneClass(String(inv.distributionsPaid))}`}
                     >
                       {fmtMxn(inv.distributionsPaid)}
                     </td>,
                     <td
                       key={`total-${inv.id}-pen`}
-                      className={`${tdClass} font-semibold ${pendingToneClass(String(inv.pendingProfit))}`}
+                      className={`${tdClass} text-sm font-semibold ${pendingToneClass(String(inv.pendingProfit))}`}
                     >
                       {fmtMxn(inv.pendingProfit)}
                     </td>,
