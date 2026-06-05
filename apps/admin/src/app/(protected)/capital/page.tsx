@@ -40,6 +40,19 @@ function fmtDate(iso: string) {
   });
 }
 
+function fmtRoiPct(roi: number) {
+  return `${new Intl.NumberFormat('es-MX', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(roi)}%`;
+}
+
+function calcRoi(totalBusinessProfit: string, totalCapitalContributed: string): number | null {
+  const contributed = Number(totalCapitalContributed);
+  if (contributed <= 0) return null;
+  return (Number(totalBusinessProfit) / contributed) * 100;
+}
+
 function isoToDateInput(iso: string) {
   return iso.split('T')[0];
 }
@@ -172,6 +185,78 @@ function CapitalHero({
         </p>
       </div>
     </article>
+  );
+}
+
+// ─── FinancialInsightStrip ────────────────────────────────────────────────────
+
+function FinancialInsightStrip({
+  totalBusinessProfit,
+  totalDistributionsPaid,
+  totalPendingToPartners,
+  totalCapitalContributed,
+}: Pick<
+  CapitalSummary,
+  | 'totalBusinessProfit'
+  | 'totalDistributionsPaid'
+  | 'totalPendingToPartners'
+  | 'totalCapitalContributed'
+>) {
+  const profit = Number(totalBusinessProfit);
+  const pending = Number(totalPendingToPartners);
+  const roi = calcRoi(totalBusinessProfit, totalCapitalContributed);
+
+  const toneClass = (tone: 'neutral' | 'positive' | 'warning' | 'negative') =>
+    tone === 'positive' ? 'text-emerald-400' :
+    tone === 'warning' ? 'text-amber-400' :
+    tone === 'negative' ? 'text-rose-400' :
+    'text-white/80';
+
+  const metrics = [
+    {
+      label: 'Utilidad acumulada',
+      value: fmtMxn(totalBusinessProfit),
+      tone: profit > 0 ? ('positive' as const) : ('neutral' as const),
+    },
+    {
+      label: 'Distribuido a socios',
+      value: fmtMxn(totalDistributionsPaid),
+      tone: 'neutral' as const,
+    },
+    {
+      label: 'Pendiente por distribuir',
+      value: fmtMxn(totalPendingToPartners),
+      tone: pending > 0 ? ('warning' as const) : ('neutral' as const),
+    },
+    {
+      label: 'Rentabilidad',
+      value: roi !== null ? fmtRoiPct(roi) : '—',
+      tone:
+        roi === null ? ('neutral' as const) :
+        roi > 0 ? ('positive' as const) :
+        roi < 0 ? ('negative' as const) :
+        ('neutral' as const),
+    },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-stretch divide-y divide-white/[0.06] overflow-hidden rounded-xl border border-white/[0.07] bg-black/30 sm:flex-nowrap sm:divide-x sm:divide-y-0">
+      {metrics.map((metric) => (
+        <div
+          key={metric.label}
+          className="flex min-w-0 flex-1 basis-1/2 flex-col justify-center px-4 py-3 sm:basis-0 md:px-5"
+        >
+          <p className="truncate text-[9px] font-semibold uppercase tracking-[0.16em] text-white/35">
+            {metric.label}
+          </p>
+          <p
+            className={`mt-1 text-base font-semibold tabular-nums leading-none md:text-lg ${toneClass(metric.tone)}`}
+          >
+            {metric.value}
+          </p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1267,6 +1352,13 @@ export default function CapitalPage() {
         totalDistributionsPaid={s.totalDistributionsPaid}
         totalPendingToPartners={s.totalPendingToPartners}
         capitalNeto={s.capitalNeto}
+      />
+
+      <FinancialInsightStrip
+        totalBusinessProfit={s.totalBusinessProfit}
+        totalDistributionsPaid={s.totalDistributionsPaid}
+        totalPendingToPartners={s.totalPendingToPartners}
+        totalCapitalContributed={s.totalCapitalContributed}
       />
 
       {/* Investor cards */}
