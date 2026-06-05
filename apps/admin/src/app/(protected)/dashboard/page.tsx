@@ -85,7 +85,7 @@ function FinancialPositionHero({
   const positions = [
     { label: 'Efectivo', value: fmtMxn(cash), tone: 'positive' as const },
     { label: 'Bancos', value: fmtMxn(bank), tone: 'default' as const },
-    { label: 'César', value: fmtMxn(cesar), tone: 'default' as const },
+    { label: 'Cuenta César', value: fmtMxn(cesar), tone: 'default' as const },
     {
       label: 'Cuentas por cobrar',
       value: fmtMxn(receivable),
@@ -94,7 +94,7 @@ function FinancialPositionHero({
     {
       label: 'Por pagar socios',
       value: pendingToPartners !== null ? fmtMxn(pendingPartners) : '—',
-      tone: pendingToPartners !== null && pendingPartners > 0 ? ('negative' as const) : ('muted' as const),
+      tone: pendingToPartners !== null && pendingPartners > 0 ? ('warning' as const) : ('muted' as const),
     },
     {
       label: 'Capital invertido',
@@ -109,11 +109,13 @@ function FinancialPositionHero({
         netCapital > 0 ? ('positive' as const) :
         netCapital < 0 ? ('negative' as const) :
         ('muted' as const),
+      helper: 'Capital aportado + utilidad acumulada - retiros realizados',
     },
   ];
 
-  const toneClass = (tone: 'default' | 'positive' | 'negative' | 'muted') =>
+  const toneClass = (tone: 'default' | 'positive' | 'negative' | 'muted' | 'warning') =>
     tone === 'positive' ? 'text-emerald-400' :
+    tone === 'warning' ? 'text-amber-400' :
     tone === 'negative' ? 'text-rose-400' :
     tone === 'muted' ? 'text-white/40' :
     'text-white';
@@ -139,6 +141,9 @@ function FinancialPositionHero({
             <p className={`mt-2 text-xl font-semibold tabular-nums leading-none md:text-2xl ${toneClass(item.tone)}`}>
               {item.value}
             </p>
+            {'helper' in item && item.helper ? (
+              <p className="mt-1.5 text-[10px] leading-tight text-white/20">{item.helper}</p>
+            ) : null}
           </div>
         ))}
       </div>
