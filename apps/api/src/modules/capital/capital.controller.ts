@@ -15,6 +15,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { CapitalService } from './capital.service';
+import { AnnualBreakdownQueryDto } from './dto/annual-breakdown-query.dto';
 import { CreateContributionDto } from './dto/create-contribution.dto';
 import { CreateDistributionDto } from './dto/create-distribution.dto';
 import { CreateInvestorDto } from './dto/create-investor.dto';
@@ -30,6 +31,14 @@ export class CapitalController {
   @Get('summary')
   summary(@CurrentUser() user: CurrentUserType) {
     return this.capitalService.getSummary(user.tenantId);
+  }
+
+  @Get('annual-breakdown')
+  annualBreakdown(
+    @CurrentUser() user: CurrentUserType,
+    @Query() query: AnnualBreakdownQueryDto,
+  ) {
+    return this.capitalService.getAnnualBreakdown(user.tenantId, query.year);
   }
 
   // ─── Investors ───────────────────────────────────────────────────────────────
