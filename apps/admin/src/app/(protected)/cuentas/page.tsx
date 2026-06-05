@@ -4,12 +4,14 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, apiGet } from '@/lib/api-client';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import {
   createAccountEntry,
   createAccountPayment,
   deleteAccountEntry,
   getCuentasSummary,
   listAccountEntries,
+  listClients,
   updateAccountEntry,
   updateAccountPayment,
   type AccountEntry,
@@ -171,6 +173,17 @@ function sourceLabel(source: AccountEntrySource) {
   return source === 'DEAL_AUTO' ? 'Venta' : 'Manual';
 }
 
+function buildClientOptions(clients: Client[]) {
+  return clients
+    .map((client) => ({
+      value: client.id,
+      label: client.name,
+      subLabel: [client.email, client.phone].filter(Boolean).join(' · ') || null,
+      searchText: [client.name, client.email, client.phone].filter(Boolean).join(' '),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+}
+
 function amountToneClass(value: string, positive: 'emerald' | 'amber' | 'rose' | 'muted') {
   const n = Number(value);
   if (positive === 'muted') return n === 0 ? 'text-white/50' : 'text-white';
@@ -296,9 +309,13 @@ function SummaryStrip({ summary }: { summary: CuentasSummary }) {
 
 // ─── EntryModal ───────────────────────────────────────────────────────────────
 
+type CounterpartyMode = 'client' | 'manual';
+
 type EntryForm = {
   type: AccountEntryType;
   category: AccountEntryCategory;
+  counterpartyMode: CounterpartyMode;
+  clientId: string;
   counterpartyType: CounterpartyType;
   counterpartyName: string;
   concept: string;
@@ -314,6 +331,8 @@ type EntryForm = {
 const EMPTY_ENTRY_FORM = (type: AccountEntryType): EntryForm => ({
   type,
   category: 'OTHER',
+  counterpartyMode: 'manual',
+  clientId: '',
   counterpartyType: 'OTHER',
   counterpartyName: '',
   concept: '',
@@ -342,8 +361,11 @@ function EntryModal({
   const [form, setForm] = useState<EntryForm>(EMPTY_ENTRY_FORM(defaultType));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
 
   const dealLinked = editing ? isDealLinked(editing) : false;
+  const clientOptions = useMemo(() => buildClientOptions(clients), [clients]);
 
   useEffect(() => {
     if (!open) {
@@ -355,6 +377,8 @@ function EntryModal({
       setForm({
         type: editing.type,
         category: editing.category,
+        counterpartyMode: editing.clientId ? 'client' : 'manual',
+        clientId: editing.clientId ?? '',
         counterpartyType: editing.counterpartyType,
         counterpartyName: editing.counterpartyName,
         concept: editing.concept,
@@ -371,9 +395,51 @@ function EntryModal({
     }
   }, [open, editing, defaultType]);
 
+  useEffect(() => {
+    if (!open || dealLinked) return;
+    setClientsLoading(true);
+    listClients()
+      .then(setClients)
+      .catch(() => setClients([]))
+      .finally(() => setClientsLoading(false));
+  }, [open, dealLinked]);
+
+  function handleClientChange(clientId: string) {
+    const client = clients.find((item) => item.id === clientId);
+    setForm((current) => ({
+      ...current,
+      clientId,
+      counterpartyName: client?.name ?? current.counterpartyName,
+      counterpartyType: 'CLIENT',
+    }));
+  }
+
+  function switchCounterpartyMode(mode: CounterpartyMode) {
+    if (mode === 'client') {
+      setForm((current) => ({
+        ...current,
+        counterpartyMode: 'client',
+        counterpartyType: 'CLIENT',
+        clientId: current.clientId,
+      }));
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      counterpartyMode: 'manual',
+      clientId: '',
+      counterpartyType: current.counterpartyType === 'CLIENT' ? 'OTHER' : current.counterpartyType,
+    }));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.counterpartyName.trim()) {
+    if (form.counterpartyMode === 'client') {
+      if (!form.clientId) {
+        setError('Selecciona un cliente.');
+        return;
+      }
+    } else if (!form.counterpartyName.trim()) {
       setError('La contraparte es obligatoria.');
       return;
     }
@@ -469,33 +535,95 @@ function EntryModal({
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="ui-field-label">Tipo de contraparte</label>
-              <select
-                className="ui-input mt-1.5 w-full"
-                value={form.counterpartyType}
-                onChange={(e) =>
-                  setForm({ ...form, counterpartyType: e.target.value as CounterpartyType })
-                }
-              >
-                {COUNTERPARTY_OPTIONS.map((c) => (
-                  <option key={c} value={c}>
-                    {COUNTERPARTY_LABELS[c]}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {dealLinked ? (
             <div>
               <label className="ui-field-label">Contraparte</label>
-              <input
-                className="ui-input mt-1.5 w-full"
-                value={form.counterpartyName}
-                onChange={(e) => setForm({ ...form, counterpartyName: e.target.value })}
-                placeholder="Nombre"
-              />
+              <div className="mt-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5">
+                <p className="text-sm text-white/70">{form.counterpartyName}</p>
+                {editing?.clientId ? (
+                  <Link
+                    href={`/crm/${editing.clientId}`}
+                    className="mt-1 inline-flex text-xs font-medium text-emerald-400 underline-offset-4 transition hover:text-white hover:underline"
+                  >
+                    Ver cliente en CRM →
+                  </Link>
+                ) : null}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="ui-field-label">Contraparte</label>
+                <div className="mt-1.5 grid grid-cols-2 gap-2">
+                  <PillBtn
+                    active={form.counterpartyMode === 'client'}
+                    onClick={() => switchCounterpartyMode('client')}
+                  >
+                    Cliente existente
+                  </PillBtn>
+                  <PillBtn
+                    active={form.counterpartyMode === 'manual'}
+                    onClick={() => switchCounterpartyMode('manual')}
+                  >
+                    Manual
+                  </PillBtn>
+                </div>
+              </div>
+              {form.counterpartyMode === 'client' ? (
+                <div>
+                  <label className="ui-field-label" htmlFor="entry-client-select">
+                    Cliente
+                  </label>
+                  {clients.length === 0 && !clientsLoading ? (
+                    <p className="mt-1.5 text-xs text-white/35">No hay clientes registrados.</p>
+                  ) : (
+                    <SearchableSelect
+                      id="entry-client-select"
+                      value={form.clientId}
+                      onChange={handleClientChange}
+                      options={clientOptions}
+                      placeholder="Seleccionar cliente"
+                      disabled={saving}
+                      loading={clientsLoading}
+                    />
+                  )}
+                  {form.clientId ? (
+                    <p className="mt-1.5 text-xs text-white/35">
+                      {form.counterpartyName}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="ui-field-label">Tipo de contraparte</label>
+                    <select
+                      className="ui-input mt-1.5 w-full"
+                      value={form.counterpartyType}
+                      onChange={(e) =>
+                        setForm({ ...form, counterpartyType: e.target.value as CounterpartyType })
+                      }
+                    >
+                      {COUNTERPARTY_OPTIONS.map((c) => (
+                        <option key={c} value={c}>
+                          {COUNTERPARTY_LABELS[c]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="ui-field-label">Nombre</label>
+                    <input
+                      className="ui-input mt-1.5 w-full"
+                      value={form.counterpartyName}
+                      onChange={(e) => setForm({ ...form, counterpartyName: e.target.value })}
+                      placeholder="Nombre"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label className="ui-field-label">Concepto</label>
             <input
@@ -1071,11 +1199,23 @@ export default function CuentasPage() {
 
   async function handleSaveEntry(form: EntryForm) {
     const editingId = entryModal.editing?.id ?? null;
+    const counterpartyPayload =
+      form.counterpartyMode === 'client' && form.clientId
+        ? {
+            clientId: form.clientId,
+            counterpartyType: 'CLIENT' as CounterpartyType,
+            counterpartyName: form.counterpartyName.trim(),
+          }
+        : {
+            clientId: null as string | null,
+            counterpartyType: form.counterpartyType,
+            counterpartyName: form.counterpartyName.trim(),
+          };
+
     const payload = {
       type: form.type,
       category: form.category,
-      counterpartyType: form.counterpartyType,
-      counterpartyName: form.counterpartyName.trim(),
+      ...counterpartyPayload,
       concept: form.concept.trim(),
       totalAmount: Number(form.totalAmount),
       currency: form.currency,
@@ -1087,15 +1227,26 @@ export default function CuentasPage() {
     };
 
     if (entryModal.editing) {
-      const { type: _type, totalAmount, ...updatePayload } = payload;
       const editing = entryModal.editing;
       if (isDealLinked(editing)) {
-        await updateAccountEntry(editing.id, updatePayload);
+        const {
+          type: _type,
+          totalAmount: _totalAmount,
+          clientId: _clientId,
+          counterpartyType: _counterpartyType,
+          counterpartyName: _counterpartyName,
+          ...dealSafePayload
+        } = payload;
+        await updateAccountEntry(editing.id, dealSafePayload);
       } else {
         await updateAccountEntry(editing.id, payload);
       }
     } else {
-      await createAccountEntry(payload);
+      const { clientId, ...createPayload } = payload;
+      await createAccountEntry({
+        ...createPayload,
+        ...(form.counterpartyMode === 'client' && clientId ? { clientId } : {}),
+      });
     }
 
     const [sum, list] = await Promise.all([

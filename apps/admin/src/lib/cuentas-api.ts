@@ -1,5 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api-client';
-import type { PaymentMethod } from '@/types/domain';
+import type { Client, PaymentMethod } from '@/types/domain';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +95,10 @@ export function getCuentasSummary() {
   return apiGet<CuentasSummary>('/cuentas/summary', AUTH);
 }
 
+export function listClients() {
+  return apiGet<Client[]>('/crm/clients', AUTH);
+}
+
 export function listAccountEntries(query?: {
   type?: AccountEntryType;
   status?: AccountEntryStatus;
@@ -123,6 +127,7 @@ export function createAccountEntry(payload: {
   issuedAt?: string;
   dueDate?: string;
   notes?: string;
+  clientId?: string;
 }) {
   return apiPost<AccountEntry>('/cuentas/entries', payload, AUTH);
 }
@@ -143,6 +148,7 @@ export function updateAccountEntry(
     issuedAt?: string;
     dueDate?: string;
     notes?: string;
+    clientId?: string | null;
   },
 ) {
   return apiPatch<AccountEntry>(`/cuentas/entries/${id}`, payload, AUTH);
