@@ -120,8 +120,14 @@ function FinancialPositionHero({
 
   return (
     <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
-      <div className="border-b border-white/[0.06] px-5 py-3 md:px-6">
+      <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] px-5 py-3 md:px-6">
         <ExecutiveSectionTitle title="Posición financiera" />
+        <Link
+          href="/capital"
+          className="shrink-0 pt-0.5 text-[11px] font-medium tracking-wide text-white/30 transition-colors hover:text-emerald-400/90"
+        >
+          Ver módulo Capital →
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 lg:divide-x lg:divide-y-0">
