@@ -1,4 +1,4 @@
-import { Currency, PaymentMethod } from '@prisma/client';
+import { Currency, PaymentMethod, TreasuryAccount } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
@@ -31,4 +31,14 @@ export class UpdateAccountPaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsEnum(TreasuryAccount)
+  cashAccount?: TreasuryAccount;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 6 })
+  @Min(0.000001)
+  exchangeRateUsed?: number;
 }

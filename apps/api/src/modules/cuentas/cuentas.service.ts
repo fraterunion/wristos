@@ -16,9 +16,11 @@ import {
   DealStage,
   PaymentStatus,
   Prisma,
+  TreasuryDirection,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FxService } from '../fx/fx.service';
+import { TreasuryService } from '../treasury/treasury.service';
 import { CreateAccountEntryDto } from './dto/create-account-entry.dto';
 import { CreateAccountPaymentDto } from './dto/create-account-payment.dto';
 import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto';
@@ -37,6 +39,7 @@ export class CuentasService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fxService: FxService,
+    private readonly treasuryService: TreasuryService,
   ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -355,7 +358,9 @@ export class CuentasService {
       throw new BadRequestException('Payment currency must match entry currency');
     }
 
-    await this.prisma.accountPayment.create({
+    this.assertExchangeRateForCurrency(currency, dto.exchangeRateUsed);
+
+    const payment = await this.prisma.accountPayment.create({
       data: {
         tenant: { connect: { id: tenantId } },
         entry: { connect: { id: entryId } },
@@ -364,7 +369,24 @@ export class CuentasService {
         method: dto.method,
         paidAt: new Date(dto.paidAt),
         notes: dto.notes,
+        cashAccount: dto.cashAccount,
+        exchangeRateUsed:
+          currency === Currency.USD && dto.exchangeRateUsed !== undefined
+            ? new Prisma.Decimal(dto.exchangeRateUsed)
+            : null,
       },
+    });
+
+    await this.treasuryService.createFromAccountPayment({
+      tenantId,
+      accountPaymentId: payment.id,
+      account: payment.cashAccount!,
+      direction: this.treasuryDirectionForEntry(entry.type),
+      amount: payment.amount,
+      currency: payment.currency,
+      exchangeRateUsed: payment.exchangeRateUsed,
+      transactionDate: payment.paidAt,
+      description: this.treasuryDescriptionForEntry(entry),
     });
 
     return this.findEntry(entryId, tenantId);
@@ -386,16 +408,51 @@ export class CuentasService {
       throw new BadRequestException('Payment currency must match entry currency');
     }
 
+    const nextExchangeRateUsed =
+      dto.exchangeRateUsed !== undefined
+        ? dto.exchangeRateUsed
+        : payment.exchangeRateUsed !== null
+          ? Number(payment.exchangeRateUsed)
+          : undefined;
+
+    this.assertExchangeRateForCurrency(nextCurrency, nextExchangeRateUsed);
+
     const data: Prisma.AccountPaymentUpdateInput = {};
     if (dto.amount !== undefined) data.amount = new Prisma.Decimal(dto.amount);
     if (dto.currency !== undefined) data.currency = dto.currency;
     if (dto.method !== undefined) data.method = dto.method;
     if (dto.paidAt !== undefined) data.paidAt = new Date(dto.paidAt);
     if (dto.notes !== undefined) data.notes = dto.notes;
-
-    if (Object.keys(data).length > 0) {
-      await this.prisma.accountPayment.update({ where: { id: paymentId }, data });
+    if (dto.cashAccount !== undefined) data.cashAccount = dto.cashAccount;
+    if (dto.exchangeRateUsed !== undefined) {
+      data.exchangeRateUsed =
+        nextCurrency === Currency.USD
+          ? new Prisma.Decimal(dto.exchangeRateUsed)
+          : null;
+    } else if (dto.currency === Currency.MXN) {
+      data.exchangeRateUsed = null;
     }
+
+    const updated =
+      Object.keys(data).length > 0
+        ? await this.prisma.accountPayment.update({ where: { id: paymentId }, data })
+        : payment;
+
+    const cashAccount = updated.cashAccount ?? dto.cashAccount;
+    if (!cashAccount) {
+      throw new BadRequestException('cashAccount is required for treasury-linked payments');
+    }
+
+    await this.treasuryService.updateFromAccountPayment(paymentId, {
+      tenantId,
+      account: cashAccount,
+      direction: this.treasuryDirectionForEntry(entry.type),
+      amount: updated.amount,
+      currency: updated.currency,
+      exchangeRateUsed: updated.exchangeRateUsed,
+      transactionDate: updated.paidAt,
+      description: this.treasuryDescriptionForEntry(entry),
+    });
 
     return this.findEntry(entryId, tenantId);
   }
@@ -409,6 +466,8 @@ export class CuentasService {
       where: { id: paymentId },
       data: { deletedAt: new Date() },
     });
+
+    await this.treasuryService.deleteByAccountPaymentId(paymentId);
 
     return this.findEntry(entryId, tenantId);
   }
@@ -739,6 +798,26 @@ export class CuentasService {
         'Payments can only be recorded on manual entries without deal linkage',
       );
     }
+  }
+
+  private assertExchangeRateForCurrency(
+    currency: Currency,
+    exchangeRateUsed?: number | null,
+  ) {
+    if (currency === Currency.USD && (exchangeRateUsed === undefined || exchangeRateUsed === null)) {
+      throw new BadRequestException('Tipo de cambio requerido para pagos en USD');
+    }
+  }
+
+  private treasuryDirectionForEntry(type: AccountEntryType): TreasuryDirection {
+    return type === AccountEntryType.RECEIVABLE
+      ? TreasuryDirection.INFLOW
+      : TreasuryDirection.OUTFLOW;
+  }
+
+  private treasuryDescriptionForEntry(entry: AccountEntry): string {
+    const label = entry.type === AccountEntryType.RECEIVABLE ? 'Cobro' : 'Pago';
+    return `${label} — ${entry.counterpartyName} · ${entry.concept}`;
   }
 
   private async findEntryOrThrow(id: string, tenantId: string): Promise<EntryWithPayments> {
