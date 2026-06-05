@@ -1,6 +1,18 @@
 'use client';
 
 import Link from 'next/link';
+import {
+  Landmark,
+  PieChart,
+  Receipt,
+  ShieldCheck,
+  TrendingUp,
+  User,
+  Users,
+  Wallet,
+  WalletCards,
+  type LucideIcon,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   Area,
@@ -75,6 +87,63 @@ function ExecutiveSectionTitle({
   );
 }
 
+type FinancialTone = 'default' | 'positive' | 'negative' | 'muted' | 'warning';
+
+function financialToneClass(tone: FinancialTone) {
+  return tone === 'positive'
+    ? 'text-emerald-400'
+    : tone === 'warning'
+      ? 'text-amber-400'
+      : tone === 'negative'
+        ? 'text-rose-400'
+        : tone === 'muted'
+          ? 'text-white/40'
+          : 'text-white';
+}
+
+function financialIconBubbleClass(tone: FinancialTone) {
+  return tone === 'positive'
+    ? 'bg-emerald-500/15 text-emerald-400'
+    : tone === 'warning'
+      ? 'bg-amber-500/15 text-amber-400'
+      : tone === 'negative'
+        ? 'bg-rose-500/15 text-rose-400'
+        : 'bg-white/[0.06] text-white/60';
+}
+
+function FinancialKpiCard({
+  label,
+  value,
+  helper,
+  tone,
+  Icon,
+}: {
+  label: string;
+  value: string;
+  helper: string;
+  tone: FinancialTone;
+  Icon: LucideIcon;
+}) {
+  return (
+    <div className="flex min-h-[150px] min-w-0 flex-col justify-between rounded-2xl border border-white/[0.06] bg-black/20 p-5 transition-colors hover:bg-white/[0.04]">
+      <div
+        className={`flex h-9 w-9 items-center justify-center rounded-xl ${financialIconBubbleClass(tone)}`}
+      >
+        <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden />
+      </div>
+      <div className="mt-4 space-y-2">
+        <p className="text-[10px] font-semibold uppercase leading-snug tracking-[0.14em] text-white/35">
+          {label}
+        </p>
+        <p className={`text-xl font-semibold tabular-nums leading-none sm:text-2xl ${financialToneClass(tone)}`}>
+          {value}
+        </p>
+        <p className="text-[11px] text-white/25">{helper}</p>
+      </div>
+    </div>
+  );
+}
+
 function FinancialPositionHero({
   summary,
   cuentasReceivable,
@@ -101,111 +170,140 @@ function FinancialPositionHero({
   const netCapital = num(capitalNeto);
   const roi = calcRoi(capitalNeto, capitalContributed);
 
-  const positions = [
-    { label: 'Efectivo', value: fmtMxn(cash), tone: 'positive' as const },
-    { label: 'Bancos', value: fmtMxn(bank), tone: 'default' as const },
-    { label: 'Cuenta César', value: fmtMxn(cesar), tone: 'default' as const },
+  const positions: Array<{
+    label: string;
+    value: string;
+    helper: string;
+    tone: FinancialTone;
+    Icon: LucideIcon;
+  }> = [
+    { label: 'Efectivo', value: fmtMxn(cash), helper: 'Disponible', tone: 'positive', Icon: Wallet },
+    { label: 'Bancos', value: fmtMxn(bank), helper: 'Saldo total', tone: 'default', Icon: Landmark },
+    { label: 'Cuenta César', value: fmtMxn(cesar), helper: 'Cuenta personal', tone: 'default', Icon: User },
     {
       label: 'Cuentas por cobrar',
       value: receivable !== null ? fmtMxn(receivable) : '—',
+      helper: 'Pendiente de cobro',
       tone:
-        receivable === null ? ('muted' as const) :
-        receivable > 0 ? ('negative' as const) :
-        ('default' as const),
+        receivable === null ? 'muted' :
+        receivable > 0 ? 'negative' :
+        'default',
+      Icon: Receipt,
     },
     {
       label: 'Cuentas por pagar',
       value: payable !== null ? fmtMxn(payable) : '—',
+      helper: 'Obligaciones operativas',
       tone:
-        payable === null ? ('muted' as const) :
-        payable > 0 ? ('warning' as const) :
-        ('muted' as const),
+        payable === null ? 'muted' :
+        payable > 0 ? 'warning' :
+        'muted',
+      Icon: WalletCards,
     },
     {
       label: 'Por pagar socios',
       value: pendingToPartners !== null ? fmtMxn(pendingPartners) : '—',
-      tone: pendingToPartners !== null && pendingPartners > 0 ? ('warning' as const) : ('muted' as const),
+      helper: 'Obligaciones con socios',
+      tone: pendingToPartners !== null && pendingPartners > 0 ? 'warning' : 'muted',
+      Icon: Users,
     },
     {
       label: 'Capital invertido',
       value: capitalContributed !== null ? fmtMxn(investedCapital) : '—',
-      tone: capitalContributed !== null && investedCapital > 0 ? ('positive' as const) : ('muted' as const),
+      helper: 'Aportado por socios',
+      tone: capitalContributed !== null && investedCapital > 0 ? 'positive' : 'muted',
+      Icon: TrendingUp,
     },
     {
       label: 'ROI',
       value: roi !== null ? fmtRoiPct(roi) : '—',
+      helper: 'Retorno sobre capital',
       tone:
-        roi === null ? ('muted' as const) :
-        roi > 0 ? ('positive' as const) :
-        roi < 0 ? ('negative' as const) :
-        ('muted' as const),
+        roi === null ? 'muted' :
+        roi > 0 ? 'positive' :
+        roi < 0 ? 'negative' :
+        'muted',
+      Icon: PieChart,
     },
     {
       label: 'Capital neto',
       value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
+      helper: 'Patrimonio neto',
       tone:
-        capitalNeto === null ? ('muted' as const) :
-        netCapital > 0 ? ('positive' as const) :
-        netCapital < 0 ? ('negative' as const) :
-        ('muted' as const),
+        capitalNeto === null ? 'muted' :
+        netCapital > 0 ? 'positive' :
+        netCapital < 0 ? 'negative' :
+        'muted',
+      Icon: ShieldCheck,
     },
   ];
 
-  const toneClass = (tone: 'default' | 'positive' | 'negative' | 'muted' | 'warning') =>
-    tone === 'positive' ? 'text-emerald-400' :
-    tone === 'warning' ? 'text-amber-400' :
-    tone === 'negative' ? 'text-rose-400' :
-    tone === 'muted' ? 'text-white/40' :
-    'text-white';
-
   return (
-    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
-      <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-3 sm:flex-row sm:items-start sm:justify-between md:px-6">
-        <ExecutiveSectionTitle title="Posición financiera" />
-        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 sm:justify-end sm:pt-0.5">
-          <Link
-            href="/cuentas"
-            className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400/90 hover:underline"
-          >
-            Ver cuentas →
-          </Link>
-          <span className="hidden text-white/15 sm:inline" aria-hidden>
-            ·
-          </span>
-          <Link
-            href="/capital"
-            className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400/90 hover:underline"
-          >
-            Ver capital →
-          </Link>
+    <article className="overflow-hidden rounded-[24px] border border-white/[0.08] bg-gradient-to-b from-white/[0.055] to-white/[0.025] shadow-2xl shadow-black/30">
+      <div className="relative border-b border-white/[0.06] px-5 py-5 md:px-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+              <Wallet className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+                Posición financiera
+              </p>
+              <p className="mt-1 text-sm text-white/35">Resumen financiero consolidado</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 sm:justify-end sm:pt-1">
+            <Link
+              href="/cuentas"
+              className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+            >
+              Ver cuentas →
+            </Link>
+            <span className="hidden text-white/15 sm:inline" aria-hidden>
+              ·
+            </span>
+            <Link
+              href="/capital"
+              className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+            >
+              Ver capital →
+            </Link>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-y-0 xl:grid-cols-9">
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-9 md:p-6">
         {positions.map((item) => (
-          <div key={item.label} className="min-w-0 px-4 py-4 md:px-5 md:py-5">
-            <p className="text-[9px] font-semibold uppercase leading-snug tracking-[0.12em] text-white/30 xl:text-[10px] xl:tracking-[0.14em]">
-              {item.label}
-            </p>
-            <p
-              className={`mt-2 text-lg font-semibold tabular-nums leading-none sm:text-xl xl:text-lg 2xl:text-2xl ${toneClass(item.tone)}`}
-            >
-              {item.value}
-            </p>
-          </div>
+          <FinancialKpiCard
+            key={item.label}
+            label={item.label}
+            value={item.value}
+            helper={item.helper}
+            tone={item.tone}
+            Icon={item.Icon}
+          />
         ))}
       </div>
 
-      <div className="flex flex-col gap-2.5 border-t border-white/[0.06] bg-black/20 px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6 md:py-5">
-        <div>
-          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/35">
-            Liquidez total
+      <div className="px-4 pb-4 sm:px-5 md:px-6 md:pb-6">
+        <div className="flex flex-col gap-4 rounded-2xl border border-white/[0.06] bg-gradient-to-r from-emerald-500/[0.08] via-white/[0.025] to-white/[0.025] p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:items-center">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+              <Wallet className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                Liquidez total
+              </p>
+              <p className="mt-1 text-[11px] text-white/25">Efectivo + Bancos + César</p>
+            </div>
+          </div>
+          <p className="text-2xl font-semibold tabular-nums text-emerald-400 sm:text-3xl">
+            {fmtMxn(liquidityTotal)}
           </p>
-          <p className="mt-1 text-[11px] text-white/25">Efectivo + Bancos + César</p>
         </div>
-        <p className="text-2xl font-semibold tabular-nums text-white md:text-3xl">
-          {fmtMxn(liquidityTotal)}
-        </p>
       </div>
     </article>
   );
