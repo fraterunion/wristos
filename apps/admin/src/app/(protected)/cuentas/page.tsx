@@ -196,6 +196,58 @@ function sourceLabel(source: AccountEntrySource) {
   return source === 'DEAL_AUTO' ? 'Venta' : 'Manual';
 }
 
+type EntryFilters = {
+  search: string;
+  currency: '' | Currency;
+  status: '' | AccountEntryStatus;
+  source: '' | AccountEntrySource;
+  minBalance: string;
+  maxBalance: string;
+};
+
+const EMPTY_ENTRY_FILTERS: EntryFilters = {
+  search: '',
+  currency: '',
+  status: '',
+  source: '',
+  minBalance: '',
+  maxBalance: '',
+};
+
+function hasActiveEntryFilters(filters: EntryFilters) {
+  return Boolean(
+    filters.search.trim() ||
+      filters.currency ||
+      filters.status ||
+      filters.source ||
+      filters.minBalance.trim() ||
+      filters.maxBalance.trim(),
+  );
+}
+
+function filterAccountEntries(entries: AccountEntry[], filters: EntryFilters) {
+  const search = filters.search.trim().toLowerCase();
+  const minBalance = filters.minBalance.trim() ? Number(filters.minBalance) : null;
+  const maxBalance = filters.maxBalance.trim() ? Number(filters.maxBalance) : null;
+
+  return entries.filter((entry) => {
+    if (search) {
+      const matchesSearch =
+        entry.counterpartyName.toLowerCase().includes(search) ||
+        entry.concept.toLowerCase().includes(search) ||
+        (entry.reference ?? '').toLowerCase().includes(search);
+      if (!matchesSearch) return false;
+    }
+    if (filters.currency && entry.currency !== filters.currency) return false;
+    if (filters.status && entry.status !== filters.status) return false;
+    if (filters.source && entry.source !== filters.source) return false;
+    const balance = Number(entry.balance);
+    if (minBalance !== null && Number.isFinite(minBalance) && balance < minBalance) return false;
+    if (maxBalance !== null && Number.isFinite(maxBalance) && balance > maxBalance) return false;
+    return true;
+  });
+}
+
 function buildClientOptions(clients: Client[]) {
   return clients
     .map((client) => ({
@@ -1191,6 +1243,7 @@ export default function CuentasPage() {
     editing: AccountPayment | null;
   }>({ open: false, entry: null, editing: null });
   const [actionError, setActionError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<EntryFilters>(EMPTY_ENTRY_FILTERS);
 
   const entriesQuery = useMemo(
     () => ({
@@ -1199,6 +1252,13 @@ export default function CuentasPage() {
     }),
     [tab, clientIdFilter],
   );
+
+  const filteredEntries = useMemo(
+    () => filterAccountEntries(entries, filters),
+    [entries, filters],
+  );
+
+  const activeFilters = hasActiveEntryFilters(filters);
 
   const loadData = useCallback(async (query: { type: AccountEntryType; clientId?: string }) => {
     setLoading(true);
@@ -1243,12 +1303,23 @@ export default function CuentasPage() {
     router.replace(pathname, { scroll: false });
   }
 
+  function resetFilters() {
+    setFilters(EMPTY_ENTRY_FILTERS);
+  }
+
   useEffect(() => {
     setDrawerEntry(null);
   }, [tab]);
 
   useEffect(() => {
     if (!drawerEntry) return;
+
+    const stillVisible = filteredEntries.some((entry) => entry.id === drawerEntry.id);
+    if (!stillVisible) {
+      setDrawerEntry(null);
+      return;
+    }
+
     const fresh = entries.find((entry) => entry.id === drawerEntry.id);
     if (!fresh) {
       setDrawerEntry(null);
@@ -1262,7 +1333,7 @@ export default function CuentasPage() {
     ) {
       setDrawerEntry(fresh);
     }
-  }, [entries, drawerEntry]);
+  }, [entries, drawerEntry, filteredEntries]);
 
   async function handleSaveEntry(form: EntryForm) {
     const editingId = entryModal.editing?.id ?? null;
@@ -1503,6 +1574,94 @@ export default function CuentasPage() {
             </div>
           </div>
         ) : (
+          <>
+            <div className="border-b border-white/[0.06] px-4 py-3 md:px-5">
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/35">
+                  Filtros
+                </span>
+                {activeFilters ? (
+                  <button type="button" onClick={resetFilters} className="ui-btn-ghost px-2 py-1 text-xs">
+                    Restablecer
+                  </button>
+                ) : null}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                <input
+                  value={filters.search}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+                  placeholder="Buscar contraparte o concepto…"
+                  className="ui-input sm:col-span-2 xl:col-span-2"
+                />
+                <select
+                  value={filters.currency}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, currency: e.target.value as EntryFilters['currency'] }))
+                  }
+                  className="ui-input"
+                >
+                  <option value="">Todas</option>
+                  <option value="MXN">MXN</option>
+                  <option value="USD">USD</option>
+                </select>
+                <select
+                  value={filters.status}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, status: e.target.value as EntryFilters['status'] }))
+                  }
+                  className="ui-input"
+                >
+                  <option value="">Todos</option>
+                  {(Object.keys(STATUS_LABELS) as AccountEntryStatus[]).map((status) => (
+                    <option key={status} value={status}>
+                      {STATUS_LABELS[status]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={filters.source}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, source: e.target.value as EntryFilters['source'] }))
+                  }
+                  className="ui-input"
+                >
+                  <option value="">Todas</option>
+                  <option value="MANUAL">Manual</option>
+                  <option value="DEAL_AUTO">Venta</option>
+                </select>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={filters.minBalance}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, minBalance: e.target.value }))}
+                  placeholder="Monto mínimo"
+                  className="ui-input"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={filters.maxBalance}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, maxBalance: e.target.value }))}
+                  placeholder="Monto máximo"
+                  className="ui-input"
+                />
+              </div>
+              </div>
+            </div>
+
+            {filteredEntries.length === 0 ? (
+              <div className="px-5 py-12 md:px-6">
+                <div className="rounded-lg border border-dashed border-white/[0.08] bg-black/15 px-4 py-10 text-center">
+                  <p className="text-sm text-white/55">No encontramos cuentas con esos filtros.</p>
+                  <button type="button" onClick={resetFilters} className="ui-btn-ghost mt-4 px-3 py-1.5 text-xs">
+                    Restablecer filtros
+                  </button>
+                </div>
+              </div>
+            ) : (
           <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full min-w-[960px] border-collapse text-left text-sm">
               <thead>
@@ -1521,7 +1680,7 @@ export default function CuentasPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.04]">
-                {entries.map((entry) => (
+                {filteredEntries.map((entry) => (
                   <tr
                     key={entry.id}
                     className="group cursor-pointer transition hover:bg-white/[0.03]"
@@ -1592,6 +1751,8 @@ export default function CuentasPage() {
               </tbody>
             </table>
           </div>
+            )}
+          </>
         )}
         </div>
       </div>
