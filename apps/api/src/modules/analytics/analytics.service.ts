@@ -8,11 +8,15 @@ import {
   WatchStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TreasuryService } from '../treasury/treasury.service';
 import { AnalyticsPeriod } from './dto/analytics-period.dto';
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly treasuryService: TreasuryService,
+  ) {}
 
   async getRevenueOverTime(tenantId: string, period: AnalyticsPeriod) {
     const { start, end, labels, bucket, weekBuckets } = this.buildSeriesWindow(period);
@@ -107,8 +111,7 @@ export class AnalyticsService {
       totalCollectedRevenueAgg,
       receivableDeals,
       paidByDealRows,
-      // ── New: payment method balances ──────────────────────────────────────
-      paymentsByMethod,
+      treasuryBalances,
       // ── New: this-month KPIs ─────────────────────────────────────────────
       salesThisMonthCountAgg,
       salesThisMonthRevenueAgg,
@@ -154,12 +157,7 @@ export class AnalyticsService {
         where: { ...paymentWhere, status: PaymentStatus.PAID },
         _sum: { amount: true },
       }),
-      // ── Payment method balances (all-time, PAID only) ─────────────────────
-      this.prisma.payment.groupBy({
-        by: ['method'],
-        where: { ...paymentWhere, status: PaymentStatus.PAID },
-        _sum: { amount: true },
-      }),
+      this.treasuryService.getAccountBalances(tenantId),
       // ── Sales this month: count ───────────────────────────────────────────
       // deal.updatedAt is used as soldAt by /history/sold, so we match that field.
       this.prisma.deal.count({
@@ -211,15 +209,12 @@ export class AnalyticsService {
       }
     }
 
-    // ── Payment method balances ───────────────────────────────────────────────
-    const methodMap = new Map<string, Prisma.Decimal>();
-    for (const row of paymentsByMethod) {
-      methodMap.set(row.method, row._sum.amount ?? new Prisma.Decimal(0));
-    }
+    // ── Treasury ledger balances ──────────────────────────────────────────────
+    const cashBalance = treasuryBalances.CASH;
+    const bankBalance = treasuryBalances.BANK;
+    const cesarBalance = treasuryBalances.CESAR;
+
     const zero = new Prisma.Decimal(0);
-    const cashBalance   = (methodMap.get('CASH')   ?? zero).toString();
-    const bankBalance   = (methodMap.get('BANCOS') ?? zero).toString();
-    const cesarBalance  = (methodMap.get('CESAR')  ?? zero).toString();
 
     // ── This-month sales KPIs ─────────────────────────────────────────────────
     const salesThisMonthRevenue = (
@@ -261,7 +256,7 @@ export class AnalyticsService {
         totalCollectedRevenueAgg._sum.amount ?? zero
       ).toString(),
       totalPendingBalance: totalPendingBalance.toString(),
-      // ── New: payment method balances (all-time, PAID) ──────────────────────
+      // ── Treasury ledger balances (MXN) ─────────────────────────────────────
       cashBalance,
       bankBalance,
       cesarBalance,
