@@ -13,6 +13,7 @@ import {
   listCapitalDistributions,
   updateCapitalContribution,
   updateCapitalDistribution,
+  updateCapitalInvestor,
   type CapitalAccount,
   type CapitalContribution,
   type CapitalDistribution,
@@ -349,6 +350,7 @@ function InvestorDrawer({
   onClose,
   onAporte,
   onRetiro,
+  onConfigure,
 }: {
   investor: CapitalInvestorBalance | null;
   primaryInvestorId: string | undefined;
@@ -357,6 +359,7 @@ function InvestorDrawer({
   onClose: () => void;
   onAporte: (investorId: string) => void;
   onRetiro: (investorId: string) => void;
+  onConfigure: () => void;
 }) {
   useEffect(() => {
     if (!investor) return;
@@ -443,20 +446,27 @@ function InvestorDrawer({
             ))}
           </div>
 
-          <div className="flex gap-2 border-b border-white/[0.06] px-5 py-4">
+          <div className="flex flex-wrap gap-2 border-b border-white/[0.06] px-5 py-4">
             <button
               type="button"
               onClick={() => onAporte(investor.id)}
-              className="ui-btn-secondary flex-1 px-3 py-2 text-sm"
+              className="ui-btn-secondary min-w-0 flex-1 px-3 py-2 text-sm"
             >
               + Aporte
             </button>
             <button
               type="button"
               onClick={() => onRetiro(investor.id)}
-              className="ui-btn-primary flex-1 px-3 py-2 text-sm"
+              className="ui-btn-primary min-w-0 flex-1 px-3 py-2 text-sm"
             >
               + Retiro
+            </button>
+            <button
+              type="button"
+              onClick={onConfigure}
+              className="ui-btn-ghost min-w-0 flex-1 px-3 py-2 text-sm"
+            >
+              Configurar
             </button>
           </div>
 
@@ -760,23 +770,36 @@ const EMPTY_SETUP: SetupForm = { name: '', ownershipPercent: '', notes: '' };
 
 function InvestorSetupModal({
   open,
+  editing,
   onClose,
   onSave,
 }: {
   open: boolean;
+  editing?: CapitalInvestorBalance | null;
   onClose: () => void;
   onSave: (data: SetupForm) => Promise<void>;
 }) {
   const [form, setForm] = useState<SetupForm>(EMPTY_SETUP);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const isEdit = editing != null;
 
   useEffect(() => {
     if (!open) {
       setForm(EMPTY_SETUP);
       setError(null);
+      return;
     }
-  }, [open]);
+    if (editing) {
+      setForm({
+        name: editing.name,
+        ownershipPercent: editing.ownershipPercent,
+        notes: '',
+      });
+    } else {
+      setForm(EMPTY_SETUP);
+    }
+  }, [open, editing]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -788,9 +811,22 @@ function InvestorSetupModal({
     }
     setSaving(true);
     try {
+      if (isEdit) {
+        await updateCapitalInvestor(editing.id, {
+          name: form.name.trim(),
+          ownershipPercent: pct,
+          notes: form.notes.trim() || undefined,
+        });
+      }
       await onSave(form);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Error creando socio.');
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : isEdit
+            ? 'Error guardando socio.'
+            : 'Error creando socio.',
+      );
     } finally {
       setSaving(false);
     }
@@ -809,8 +845,12 @@ function InvestorSetupModal({
       <div className="relative w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-panel/95 shadow-2xl backdrop-blur">
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold tracking-tight">Configurar socio</h2>
-            <p className="mt-0.5 text-xs text-white/40">Agrega un socio del negocio.</p>
+            <h2 className="text-base font-semibold tracking-tight">
+              {isEdit ? 'Editar socio' : 'Configurar socio'}
+            </h2>
+            {!isEdit ? (
+              <p className="mt-0.5 text-xs text-white/40">Agrega un socio del negocio.</p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -869,7 +909,7 @@ function InvestorSetupModal({
               disabled={saving || !form.name.trim() || !form.ownershipPercent}
               className="ui-btn-primary px-5 py-2 disabled:opacity-50"
             >
-              {saving ? 'Guardando…' : 'Guardar socio'}
+              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Guardar socio'}
             </button>
           </div>
         </form>
@@ -1322,6 +1362,7 @@ export default function CapitalPage() {
     defaultInvestorId?: string;
   }>({ open: false, editing: null });
   const [setupModal, setSetupModal] = useState(false);
+  const [editingInvestor, setEditingInvestor] = useState<CapitalInvestorBalance | null>(null);
   const [selectedInvestor, setSelectedInvestor] = useState<CapitalInvestorBalance | null>(null);
   const [deletingAporteId, setDeletingAporteId] = useState<string | null>(null);
   const [deletingRetiroId, setDeletingRetiroId] = useState<string | null>(null);
@@ -1425,13 +1466,21 @@ export default function CapitalPage() {
     }
   }
 
-  async function handleCreateInvestor(form: SetupForm) {
-    await createCapitalInvestor({
-      name: form.name.trim(),
-      ownershipPercent: Number(form.ownershipPercent),
-      notes: form.notes.trim() || undefined,
-    });
+  function closeSetupModal() {
     setSetupModal(false);
+    setEditingInvestor(null);
+  }
+
+  async function handleSaveInvestor(form: SetupForm) {
+    if (!editingInvestor) {
+      await createCapitalInvestor({
+        name: form.name.trim(),
+        ownershipPercent: Number(form.ownershipPercent),
+        notes: form.notes.trim() || undefined,
+      });
+    }
+    setSetupModal(false);
+    setEditingInvestor(null);
     await loadData();
   }
 
@@ -1505,8 +1554,9 @@ export default function CapitalPage() {
         </div>
         <InvestorSetupModal
           open={setupModal}
-          onClose={() => setSetupModal(false)}
-          onSave={handleCreateInvestor}
+          editing={editingInvestor}
+          onClose={closeSetupModal}
+          onSave={handleSaveInvestor}
         />
       </div>
     );
@@ -1528,7 +1578,10 @@ export default function CapitalPage() {
           <button
             type="button"
             className="ui-btn-ghost px-3 py-2 text-sm"
-            onClick={() => setSetupModal(true)}
+            onClick={() => {
+              setEditingInvestor(null);
+              setSetupModal(true);
+            }}
           >
             + Socio
           </button>
@@ -1615,6 +1668,13 @@ export default function CapitalPage() {
           setSelectedInvestor(null);
           setRetiroModal({ open: true, editing: null, defaultInvestorId: investorId });
         }}
+        onConfigure={() => {
+          if (!selectedInvestor) return;
+          const investor = selectedInvestor;
+          setSelectedInvestor(null);
+          setEditingInvestor(investor);
+          setSetupModal(true);
+        }}
       />
 
       {/* Tabs + Tables */}
@@ -1692,8 +1752,9 @@ export default function CapitalPage() {
 
       <InvestorSetupModal
         open={setupModal}
-        onClose={() => setSetupModal(false)}
-        onSave={handleCreateInvestor}
+        editing={editingInvestor}
+        onClose={closeSetupModal}
+        onSave={handleSaveInvestor}
       />
     </div>
   );
