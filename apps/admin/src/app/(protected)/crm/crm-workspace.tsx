@@ -144,74 +144,14 @@ function watchTitle(watch: Watch | undefined) {
   return `${watch.brand} ${watch.model}`.trim();
 }
 
-function relationshipInsight(purchaseCount: number, interactionCount: number, historicalValue: number) {
-  const score = Math.min(
-    100,
-    Math.round(
-      Math.min(40, purchaseCount * 12) +
-        Math.min(30, interactionCount * 4) +
-        Math.min(30, historicalValue / 60000),
-    ),
-  );
-
-  if (score >= 80) return { score, label: 'Muy alta', subtitle: 'Cliente estratégico' };
-  if (score >= 60) return { score, label: 'Alta', subtitle: 'Relación consolidada' };
-  if (score >= 40) return { score, label: 'Media', subtitle: 'Relación en desarrollo' };
-  return { score, label: 'Emergente', subtitle: 'Relación inicial' };
-}
-
-function InsightField({ label, value, emphasize }: { label: string; value: string; emphasize?: boolean }) {
-  return (
-    <div>
-      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">{label}</p>
-      <p
-        className={`mt-1 tabular-nums ${emphasize ? 'text-base font-semibold text-white' : 'text-sm font-medium text-white/85'}`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function RelationshipCard({
-  score,
-  label,
-  subtitle,
-}: {
-  score: number;
-  label: string;
-  subtitle: string;
-}) {
-  return (
-    <section className="rounded-xl border border-white/[0.08] bg-surface/40 p-4">
-      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">Relación</p>
-      <div className="mt-3 flex items-center gap-4">
-        <div className="relative h-14 w-14 shrink-0">
-          <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
-            <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2.5" />
-            <circle
-              cx="18"
-              cy="18"
-              r="15.5"
-              fill="none"
-              stroke="#10b981"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              pathLength={100}
-              strokeDasharray={`${score} 100`}
-            />
-          </svg>
-          <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums text-white">
-            {score}
-          </span>
-        </div>
-        <div>
-          <p className="text-lg font-semibold tracking-tight text-white">{label}</p>
-          <p className="mt-0.5 text-sm text-white/45">{subtitle}</p>
-        </div>
-      </div>
-    </section>
-  );
+function formatRelativeDays(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const diffMs = Date.now() - date.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (days <= 0) return 'Hoy';
+  if (days === 1) return 'Hace 1 día';
+  return `Hace ${days} días`;
 }
 
 function OpportunityCard({
@@ -227,16 +167,30 @@ function OpportunityCard({
   return (
     <article className="rounded-xl border border-white/[0.08] bg-surface/40 p-4">
       <h4 className="text-base font-semibold tracking-tight text-white">{watchTitle(watch)}</h4>
-      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
-        <InsightField label="Probabilidad" value={`${probability}%`} emphasize />
-        <InsightField label="Valor estimado" value={fmtMxn(Number(deal.agreedPrice))} emphasize />
-        <InsightField label="Próximo paso" value={nextStep} />
-        <InsightField
-          label="Fecha objetivo"
-          value={deal.expectedCloseAt ? fmtDateShort(deal.expectedCloseAt) : 'Sin fecha'}
-        />
-        <InsightField label="Status" value="Activa" />
-      </div>
+      <dl className="mt-3 space-y-2 text-sm">
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-white/40">Probabilidad:</dt>
+          <dd className="font-medium tabular-nums text-white">{probability}%</dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-white/40">Valor estimado:</dt>
+          <dd className="font-medium tabular-nums text-white">{fmtMxn(Number(deal.agreedPrice))}</dd>
+        </div>
+        <div>
+          <dt className="text-white/40">Próximo paso:</dt>
+          <dd className="mt-0.5 font-medium text-white/85">{nextStep}</dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-white/40">Fecha objetivo:</dt>
+          <dd className="font-medium tabular-nums text-white/85">
+            {deal.expectedCloseAt ? fmtDateShort(deal.expectedCloseAt) : 'Sin fecha'}
+          </dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-white/40">Status:</dt>
+          <dd className="font-medium text-emerald-400/90">Activa</dd>
+        </div>
+      </dl>
     </article>
   );
 }
@@ -481,11 +435,12 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
     const wonDeals = clientDeals.filter((deal) => deal.stage === 'CLOSED_WON');
     const openDeals = clientDeals.filter((deal) => OPEN_DEAL_STAGES.includes(deal.stage));
     const historicalValue = wonDeals.reduce((sum, deal) => sum + Number(deal.agreedPrice), 0);
-    const avgTicket = wonDeals.length ? historicalValue / wonDeals.length : 0;
     const lastPurchase = [...wonDeals].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     )[0];
-    const relationship = relationshipInsight(wonDeals.length, interactions.length, historicalValue);
+    const lastInteraction = [...interactions].sort(
+      (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+    )[0];
     const nextOpenDeal = [...openDeals].sort((a, b) => {
       const aDate = a.expectedCloseAt ?? a.updatedAt;
       const bDate = b.expectedCloseAt ?? b.updatedAt;
@@ -496,22 +451,14 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
       wonDeals,
       openDeals,
       historicalValue,
-      avgTicket,
       lastPurchase,
-      relationship,
+      lastInteraction,
       nextAction: nextOpenDeal
         ? {
-            title: DEAL_STAGE_NEXT_STEP[nextOpenDeal.stage],
-            detail: watchTitle(watchesById.get(nextOpenDeal.watchId)),
+            action: `${DEAL_STAGE_NEXT_STEP[nextOpenDeal.stage]} ${watchTitle(watchesById.get(nextOpenDeal.watchId))}`,
             due: nextOpenDeal.expectedCloseAt,
           }
-        : interactions[0]
-          ? {
-              title: 'Dar seguimiento',
-              detail: interactions[0].notes,
-              due: interactions[0].occurredAt,
-            }
-          : null,
+        : null,
     };
   }, [clientDeals, interactions, watchesById]);
 
@@ -792,94 +739,73 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
             </div>
           ) : selectedClient ? (
             <div className="space-y-4 p-4">
-              <header className="flex flex-wrap items-start justify-between gap-4 border-b border-white/[0.08] pb-4">
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-xl font-semibold tracking-tight text-white">{selectedClient.name}</h2>
-                  <p className="mt-1 text-sm text-white/45">
-                    {selectedClient.email ?? 'Sin correo'} · {selectedClient.phone ?? 'Sin teléfono'}
-                  </p>
-                  {(selectedClient.tags ?? []).length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {selectedClient.tags?.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-white/45"
-                        >
-                          {tag}
-                        </span>
-                      ))}
+              <header className="border-b border-white/[0.08] pb-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-xl font-semibold tracking-tight text-white">{selectedClient.name}</h2>
+                    <p className="mt-1 text-sm text-white/45">
+                      {selectedClient.email ?? 'Sin correo'} · {selectedClient.phone ?? 'Sin teléfono'}
+                    </p>
+                    {(selectedClient.tags ?? []).length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selectedClient.tags?.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-white/45"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={openEditModal} className="ui-btn-secondary px-3 py-2 text-xs">
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(selectedClient)}
+                      className="ui-btn-danger px-3 py-2 text-xs"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <div>
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">
+                      Valor histórico
+                    </p>
+                    <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight text-white">
+                      {fmtMxn(clientInsights.historicalValue)}
+                    </p>
+                    <p className="mt-2 text-sm text-white/50">
+                      {clientInsights.wonDeals.length}{' '}
+                      {clientInsights.wonDeals.length === 1 ? 'compra' : 'compras'}
+                    </p>
+                  </div>
+                  <div className="space-y-3 text-sm">
+                    <div>
+                      <p className="text-white/40">Última compra:</p>
+                      <p className="mt-0.5 font-medium text-white">
+                        {clientInsights.lastPurchase
+                          ? watchTitle(watchesById.get(clientInsights.lastPurchase.watchId))
+                          : 'Sin compras'}
+                      </p>
                     </div>
-                  ) : null}
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">
-                    Valor histórico
-                  </p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-white">
-                    {fmtMxn(clientInsights.historicalValue)}
-                  </p>
-                </div>
-                <div className="flex w-full gap-2 sm:w-auto sm:justify-end">
-                  <button type="button" onClick={openEditModal} className="ui-btn-secondary px-3 py-2 text-xs">
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteTarget(selectedClient)}
-                    className="ui-btn-danger px-3 py-2 text-xs"
-                  >
-                    Eliminar
-                  </button>
+                    <div>
+                      <p className="text-white/40">Última interacción:</p>
+                      <p className="mt-0.5 font-medium text-white">
+                        {clientInsights.lastInteraction
+                          ? formatRelativeDays(clientInsights.lastInteraction.occurredAt)
+                          : 'Sin interacciones'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </header>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <section className="rounded-xl border border-white/[0.08] bg-surface/40 p-4">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">Compras</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums text-white">
-                    {clientInsights.wonDeals.length}
-                  </p>
-                </section>
-
-                <section className="rounded-xl border border-white/[0.08] bg-surface/40 p-4">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">
-                    Ticket promedio
-                  </p>
-                  <div className="mt-3 space-y-3">
-                    <InsightField
-                      label="Última compra"
-                      value={
-                        clientInsights.lastPurchase
-                          ? watchTitle(watchesById.get(clientInsights.lastPurchase.watchId))
-                          : 'Sin compras'
-                      }
-                    />
-                    <InsightField
-                      label="Fecha"
-                      value={
-                        clientInsights.lastPurchase
-                          ? fmtDateShort(clientInsights.lastPurchase.updatedAt)
-                          : '—'
-                      }
-                    />
-                    <InsightField
-                      label="Ticket promedio"
-                      value={
-                        clientInsights.wonDeals.length
-                          ? fmtMxn(clientInsights.avgTicket)
-                          : '—'
-                      }
-                      emphasize
-                    />
-                  </div>
-                </section>
-
-                <RelationshipCard
-                  score={clientInsights.relationship.score}
-                  label={clientInsights.relationship.label}
-                  subtitle={clientInsights.relationship.subtitle}
-                />
-              </div>
 
               <ClientAccountsSummary clientId={selectedClient.id} />
 
@@ -888,17 +814,24 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
                   Próxima acción
                 </p>
                 {clientInsights.nextAction ? (
-                  <div className="mt-3">
-                    <p className="text-base font-semibold text-white">{clientInsights.nextAction.title}</p>
-                    <p className="mt-1 text-sm text-white/55">{clientInsights.nextAction.detail}</p>
+                  <div className="mt-3 space-y-2">
+                    <p className="text-base font-semibold leading-snug text-white">
+                      {clientInsights.nextAction.action}
+                    </p>
                     {clientInsights.nextAction.due ? (
-                      <p className="mt-2 text-xs tabular-nums text-white/35">
-                        {fmtDateShort(clientInsights.nextAction.due)}
+                      <p className="text-sm text-white/55">
+                        Fecha objetivo:{' '}
+                        <span className="tabular-nums text-white/75">
+                          {fmtDateShort(clientInsights.nextAction.due)}
+                        </span>
                       </p>
                     ) : null}
+                    <p className="text-sm text-white/55">
+                      Status: <span className="font-medium text-amber-400/90">Pendiente</span>
+                    </p>
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-white/40">Sin acción pendiente.</p>
+                  <p className="mt-3 text-sm text-white/40">Sin seguimiento programado</p>
                 )}
               </section>
 
