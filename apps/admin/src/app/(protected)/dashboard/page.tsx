@@ -45,6 +45,18 @@ function fmtMxn(value: string | number | null | undefined) {
   }).format(Number.isFinite(n) ? n : 0);
 }
 
+function calcRoi(capitalNeto: string | null, totalCapitalContributed: string | null): number | null {
+  if (capitalNeto === null || totalCapitalContributed === null) return null;
+  const net = Number(capitalNeto);
+  const contributed = Number(totalCapitalContributed);
+  if (!Number.isFinite(net) || !Number.isFinite(contributed) || contributed <= 0) return null;
+  return ((net - contributed) / contributed) * 100;
+}
+
+function fmtRoiPct(roi: number) {
+  return `${Math.round(roi)}%`;
+}
+
 function ExecutiveSectionTitle({
   title,
   subtitle,
@@ -81,6 +93,7 @@ function FinancialPositionHero({
   const pendingPartners = num(pendingToPartners);
   const investedCapital = num(capitalContributed);
   const netCapital = num(capitalNeto);
+  const roi = calcRoi(capitalNeto, capitalContributed);
 
   const positions = [
     { label: 'Efectivo', value: fmtMxn(cash), tone: 'positive' as const },
@@ -102,6 +115,16 @@ function FinancialPositionHero({
       tone: capitalContributed !== null && investedCapital > 0 ? ('positive' as const) : ('muted' as const),
     },
     {
+      label: 'ROI',
+      value: roi !== null ? fmtRoiPct(roi) : '—',
+      tone:
+        roi === null ? ('muted' as const) :
+        roi > 0 ? ('positive' as const) :
+        roi < 0 ? ('negative' as const) :
+        ('muted' as const),
+      helper: 'Retorno sobre capital invertido',
+    },
+    {
       label: 'Capital neto',
       value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
       tone:
@@ -109,7 +132,6 @@ function FinancialPositionHero({
         netCapital > 0 ? ('positive' as const) :
         netCapital < 0 ? ('negative' as const) :
         ('muted' as const),
-      helper: 'Capital aportado + utilidad acumulada - retiros realizados',
     },
   ];
 
@@ -132,7 +154,7 @@ function FinancialPositionHero({
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 lg:divide-x lg:divide-y-0">
+      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 lg:divide-x lg:divide-y-0">
         {positions.map((item) => (
           <div key={item.label} className="px-4 py-4 md:px-5 md:py-5">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
