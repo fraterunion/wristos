@@ -199,6 +199,42 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
 
   const watchOptions = useMemo(() => buildWatchOptions(watches), [watches]);
   const clientOptions = useMemo(() => buildClientOptions(clients), [clients]);
+  const selectedWatch = useMemo(
+    () => watches.find((watch) => watch.id === watchId) ?? null,
+    [watches, watchId],
+  );
+
+  const hasRegisteredCost =
+    selectedWatch != null &&
+    (Number(selectedWatch.cost) > 0 || (selectedWatch.expenses?.length ?? 0) > 0);
+  const inventoryCostMxn = hasRegisteredCost && selectedWatch
+    ? Number(selectedWatch.effectiveCost)
+    : null;
+  const salePriceMxnPreview =
+    salePriceNum > 0
+      ? saleCurrency === 'USD'
+        ? fxRate
+          ? salePriceNum * fxRate.rate
+          : null
+        : salePriceNum
+      : null;
+  const profitBankFee = isBancos && bankChannel && initAmountNum > 0 ? bankFeePreview : 0;
+  const estimatedProfit =
+    hasRegisteredCost && salePriceMxnPreview != null
+      ? salePriceMxnPreview - (inventoryCostMxn ?? 0) - profitBankFee
+      : null;
+  const estimatedMarginPct =
+    estimatedProfit != null && salePriceMxnPreview != null && salePriceMxnPreview > 0
+      ? (estimatedProfit / salePriceMxnPreview) * 100
+      : null;
+  const profitToneClass =
+    estimatedProfit == null
+      ? 'text-white/50'
+      : estimatedProfit > 0
+        ? 'text-emerald-400'
+        : estimatedProfit < 0
+          ? 'text-rose-400'
+          : 'text-white/50';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -349,6 +385,46 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
               <p className="text-[10px] uppercase tracking-widest text-white/30">Venta estimada en pesos</p>
               <p className="mt-1 text-base font-semibold text-white">{fmtMxn(previewMxn)}</p>
               <p className="text-[10px] text-white/25">{fmtUsd(salePriceNum)} × ${fxRate.rate.toFixed(2)}</p>
+            </div>
+          )}
+
+          {/* Financial preview */}
+          {selectedWatch && (
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-3">
+              <p className="text-[10px] uppercase tracking-widest text-white/30">Vista financiera estimada</p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/30">Costo inventario</p>
+                  <p className="mt-1 text-sm font-semibold text-white/70">
+                    {hasRegisteredCost && inventoryCostMxn != null
+                      ? fmtMxn(inventoryCostMxn)
+                      : 'Costo no registrado'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/30">Precio de venta</p>
+                  <p className="mt-1 text-sm font-semibold text-white/70">
+                    {salePriceMxnPreview != null ? fmtMxn(salePriceMxnPreview) : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/30">Utilidad estimada</p>
+                  <p className={`mt-1 text-sm font-semibold tabular-nums ${profitToneClass}`}>
+                    {estimatedProfit != null ? fmtMxn(estimatedProfit) : '—'}
+                  </p>
+                  {profitBankFee > 0 && (
+                    <p className="mt-0.5 text-[10px] text-white/25">
+                      Incluye comisión bancaria {fmtMxn(profitBankFee)}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/30">Margen estimado</p>
+                  <p className={`mt-1 text-sm font-semibold tabular-nums ${profitToneClass}`}>
+                    {estimatedMarginPct != null ? `${estimatedMarginPct.toFixed(1)}%` : '—'}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 

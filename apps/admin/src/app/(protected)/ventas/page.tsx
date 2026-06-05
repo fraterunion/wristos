@@ -58,6 +58,31 @@ function fmtDate(iso: string | null | undefined) {
   return new Date(iso).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function profitToneClass(profit: number | null) {
+  if (profit == null || !Number.isFinite(profit) || profit === 0) return 'text-white/35';
+  return profit > 0 ? 'text-emerald-400' : 'text-rose-400';
+}
+
+function calcSaleProfit(sale: SoldItem): { profit: number | null; bankFeesIncluded: boolean } {
+  const cost = Number(sale.watch.effectiveCost);
+  const total = Number(sale.agreedPrice);
+  if (!Number.isFinite(cost) || !Number.isFinite(total)) {
+    return { profit: null, bankFeesIncluded: sale.bankFee !== null };
+  }
+
+  const bankFeesIncluded = sale.bankFee !== null;
+  if (!bankFeesIncluded) {
+    return { profit: total - cost, bankFeesIncluded: false };
+  }
+
+  const bankFee = Number(sale.bankFee);
+  if (!Number.isFinite(bankFee)) {
+    return { profit: total - cost, bankFeesIncluded: false };
+  }
+
+  return { profit: total - cost - bankFee, bankFeesIncluded: true };
+}
+
 const now = new Date();
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -381,13 +406,15 @@ export default function VentasPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+              <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
                     <th className="w-[86px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Fecha</th>
                     <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Reloj</th>
                     <th className="w-[120px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden md:table-cell">Comprador</th>
                     <th className="w-[100px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Total</th>
+                    <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden lg:table-cell">Costo</th>
+                    <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden lg:table-cell">Utilidad</th>
                     <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden lg:table-cell">Pagado</th>
                     <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden lg:table-cell">Pendiente</th>
                     <th className="w-[86px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Estatus</th>
@@ -401,6 +428,7 @@ export default function VentasPage() {
                   {filteredSales.map((sale) => {
                     const status = sale.computedStatus as ComputedStatus;
                     const hasFee = !!sale.bankFee && Number(sale.bankFee) > 0;
+                    const { profit, bankFeesIncluded } = calcSaleProfit(sale);
                     const usdSub = sale.originalCurrency === 'USD' && sale.originalAmount && sale.exchangeRate
                       ? fmtUsd(sale.originalAmount)
                       : null;
@@ -446,6 +474,23 @@ export default function VentasPage() {
                               {usdSub}
                             </p>
                           )}
+                        </td>
+
+                        {/* Costo */}
+                        <td className="px-3 py-3.5 text-right align-middle whitespace-nowrap hidden lg:table-cell">
+                          <span className="text-sm tabular-nums text-white/45">
+                            {fmtMxn(sale.watch.effectiveCost)}
+                          </span>
+                        </td>
+
+                        {/* Utilidad */}
+                        <td
+                          className="px-3 py-3.5 text-right align-middle whitespace-nowrap hidden lg:table-cell"
+                          title={!bankFeesIncluded ? 'Utilidad sin comisiones bancarias' : undefined}
+                        >
+                          <span className={`text-sm font-semibold tabular-nums ${profitToneClass(profit)}`}>
+                            {profit != null ? fmtMxn(profit) : '—'}
+                          </span>
                         </td>
 
                         {/* Pagado */}
