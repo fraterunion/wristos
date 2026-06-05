@@ -8,6 +8,7 @@ import {
   createCapitalInvestor,
   deleteCapitalContribution,
   deleteCapitalDistribution,
+  getCapitalAnnualBreakdown,
   getCapitalSummary,
   listCapitalContributions,
   listCapitalDistributions,
@@ -15,6 +16,7 @@ import {
   updateCapitalDistribution,
   updateCapitalInvestor,
   type CapitalAccount,
+  type CapitalAnnualBreakdown,
   type CapitalContribution,
   type CapitalDistribution,
   type CapitalInvestorBalance,
@@ -73,6 +75,31 @@ const ACCOUNT_OPTIONS: Array<{ value: CapitalAccount; label: string }> = [
   { value: 'BANK', label: 'Bancos' },
   { value: 'CESAR_ACCOUNT', label: 'Cuenta César' },
 ];
+
+const MONTH_LABELS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'] as const;
+
+function profitToneClass(value: string) {
+  const n = Number(value);
+  if (n > 0) return 'text-emerald-400';
+  if (n < 0) return 'text-rose-400';
+  return 'text-white/50';
+}
+
+function pendingToneClass(value: string) {
+  const n = Number(value);
+  if (n > 0) return 'text-amber-400';
+  if (n < 0) return 'text-rose-400';
+  return 'text-white/50';
+}
+
+function paidToneClass(value: string) {
+  const n = Number(value);
+  return n > 0 ? 'text-white/70' : 'text-white/50';
+}
+
+function sumAmounts(values: string[]) {
+  return values.reduce((sum, v) => sum + Number(v), 0);
+}
 
 // ─── PillBtn ──────────────────────────────────────────────────────────────────
 
@@ -1346,9 +1373,207 @@ function RetiroModal({
   );
 }
 
+// ─── AnnualPartnerPerformanceTable ────────────────────────────────────────────
+
+function AnnualPartnerPerformanceTable({
+  currentYear,
+  year,
+  onYearChange,
+  breakdown,
+  loading,
+}: {
+  currentYear: number;
+  year: number;
+  onYearChange: (year: number) => void;
+  breakdown: CapitalAnnualBreakdown | null;
+  loading: boolean;
+}) {
+  const yearOptions = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1];
+  const investors = breakdown?.months[0]?.investors ?? [];
+
+  const totals = breakdown
+    ? {
+        businessProfit: sumAmounts(breakdown.months.map((m) => m.businessProfit)),
+        totalDistributionsPaid: sumAmounts(breakdown.months.map((m) => m.totalDistributionsPaid)),
+        totalPendingToPartners: sumAmounts(breakdown.months.map((m) => m.totalPendingToPartners)),
+        investors: investors.map((inv) => ({
+          id: inv.id,
+          profitEntitlement: sumAmounts(
+            breakdown.months.map(
+              (m) => m.investors.find((i) => i.id === inv.id)?.profitEntitlement ?? '0',
+            ),
+          ),
+          distributionsPaid: sumAmounts(
+            breakdown.months.map(
+              (m) => m.investors.find((i) => i.id === inv.id)?.distributionsPaid ?? '0',
+            ),
+          ),
+          pendingProfit: sumAmounts(
+            breakdown.months.map(
+              (m) => m.investors.find((i) => i.id === inv.id)?.pendingProfit ?? '0',
+            ),
+          ),
+        })),
+      }
+    : null;
+
+  const thClass =
+    'whitespace-nowrap px-3 py-2.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30';
+  const tdClass = 'whitespace-nowrap px-3 py-2.5 text-right text-xs tabular-nums';
+  const tdMonthClass = 'whitespace-nowrap px-3 py-2.5 text-xs font-medium text-white/60';
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/20">
+      <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight text-white">
+            Performance anual de socios
+          </h2>
+          <p className="mt-0.5 text-xs text-white/35">
+            Utilidad, cobrado y pendiente por socio mes a mes.
+          </p>
+        </div>
+        <select
+          value={year}
+          onChange={(e) => onYearChange(Number(e.target.value))}
+          className="ui-input w-full shrink-0 sm:w-auto sm:min-w-[120px]"
+          aria-label="Año"
+        >
+          {yearOptions.map((y) => (
+            <option key={y} value={y}>
+              {y}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-emerald-400" />
+        </div>
+      ) : !breakdown ? (
+        <div className="px-5 py-14 text-center md:px-6">
+          <p className="text-sm text-white/35">No se pudo cargar el desglose anual.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-white/[0.06] bg-black/20">
+                <th className={thClass}>Mes</th>
+                <th className={`${thClass} text-right`}>Utilidad total</th>
+                <th className={`${thClass} text-right`}>Cobrado total</th>
+                <th className={`${thClass} text-right`}>Pendiente total</th>
+                {investors.map((inv) => (
+                  <th key={inv.id} colSpan={3} className={`${thClass} border-l border-white/[0.06] text-center`}>
+                    {inv.name}
+                  </th>
+                ))}
+              </tr>
+              <tr className="border-b border-white/[0.06]">
+                <th className={thClass} />
+                <th className={thClass} />
+                <th className={thClass} />
+                <th className={thClass} />
+                {investors.flatMap((inv) => [
+                  <th
+                    key={`${inv.id}-util`}
+                    className={`${thClass} border-l border-white/[0.06] text-right`}
+                  >
+                    Utilidad
+                  </th>,
+                  <th key={`${inv.id}-cob`} className={`${thClass} text-right`}>
+                    Cobrado
+                  </th>,
+                  <th key={`${inv.id}-pen`} className={`${thClass} text-right`}>
+                    Pendiente
+                  </th>,
+                ])}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.04]">
+              {breakdown.months.map((row) => (
+                <tr key={row.month} className="transition-colors hover:bg-white/[0.02]">
+                  <td className={tdMonthClass}>{MONTH_LABELS[row.month - 1]}</td>
+                  <td className={`${tdClass} font-medium ${profitToneClass(row.businessProfit)}`}>
+                    {fmtMxn(row.businessProfit)}
+                  </td>
+                  <td className={`${tdClass} ${paidToneClass(row.totalDistributionsPaid)}`}>
+                    {fmtMxn(row.totalDistributionsPaid)}
+                  </td>
+                  <td className={`${tdClass} font-medium ${pendingToneClass(row.totalPendingToPartners)}`}>
+                    {fmtMxn(row.totalPendingToPartners)}
+                  </td>
+                  {row.investors.flatMap((inv) => [
+                    <td
+                      key={`${row.month}-${inv.id}-util`}
+                      className={`${tdClass} border-l border-white/[0.04] ${profitToneClass(inv.profitEntitlement)}`}
+                    >
+                      {fmtMxn(inv.profitEntitlement)}
+                    </td>,
+                    <td
+                      key={`${row.month}-${inv.id}-cob`}
+                      className={`${tdClass} ${paidToneClass(inv.distributionsPaid)}`}
+                    >
+                      {fmtMxn(inv.distributionsPaid)}
+                    </td>,
+                    <td
+                      key={`${row.month}-${inv.id}-pen`}
+                      className={`${tdClass} font-medium ${pendingToneClass(inv.pendingProfit)}`}
+                    >
+                      {fmtMxn(inv.pendingProfit)}
+                    </td>,
+                  ])}
+                </tr>
+              ))}
+            </tbody>
+            {totals && (
+              <tfoot>
+                <tr className="border-t border-white/[0.08] bg-black/25">
+                  <td className={`${tdMonthClass} font-semibold text-white`}>TOTAL</td>
+                  <td className={`${tdClass} font-semibold ${profitToneClass(String(totals.businessProfit))}`}>
+                    {fmtMxn(totals.businessProfit)}
+                  </td>
+                  <td className={`${tdClass} font-semibold ${paidToneClass(String(totals.totalDistributionsPaid))}`}>
+                    {fmtMxn(totals.totalDistributionsPaid)}
+                  </td>
+                  <td className={`${tdClass} font-semibold ${pendingToneClass(String(totals.totalPendingToPartners))}`}>
+                    {fmtMxn(totals.totalPendingToPartners)}
+                  </td>
+                  {totals.investors.flatMap((inv) => [
+                    <td
+                      key={`total-${inv.id}-util`}
+                      className={`${tdClass} border-l border-white/[0.06] font-semibold ${profitToneClass(String(inv.profitEntitlement))}`}
+                    >
+                      {fmtMxn(inv.profitEntitlement)}
+                    </td>,
+                    <td
+                      key={`total-${inv.id}-cob`}
+                      className={`${tdClass} font-semibold ${paidToneClass(String(inv.distributionsPaid))}`}
+                    >
+                      {fmtMxn(inv.distributionsPaid)}
+                    </td>,
+                    <td
+                      key={`total-${inv.id}-pen`}
+                      className={`${tdClass} font-semibold ${pendingToneClass(String(inv.pendingProfit))}`}
+                    >
+                      {fmtMxn(inv.pendingProfit)}
+                    </td>,
+                  ])}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CapitalPage() {
+  const currentYear = new Date().getFullYear();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CapitalSummary | null>(null);
@@ -1371,6 +1596,9 @@ export default function CapitalPage() {
   const [selectedInvestor, setSelectedInvestor] = useState<CapitalInvestorBalance | null>(null);
   const [deletingAporteId, setDeletingAporteId] = useState<string | null>(null);
   const [deletingRetiroId, setDeletingRetiroId] = useState<string | null>(null);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const [annualBreakdown, setAnnualBreakdown] = useState<CapitalAnnualBreakdown | null>(null);
+  const [annualLoading, setAnnualLoading] = useState(false);
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
@@ -1394,6 +1622,14 @@ export default function CapitalPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    setAnnualLoading(true);
+    getCapitalAnnualBreakdown(selectedYear)
+      .then(setAnnualBreakdown)
+      .catch(() => setAnnualBreakdown(null))
+      .finally(() => setAnnualLoading(false));
+  }, [selectedYear]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
@@ -1736,6 +1972,14 @@ export default function CapitalPage() {
           />
         )}
       </div>
+
+      <AnnualPartnerPerformanceTable
+        currentYear={currentYear}
+        year={selectedYear}
+        onYearChange={setSelectedYear}
+        breakdown={annualBreakdown}
+        loading={annualLoading}
+      />
 
       {/* Modals */}
       <AporteModal

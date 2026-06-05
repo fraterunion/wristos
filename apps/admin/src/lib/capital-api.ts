@@ -30,6 +30,31 @@ export type CapitalSummary = {
   investors: CapitalInvestorBalance[];
 };
 
+export type CapitalAnnualBreakdownInvestor = {
+  id: string;
+  name: string;
+  ownershipPercent: string;
+  profitEntitlement: string;
+  distributionsPaid: string;
+  pendingProfit: string;
+};
+
+export type CapitalAnnualBreakdownMonth = {
+  month: number;
+  revenue: string;
+  costOfSold: string;
+  bankFees: string;
+  businessProfit: string;
+  totalDistributionsPaid: string;
+  totalPendingToPartners: string;
+  investors: CapitalAnnualBreakdownInvestor[];
+};
+
+export type CapitalAnnualBreakdown = {
+  year: number;
+  months: CapitalAnnualBreakdownMonth[];
+};
+
 export type CapitalContribution = {
   id: string;
   tenantId: string;
@@ -62,6 +87,10 @@ const AUTH = { authenticated: true } as const;
 
 export function getCapitalSummary() {
   return apiGet<CapitalSummary>('/capital/summary', AUTH);
+}
+
+export function getCapitalAnnualBreakdown(year: number) {
+  return apiGet<CapitalAnnualBreakdown>('/capital/annual-breakdown', { ...AUTH, query: { year } });
 }
 
 export function listCapitalInvestors() {
