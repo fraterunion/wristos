@@ -102,16 +102,6 @@ function financialToneClass(tone: FinancialTone) {
           : 'text-white';
 }
 
-function financialIconBubbleClass(tone: FinancialTone) {
-  return tone === 'positive'
-    ? 'bg-emerald-500/10 text-emerald-400/80'
-    : tone === 'warning'
-      ? 'bg-amber-500/10 text-amber-400/80'
-      : tone === 'negative'
-        ? 'bg-rose-500/10 text-rose-400/80'
-        : 'bg-white/[0.04] text-white/45';
-}
-
 function financialGroupSurfaceClass(group: FinancialGroup) {
   return group === 'liquidity'
     ? 'bg-emerald-500/[0.022]'
@@ -128,6 +118,7 @@ function FinancialKpiCard({
   helper,
   tone,
   group,
+  iconBubbleClass,
   Icon,
 }: {
   label: string;
@@ -135,29 +126,26 @@ function FinancialKpiCard({
   helper: string;
   tone: FinancialTone;
   group: FinancialGroup;
+  iconBubbleClass: string;
   Icon: LucideIcon;
 }) {
   return (
     <div
-      className={`flex min-h-[110px] min-w-0 flex-col justify-between rounded-xl border border-white/[0.04] p-3.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.025)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`}
+      className={`flex min-h-[145px] min-w-0 flex-col rounded-xl border border-white/[0.04] bg-gradient-to-b from-white/[0.03] to-transparent p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
-            {label}
-          </p>
-          <p
-            className={`mt-1.5 text-xl font-semibold tabular-nums leading-none tracking-tight sm:text-2xl ${financialToneClass(tone)}`}
-          >
-            {value}
-          </p>
-        </div>
-        <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${financialIconBubbleClass(tone)}`}
-        >
-          <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-        </div>
+      <div
+        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-lg ${iconBubbleClass}`}
+      >
+        <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden />
       </div>
+      <p className="mt-3 text-[11px] font-medium uppercase tracking-[0.16em] text-white/50">
+        {label}
+      </p>
+      <p
+        className={`mt-2 text-3xl font-semibold tabular-nums leading-none tracking-tight ${financialToneClass(tone)}`}
+      >
+        {value}
+      </p>
       <p className="mt-2 text-xs text-white/35">{helper}</p>
     </div>
   );
@@ -195,16 +183,42 @@ function FinancialPositionHero({
     helper: string;
     tone: FinancialTone;
     group: FinancialGroup;
+    iconBubbleClass: string;
     Icon: LucideIcon;
   }> = [
-    { label: 'Efectivo', value: fmtMxn(cash), helper: 'Disponible', tone: 'positive', group: 'liquidity', Icon: Wallet },
-    { label: 'Bancos', value: fmtMxn(bank), helper: 'Saldo total', tone: 'default', group: 'liquidity', Icon: Landmark },
-    { label: 'Cuenta César', value: fmtMxn(cesar), helper: 'Cuenta personal', tone: 'default', group: 'liquidity', Icon: User },
+    {
+      label: 'Efectivo',
+      value: fmtMxn(cash),
+      helper: 'Disponible',
+      tone: 'positive',
+      group: 'liquidity',
+      iconBubbleClass: 'bg-emerald-500/15 text-emerald-400',
+      Icon: Wallet,
+    },
+    {
+      label: 'Bancos',
+      value: fmtMxn(bank),
+      helper: 'Saldo total',
+      tone: 'default',
+      group: 'liquidity',
+      iconBubbleClass: 'bg-violet-500/15 text-violet-400',
+      Icon: Landmark,
+    },
+    {
+      label: 'Cuenta César',
+      value: fmtMxn(cesar),
+      helper: 'Cuenta personal',
+      tone: 'default',
+      group: 'liquidity',
+      iconBubbleClass: 'bg-blue-500/15 text-blue-400',
+      Icon: User,
+    },
     {
       label: 'Cuentas por cobrar',
       value: receivable !== null ? fmtMxn(receivable) : '—',
       helper: 'Pendiente de cobro',
       group: 'operations',
+      iconBubbleClass: 'bg-rose-500/15 text-rose-400',
       tone:
         receivable === null ? 'muted' :
         receivable > 0 ? 'negative' :
@@ -216,6 +230,7 @@ function FinancialPositionHero({
       value: payable !== null ? fmtMxn(payable) : '—',
       helper: 'Obligaciones operativas',
       group: 'operations',
+      iconBubbleClass: 'bg-orange-500/15 text-orange-400',
       tone:
         payable === null ? 'muted' :
         payable > 0 ? 'warning' :
@@ -227,6 +242,7 @@ function FinancialPositionHero({
       value: pendingToPartners !== null ? fmtMxn(pendingPartners) : '—',
       helper: 'Obligaciones con socios',
       group: 'partners',
+      iconBubbleClass: 'bg-yellow-500/15 text-yellow-400',
       tone: pendingToPartners !== null && pendingPartners > 0 ? 'warning' : 'muted',
       Icon: Users,
     },
@@ -235,6 +251,7 @@ function FinancialPositionHero({
       value: capitalContributed !== null ? fmtMxn(investedCapital) : '—',
       helper: 'Aportado por socios',
       group: 'partners',
+      iconBubbleClass: 'bg-emerald-500/15 text-emerald-400',
       tone: capitalContributed !== null && investedCapital > 0 ? 'positive' : 'muted',
       Icon: TrendingUp,
     },
@@ -243,6 +260,7 @@ function FinancialPositionHero({
       value: roi !== null ? fmtRoiPct(roi) : '—',
       helper: 'Retorno sobre capital',
       group: 'performance',
+      iconBubbleClass: 'bg-purple-500/15 text-purple-400',
       tone:
         roi === null ? 'muted' :
         roi > 0 ? 'positive' :
@@ -255,6 +273,7 @@ function FinancialPositionHero({
       value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
       helper: 'Patrimonio neto',
       group: 'performance',
+      iconBubbleClass: 'bg-cyan-500/15 text-cyan-400',
       tone:
         capitalNeto === null ? 'muted' :
         netCapital > 0 ? 'positive' :
@@ -322,6 +341,7 @@ function FinancialPositionHero({
             helper={item.helper}
             tone={item.tone}
             group={item.group}
+            iconBubbleClass={item.iconBubbleClass}
             Icon={item.Icon}
           />
         ))}
