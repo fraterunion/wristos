@@ -763,6 +763,9 @@ function EntryDrawer({
 
   const dealLinked = isDealLinked(entry);
   const manual = isManualEntry(entry);
+  const canRegisterPayment =
+    manual && entry.status !== 'PAID' && Number(entry.balance) > 0;
+  const canDelete = entry.status !== 'PAID';
   const payments = [...(entry.payments ?? [])].sort((a, b) => b.paidAt.localeCompare(a.paidAt));
 
   const metrics = [
@@ -854,7 +857,7 @@ function EntryDrawer({
             <button type="button" onClick={onEdit} className="ui-btn-secondary px-3 py-2 text-sm">
               Editar
             </button>
-            {manual ? (
+            {canRegisterPayment ? (
               <button type="button" onClick={onPayment} className="ui-btn-primary px-3 py-2 text-sm">
                 Registrar pago
               </button>
@@ -863,7 +866,13 @@ function EntryDrawer({
                 type="button"
                 disabled
                 className="ui-btn-primary px-3 py-2 text-sm opacity-40"
-                title="Esta cuenta se liquida desde Ventas"
+                title={
+                  dealLinked
+                    ? 'Esta cuenta se liquida desde Ventas'
+                    : entry.status === 'PAID'
+                      ? 'Esta cuenta ya está pagada'
+                      : 'No hay saldo pendiente'
+                }
               >
                 Registrar pago
               </button>
@@ -871,7 +880,9 @@ function EntryDrawer({
             <button
               type="button"
               onClick={onDelete}
-              className="ui-btn-ghost px-3 py-2 text-sm text-rose-300 hover:text-rose-200"
+              disabled={!canDelete}
+              className="ui-btn-ghost px-3 py-2 text-sm text-rose-300 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-40"
+              title={canDelete ? undefined : 'No se puede eliminar una cuenta ya pagada'}
             >
               Eliminar
             </button>
@@ -964,7 +975,29 @@ export default function CuentasPage() {
     void loadData(tab);
   }, [tab, loadData]);
 
+  useEffect(() => {
+    setDrawerEntry(null);
+  }, [tab]);
+
+  useEffect(() => {
+    if (!drawerEntry) return;
+    const fresh = entries.find((entry) => entry.id === drawerEntry.id);
+    if (!fresh) {
+      setDrawerEntry(null);
+      return;
+    }
+    if (
+      fresh.updatedAt !== drawerEntry.updatedAt ||
+      fresh.paidTotal !== drawerEntry.paidTotal ||
+      fresh.balance !== drawerEntry.balance ||
+      fresh.status !== drawerEntry.status
+    ) {
+      setDrawerEntry(fresh);
+    }
+  }, [entries, drawerEntry]);
+
   async function handleSaveEntry(form: EntryForm) {
+    const editingId = entryModal.editing?.id ?? null;
     const payload = {
       type: form.type,
       category: form.category,
@@ -992,10 +1025,6 @@ export default function CuentasPage() {
       await createAccountEntry(payload);
     }
 
-    const editingId = entryModal.editing?.id;
-    setEntryModal({ open: false, editing: null });
-    setActionError(null);
-
     const [sum, list] = await Promise.all([
       getCuentasSummary(),
       listAccountEntries({ type: tab }),
@@ -1006,6 +1035,8 @@ export default function CuentasPage() {
       const refreshed = list.find((e) => e.id === editingId);
       setDrawerEntry(refreshed ?? null);
     }
+    setEntryModal({ open: false, editing: null });
+    setActionError(null);
   }
 
   async function handleSavePayment(form: PaymentForm) {
@@ -1026,9 +1057,6 @@ export default function CuentasPage() {
     }
 
     const entryId = entry.id;
-    setPaymentModal({ open: false, entry: null, editing: null });
-    setActionError(null);
-
     const [sum, list] = await Promise.all([
       getCuentasSummary(),
       listAccountEntries({ type: tab }),
@@ -1037,6 +1065,8 @@ export default function CuentasPage() {
     setEntries(list);
     const refreshed = list.find((e) => e.id === entryId);
     setDrawerEntry(refreshed ?? null);
+    setPaymentModal({ open: false, entry: null, editing: null });
+    setActionError(null);
   }
 
   async function handleDeleteEntry(entry: AccountEntry) {
@@ -1247,7 +1277,12 @@ export default function CuentasPage() {
           if (drawerEntry) setEntryModal({ open: true, editing: drawerEntry });
         }}
         onPayment={() => {
-          if (drawerEntry && isManualEntry(drawerEntry)) {
+          if (
+            drawerEntry &&
+            isManualEntry(drawerEntry) &&
+            drawerEntry.status !== 'PAID' &&
+            Number(drawerEntry.balance) > 0
+          ) {
             setPaymentModal({ open: true, entry: drawerEntry, editing: null });
           }
         }}
