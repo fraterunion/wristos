@@ -103,6 +103,14 @@ function fmtMoney(value: string | number, currency: Currency = 'MXN') {
   }).format(Number(value));
 }
 
+function fmtEntryMoney(value: string | number, currency: Currency = 'MXN') {
+  const amount = new Intl.NumberFormat('es-MX', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(Number(value));
+  return `$${amount} ${currency}`;
+}
+
 function fmtSummaryAmount(value: string) {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',
@@ -662,7 +670,7 @@ function PaymentModal({
               {isEdit ? 'Editar pago' : 'Registrar pago'}
             </h2>
             <p className="mt-0.5 text-xs text-white/40">
-              Moneda: {entry.currency} · Pendiente: {fmtMoney(entry.balance, entry.currency)}
+              Pendiente: {fmtEntryMoney(entry.balance, entry.currency)}
             </p>
           </div>
           <button
@@ -681,6 +689,7 @@ function PaymentModal({
           )}
           <div>
             <label className="ui-field-label">Monto</label>
+            <p className="mt-0.5 text-[11px] text-white/35">Moneda: {entry.currency}</p>
             <input
               type="number"
               step="0.01"
@@ -771,11 +780,11 @@ function EntryDrawer({
   const payments = [...(entry.payments ?? [])].sort((a, b) => b.paidAt.localeCompare(a.paidAt));
 
   const metrics = [
-    { label: 'Monto total', value: fmtMoney(entry.totalAmount, entry.currency) },
-    { label: 'Pagado', value: fmtMoney(entry.paidTotal, entry.currency) },
+    { label: 'Monto total', value: fmtEntryMoney(entry.totalAmount, entry.currency) },
+    { label: 'Pagado', value: fmtEntryMoney(entry.paidTotal, entry.currency) },
     {
       label: 'Pendiente',
-      value: fmtMoney(entry.balance, entry.currency),
+      value: fmtEntryMoney(entry.balance, entry.currency),
       tone:
         Number(entry.balance) > 0 && entry.status === 'OVERDUE'
           ? 'rose'
@@ -929,7 +938,7 @@ function EntryDrawer({
                         ) : null}
                       </div>
                       <p className="shrink-0 text-sm font-semibold tabular-nums text-emerald-300">
-                        {fmtMoney(payment.amount, payment.currency as Currency)}
+                        {fmtEntryMoney(payment.amount, payment.currency as Currency)}
                       </p>
                     </div>
                   </li>
@@ -1295,10 +1304,10 @@ export default function CuentasPage() {
                       {entry.concept}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-white">
-                      {fmtMoney(entry.totalAmount, entry.currency)}
+                      {fmtEntryMoney(entry.totalAmount, entry.currency)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-white/60">
-                      {fmtMoney(entry.paidTotal, entry.currency)}
+                      {fmtEntryMoney(entry.paidTotal, entry.currency)}
                     </td>
                     <td
                       className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${
@@ -1309,7 +1318,7 @@ export default function CuentasPage() {
                             : 'text-white/50'
                       }`}
                     >
-                      {fmtMoney(entry.balance, entry.currency)}
+                      {fmtEntryMoney(entry.balance, entry.currency)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-white/50">{fmtDate(entry.dueDate)}</td>
                     <td className="px-4 py-3">
