@@ -124,7 +124,7 @@ function FinancialPositionHero({
         <ExecutiveSectionTitle title="Posición financiera" />
       </div>
 
-      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-7 lg:divide-x lg:divide-y-0">
+      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 lg:divide-x lg:divide-y-0">
         {positions.map((item) => (
           <div key={item.label} className="px-4 py-4 md:px-5 md:py-5">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
