@@ -475,7 +475,11 @@ function InvestorDrawer({
               Aportes
             </p>
             {investorAportes.length === 0 ? (
-              <p className="mt-3 text-sm text-white/30">Sin aportes.</p>
+              <div className="mt-3 rounded-lg border border-dashed border-white/[0.08] bg-black/15 px-4 py-5 text-center">
+                <p className="text-xs leading-relaxed text-white/30">
+                  Este socio aún no tiene aportes registrados.
+                </p>
+              </div>
             ) : (
               <ul className="mt-3 space-y-0 divide-y divide-white/[0.04]">
                 {investorAportes.map((item) => (
@@ -507,7 +511,11 @@ function InvestorDrawer({
               Retiros
             </p>
             {investorRetiros.length === 0 ? (
-              <p className="mt-3 text-sm text-white/30">Sin retiros.</p>
+              <div className="mt-3 rounded-lg border border-dashed border-white/[0.08] bg-black/15 px-4 py-5 text-center">
+                <p className="text-xs leading-relaxed text-white/30">
+                  Este socio aún no tiene retiros registrados.
+                </p>
+              </div>
             ) : (
               <ul className="mt-3 space-y-0 divide-y divide-white/[0.04]">
                 {investorRetiros.map((item) => (
@@ -560,11 +568,8 @@ function AportesTable({
 }) {
   if (contributions.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-white/10 bg-panel/50 px-4 py-16 text-center">
-        <p className="text-sm font-medium text-white/40">Sin aportes registrados.</p>
-        <p className="mt-1.5 text-xs text-white/20">
-          Los aportes de capital de los socios aparecerán aquí.
-        </p>
+      <div className="rounded-2xl border border-dashed border-white/[0.08] bg-black/20 px-4 py-14 text-center">
+        <p className="text-sm text-white/35">Aún no hay aportes registrados.</p>
       </div>
     );
   }
@@ -672,11 +677,8 @@ function RetirosTable({
 }) {
   if (distributions.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-white/10 bg-panel/50 px-4 py-16 text-center">
-        <p className="text-sm font-medium text-white/40">Sin retiros registrados.</p>
-        <p className="mt-1.5 text-xs text-white/20">
-          Los retiros y distribuciones de utilidades aparecerán aquí.
-        </p>
+      <div className="rounded-2xl border border-dashed border-white/[0.08] bg-black/20 px-4 py-14 text-center">
+        <p className="text-sm text-white/35">Aún no hay retiros registrados.</p>
       </div>
     );
   }
