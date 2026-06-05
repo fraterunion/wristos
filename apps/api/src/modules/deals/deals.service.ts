@@ -14,6 +14,7 @@ import {
   WatchStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CuentasService } from '../cuentas/cuentas.service';
 import { FxService } from '../fx/fx.service';
 import { AddPaymentDto } from './dto/add-payment.dto';
 import { CreateDealDto } from './dto/create-deal.dto';
@@ -29,6 +30,7 @@ export class DealsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fxService: FxService,
+    private readonly cuentasService: CuentasService,
   ) {}
 
   async create(tenantId: string, dto: CreateDealDto) {
@@ -52,6 +54,8 @@ export class DealsService {
         notes: dto.notes,
       },
     });
+
+    await this.syncReceivableSafe(deal.id, tenantId);
 
     return this.serializeDeal(deal);
   }
@@ -142,6 +146,8 @@ export class DealsService {
       data,
     });
 
+    await this.syncReceivableSafe(deal.id, tenantId);
+
     return this.serializeDeal(deal);
   }
 
@@ -174,6 +180,8 @@ export class DealsService {
       nextStage: dto.stage,
     });
 
+    await this.syncReceivableSafe(deal.id, tenantId);
+
     return this.serializeDeal(deal);
   }
 
@@ -190,6 +198,8 @@ export class DealsService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+
+    await this.syncReceivableSafe(id, tenantId);
   }
 
   async registerSale(tenantId: string, dto: RegisterSaleDto) {
@@ -322,6 +332,9 @@ export class DealsService {
     });
 
     const { deal, payment, bankFeeExpense } = result;
+
+    await this.syncReceivableSafe(deal.id, tenantId);
+
     const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
     const paidTotal = paymentAmountDecimal ?? new Prisma.Decimal(0);
     const rawPending = canonicalMxn.minus(paidTotal);
@@ -433,6 +446,17 @@ export class DealsService {
       pendingAmount: pendingAmount.toString(),
       computedStatus,
     };
+  }
+
+  private async syncReceivableSafe(dealId: string, tenantId: string): Promise<void> {
+    try {
+      await this.cuentasService.syncDealReceivable(dealId, tenantId);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed syncing receivable for deal ${dealId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 
   private async ensureClientInTenant(clientId: string, tenantId: string) {
