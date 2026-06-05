@@ -88,6 +88,7 @@ function ExecutiveSectionTitle({
 }
 
 type FinancialTone = 'default' | 'positive' | 'negative' | 'muted' | 'warning';
+type FinancialGroup = 'liquidity' | 'operations' | 'partners' | 'performance';
 
 function financialToneClass(tone: FinancialTone) {
   return tone === 'positive'
@@ -103,12 +104,22 @@ function financialToneClass(tone: FinancialTone) {
 
 function financialIconBubbleClass(tone: FinancialTone) {
   return tone === 'positive'
-    ? 'bg-emerald-500/15 text-emerald-400'
+    ? 'bg-emerald-500/10 text-emerald-400/80'
     : tone === 'warning'
-      ? 'bg-amber-500/15 text-amber-400'
+      ? 'bg-amber-500/10 text-amber-400/80'
       : tone === 'negative'
-        ? 'bg-rose-500/15 text-rose-400'
-        : 'bg-white/[0.06] text-white/60';
+        ? 'bg-rose-500/10 text-rose-400/80'
+        : 'bg-white/[0.04] text-white/45';
+}
+
+function financialGroupSurfaceClass(group: FinancialGroup) {
+  return group === 'liquidity'
+    ? 'bg-emerald-500/[0.022]'
+    : group === 'operations'
+      ? 'bg-white/[0.016]'
+      : group === 'partners'
+        ? 'bg-amber-500/[0.018]'
+        : 'bg-white/[0.012]';
 }
 
 function FinancialKpiCard({
@@ -116,30 +127,38 @@ function FinancialKpiCard({
   value,
   helper,
   tone,
+  group,
   Icon,
 }: {
   label: string;
   value: string;
   helper: string;
   tone: FinancialTone;
+  group: FinancialGroup;
   Icon: LucideIcon;
 }) {
   return (
-    <div className="flex min-h-[150px] min-w-0 flex-col justify-between rounded-2xl border border-white/[0.06] bg-black/20 p-5 transition-colors hover:bg-white/[0.04]">
-      <div
-        className={`flex h-9 w-9 items-center justify-center rounded-xl ${financialIconBubbleClass(tone)}`}
-      >
-        <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden />
+    <div
+      className={`flex min-h-[110px] min-w-0 flex-col justify-between rounded-xl border border-white/[0.04] p-3.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.025)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
+            {label}
+          </p>
+          <p
+            className={`mt-1.5 text-xl font-semibold tabular-nums leading-none tracking-tight sm:text-2xl ${financialToneClass(tone)}`}
+          >
+            {value}
+          </p>
+        </div>
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${financialIconBubbleClass(tone)}`}
+        >
+          <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+        </div>
       </div>
-      <div className="mt-4 space-y-2">
-        <p className="text-[10px] font-semibold uppercase leading-snug tracking-[0.14em] text-white/35">
-          {label}
-        </p>
-        <p className={`text-xl font-semibold tabular-nums leading-none sm:text-2xl ${financialToneClass(tone)}`}>
-          {value}
-        </p>
-        <p className="text-[11px] text-white/25">{helper}</p>
-      </div>
+      <p className="mt-2 text-xs text-white/35">{helper}</p>
     </div>
   );
 }
@@ -175,15 +194,17 @@ function FinancialPositionHero({
     value: string;
     helper: string;
     tone: FinancialTone;
+    group: FinancialGroup;
     Icon: LucideIcon;
   }> = [
-    { label: 'Efectivo', value: fmtMxn(cash), helper: 'Disponible', tone: 'positive', Icon: Wallet },
-    { label: 'Bancos', value: fmtMxn(bank), helper: 'Saldo total', tone: 'default', Icon: Landmark },
-    { label: 'Cuenta César', value: fmtMxn(cesar), helper: 'Cuenta personal', tone: 'default', Icon: User },
+    { label: 'Efectivo', value: fmtMxn(cash), helper: 'Disponible', tone: 'positive', group: 'liquidity', Icon: Wallet },
+    { label: 'Bancos', value: fmtMxn(bank), helper: 'Saldo total', tone: 'default', group: 'liquidity', Icon: Landmark },
+    { label: 'Cuenta César', value: fmtMxn(cesar), helper: 'Cuenta personal', tone: 'default', group: 'liquidity', Icon: User },
     {
       label: 'Cuentas por cobrar',
       value: receivable !== null ? fmtMxn(receivable) : '—',
       helper: 'Pendiente de cobro',
+      group: 'operations',
       tone:
         receivable === null ? 'muted' :
         receivable > 0 ? 'negative' :
@@ -194,6 +215,7 @@ function FinancialPositionHero({
       label: 'Cuentas por pagar',
       value: payable !== null ? fmtMxn(payable) : '—',
       helper: 'Obligaciones operativas',
+      group: 'operations',
       tone:
         payable === null ? 'muted' :
         payable > 0 ? 'warning' :
@@ -204,6 +226,7 @@ function FinancialPositionHero({
       label: 'Por pagar socios',
       value: pendingToPartners !== null ? fmtMxn(pendingPartners) : '—',
       helper: 'Obligaciones con socios',
+      group: 'partners',
       tone: pendingToPartners !== null && pendingPartners > 0 ? 'warning' : 'muted',
       Icon: Users,
     },
@@ -211,6 +234,7 @@ function FinancialPositionHero({
       label: 'Capital invertido',
       value: capitalContributed !== null ? fmtMxn(investedCapital) : '—',
       helper: 'Aportado por socios',
+      group: 'partners',
       tone: capitalContributed !== null && investedCapital > 0 ? 'positive' : 'muted',
       Icon: TrendingUp,
     },
@@ -218,6 +242,7 @@ function FinancialPositionHero({
       label: 'ROI',
       value: roi !== null ? fmtRoiPct(roi) : '—',
       helper: 'Retorno sobre capital',
+      group: 'performance',
       tone:
         roi === null ? 'muted' :
         roi > 0 ? 'positive' :
@@ -229,6 +254,7 @@ function FinancialPositionHero({
       label: 'Capital neto',
       value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
       helper: 'Patrimonio neto',
+      group: 'performance',
       tone:
         capitalNeto === null ? 'muted' :
         netCapital > 0 ? 'positive' :
@@ -239,29 +265,42 @@ function FinancialPositionHero({
   ];
 
   return (
-    <article className="overflow-hidden rounded-[24px] border border-white/[0.08] bg-gradient-to-b from-white/[0.055] to-white/[0.025] shadow-2xl shadow-black/30">
-      <div className="relative border-b border-white/[0.06] px-5 py-5 md:px-6">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
-              <Wallet className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+    <article className="relative overflow-hidden rounded-[24px] border border-white/[0.04] bg-gradient-to-b from-white/[0.04] to-white/[0.012] shadow-2xl shadow-black/40">
+      <div
+        className="pointer-events-none absolute -left-20 -top-20 h-56 w-56 rounded-full bg-emerald-500/[0.05] blur-3xl"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute -right-12 top-1/4 h-40 w-40 rounded-full bg-white/[0.02] blur-3xl"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(16,185,129,0.07),transparent_55%)]"
+        aria-hidden
+      />
+
+      <div className="relative border-b border-white/[0.04] px-4 py-3 md:px-5">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/15 to-transparent" />
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/90">
+                <Wallet className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+              </div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
                 Posición financiera
               </p>
-              <p className="mt-1 text-sm text-white/35">Resumen financiero consolidado</p>
             </div>
+            <p className="mt-0.5 pl-9 text-xs text-white/35">Resumen financiero consolidado</p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 sm:justify-end sm:pt-1">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
             <Link
               href="/cuentas"
               className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
             >
               Ver cuentas →
             </Link>
-            <span className="hidden text-white/15 sm:inline" aria-hidden>
+            <span className="hidden text-white/12 sm:inline" aria-hidden>
               ·
             </span>
             <Link
@@ -274,7 +313,7 @@ function FinancialPositionHero({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-9 md:p-6">
+      <div className="relative grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-9 md:p-5">
         {positions.map((item) => (
           <FinancialKpiCard
             key={item.label}
@@ -282,27 +321,40 @@ function FinancialPositionHero({
             value={item.value}
             helper={item.helper}
             tone={item.tone}
+            group={item.group}
             Icon={item.Icon}
           />
         ))}
       </div>
 
-      <div className="px-4 pb-4 sm:px-5 md:px-6 md:pb-6">
-        <div className="flex flex-col gap-4 rounded-2xl border border-white/[0.06] bg-gradient-to-r from-emerald-500/[0.08] via-white/[0.025] to-white/[0.025] p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3 sm:items-center">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
-              <Wallet className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-            </div>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
-                Liquidez total
-              </p>
-              <p className="mt-1 text-[11px] text-white/25">Efectivo + Bancos + César</p>
+      <div className="relative border-t border-white/[0.04]">
+        <div
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_120%_at_85%_50%,rgba(16,185,129,0.14),transparent_62%)]"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-500/[0.05] via-transparent to-emerald-500/[0.03]"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-emerald-400/20 to-transparent"
+          aria-hidden
+        />
+        <div className="relative flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between md:px-5 md:py-6">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
+              Liquidez total
+            </p>
+            <p className="mt-1 text-xs text-white/35">Efectivo + Bancos + César</p>
+          </div>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <p className="text-4xl font-semibold tabular-nums tracking-tight text-emerald-400 xl:text-5xl">
+              {fmtMxn(liquidityTotal)}
+            </p>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/80">
+              <TrendingUp className="h-4 w-4" strokeWidth={1.75} aria-hidden />
             </div>
           </div>
-          <p className="text-2xl font-semibold tabular-nums text-emerald-400 sm:text-3xl">
-            {fmtMxn(liquidityTotal)}
-          </p>
         </div>
       </div>
     </article>
