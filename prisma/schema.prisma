@@ -104,6 +104,51 @@ enum OperatingExpenseCategory {
   BANK_FEES
 }
 
+// --- Cuentas (AR/AP) ---
+
+enum AccountEntryType {
+  RECEIVABLE
+  PAYABLE
+}
+
+enum AccountEntryStatus {
+  OPEN
+  PARTIAL
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum AccountEntryCategory {
+  SALE_BALANCE
+  PURCHASE
+  SERVICE
+  COMMISSION
+  REFUND
+  LOAN
+  OTHER
+}
+
+enum CounterpartyType {
+  CLIENT
+  SUPPLIER
+  DEALER
+  BROKER
+  WORKSHOP
+  LOGISTICS
+  OTHER
+}
+
+enum Currency {
+  MXN
+  USD
+}
+
+enum AccountEntrySource {
+  MANUAL
+  DEAL_AUTO
+}
+
 // --- AI Market Radar ---
 
 enum ChannelType {
@@ -192,6 +237,8 @@ model Tenant {
   investors                Investor[]
   investorContributions    InvestorContribution[]
   investorDistributions    InvestorDistribution[]
+  accountEntries           AccountEntry[]
+  accountPayments          AccountPayment[]
 
   @@index([slug])
   @@map("tenants")
@@ -266,6 +313,7 @@ model Client {
   matchSuggestions MatchSuggestion[]
   interactions     ClientInteraction[]
   radarContacts    Contact[]
+  accountEntries   AccountEntry[]
 
   @@index([tenantId])
   @@index([tenantId, email])
@@ -339,6 +387,7 @@ model Watch {
   deals            Deal[]
   expenses         WatchExpense[]
   matchSuggestions MatchSuggestion[]
+  accountEntries   AccountEntry[]
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -384,6 +433,7 @@ model Deal {
   watch             Watch              @relation(fields: [watchId], references: [id], onDelete: Restrict)
   payments          Payment[]
   operatingExpenses OperatingExpense[]
+  accountEntries    AccountEntry[]
 
   @@index([tenantId])
   @@index([tenantId, stage])
@@ -489,8 +539,9 @@ model OperatingExpense {
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  deal   Deal?  @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deal           Deal?          @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  accountEntries AccountEntry[]
 
   @@index([tenantId])
   @@index([tenantId, category])
@@ -762,4 +813,78 @@ model InvestorDistribution {
   @@index([tenantId, paidAt])
   @@index([tenantId, deletedAt])
   @@map("investor_distributions")
+}
+
+// --- Cuentas (AR/AP) ---
+
+model AccountEntry {
+  id               String               @id @default(cuid())
+  tenantId         String
+  type             AccountEntryType
+  status           AccountEntryStatus   @default(OPEN)
+  category         AccountEntryCategory @default(OTHER)
+  source           AccountEntrySource   @default(MANUAL)
+  counterpartyName String
+  counterpartyType CounterpartyType     @default(OTHER)
+  concept          String
+  totalAmount      Decimal              @db.Decimal(12, 2)
+  currency         Currency             @default(MXN)
+  exchangeRate     Decimal?             @db.Decimal(12, 6)
+  reference        String?
+  issuedAt         DateTime?
+  dueDate          DateTime?
+  closedAt         DateTime?
+  notes            String?
+
+  clientId  String?
+  dealId    String?
+  watchId   String?
+  expenseId String?
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client   Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  deal     Deal?              @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  watch    Watch?             @relation(fields: [watchId], references: [id], onDelete: SetNull)
+  expense  OperatingExpense?  @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  payments AccountPayment[]
+
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, status])
+  @@index([tenantId, type, status])
+  @@index([tenantId, source])
+  @@index([tenantId, dueDate])
+  @@index([tenantId, clientId])
+  @@index([tenantId, dealId])
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, createdAt])
+  @@map("account_entries")
+}
+
+model AccountPayment {
+  id        String        @id @default(cuid())
+  tenantId  String
+  entryId   String
+  amount    Decimal       @db.Decimal(12, 2)
+  currency  Currency      @default(MXN)
+  method    PaymentMethod
+  paidAt    DateTime
+  notes     String?
+  deletedAt DateTime?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entry  AccountEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([entryId])
+  @@index([tenantId, entryId])
+  @@index([tenantId, paidAt])
+  @@index([tenantId, deletedAt])
+  @@map("account_payments")
 }
