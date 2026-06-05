@@ -72,6 +72,31 @@ type PreferenceFormValues = z.infer<typeof preferenceSchema>;
 
 type ClientFilters = { name: string; phone: string; tag: string };
 
+const EMPTY_FILTERS: ClientFilters = { name: '', phone: '', tag: '' };
+
+function sortClientsByName(clients: Client[]) {
+  return [...clients].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+}
+
+function filterClients(clients: Client[], filters: ClientFilters) {
+  const nameQuery = filters.name.trim().toLowerCase();
+  const phoneQuery = filters.phone.trim();
+  const tagQuery = filters.tag.trim().toLowerCase();
+
+  return sortClientsByName(clients).filter((client) => {
+    if (nameQuery && !client.name.toLowerCase().includes(nameQuery)) return false;
+    if (phoneQuery && !(client.phone ?? '').includes(phoneQuery)) return false;
+    if (tagQuery && !(client.tags ?? []).some((tag) => tag.toLowerCase().includes(tagQuery))) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function hasActiveFilters(filters: ClientFilters) {
+  return Boolean(filters.name.trim() || filters.phone.trim() || filters.tag.trim());
+}
+
 function parseList(input?: string) {
   if (!input) return [];
   return input
@@ -299,8 +324,8 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
   const [clientsError, setClientsError] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const [draftFilters, setDraftFilters] = useState<ClientFilters>({ name: '', phone: '', tag: '' });
-  const [appliedFilters, setAppliedFilters] = useState<ClientFilters>({ name: '', phone: '', tag: '' });
+  const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -335,34 +360,26 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
     return () => window.clearTimeout(timer);
   }, [flash]);
 
-  const clientQuery = useMemo(() => {
-    const query: Record<string, string> = {};
-    if (appliedFilters.name.trim()) query.name = appliedFilters.name.trim();
-    if (appliedFilters.phone.trim()) query.phone = appliedFilters.phone.trim();
-    if (appliedFilters.tag.trim()) query.tag = appliedFilters.tag.trim();
-    return query;
-  }, [appliedFilters]);
+  const filteredClients = useMemo(
+    () => filterClients(clients, filters),
+    [clients, filters],
+  );
+
+  const activeFilters = hasActiveFilters(filters);
 
   const loadClients = useCallback(async () => {
     setClientsLoading(true);
     setClientsError(null);
     try {
-      void queryKeys.crm.list(clientQuery);
-      const data = await apiGet<Client[]>('/crm/clients', { authenticated: true, query: clientQuery });
+      void queryKeys.crm.list({});
+      const data = await apiGet<Client[]>('/crm/clients', { authenticated: true });
       setClients(data);
-      if (data.length === 0) {
-        setSelectedClientId(null);
-      } else if (initialClientId && data.some((c) => c.id === initialClientId)) {
-        setSelectedClientId(initialClientId);
-      } else if (!selectedClientId || !data.some((c) => c.id === selectedClientId)) {
-        setSelectedClientId(data[0].id);
-      }
     } catch (error) {
       setClientsError(error instanceof ApiError ? error.message : 'No se pudieron cargar los clientes.');
     } finally {
       setClientsLoading(false);
     }
-  }, [clientQuery, selectedClientId, initialClientId]);
+  }, []);
 
   const selectClient = useCallback(
     (clientId: string) => {
@@ -410,6 +427,26 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
   useEffect(() => {
     void loadClients();
   }, [loadClients]);
+
+  useEffect(() => {
+    if (clientsLoading) return;
+
+    if (filteredClients.length === 0) {
+      if (selectedClientId !== null) setSelectedClientId(null);
+      return;
+    }
+
+    if (selectedClientId && filteredClients.some((client) => client.id === selectedClientId)) {
+      return;
+    }
+
+    if (initialClientId && filteredClients.some((client) => client.id === initialClientId)) {
+      setSelectedClientId(initialClientId);
+      return;
+    }
+
+    setSelectedClientId(filteredClients[0].id);
+  }, [filteredClients, clientsLoading, selectedClientId, initialClientId]);
 
   useEffect(() => {
     if (!selectedClientId) {
@@ -583,6 +620,10 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
     }
   };
 
+  function resetFilters() {
+    setFilters(EMPTY_FILTERS);
+  }
+
   return (
     <div className="ui-page">
       <header className="ui-page-header">
@@ -611,51 +652,53 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
         </div>
       ) : null}
 
-      <section className="ui-card p-4">
-        <div className="grid gap-3 md:grid-cols-4">
-          <input
-            value={draftFilters.name}
-            onChange={(event) => setDraftFilters((prev) => ({ ...prev, name: event.target.value }))}
-            placeholder="Filtrar por nombre"
-            className="ui-input"
-          />
-          <input
-            value={draftFilters.phone}
-            onChange={(event) => setDraftFilters((prev) => ({ ...prev, phone: event.target.value }))}
-            placeholder="Filtrar por teléfono"
-            className="ui-input"
-          />
-          <input
-            value={draftFilters.tag}
-            onChange={(event) => setDraftFilters((prev) => ({ ...prev, tag: event.target.value }))}
-            placeholder="Filtrar por etiqueta"
-            className="ui-input"
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setAppliedFilters({ ...draftFilters })}
-              className="ui-btn-secondary flex-1 px-3 py-2"
-            >
-              Aplicar
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const clean = { name: '', phone: '', tag: '' };
-                setDraftFilters(clean);
-                setAppliedFilters(clean);
-              }}
-              className="ui-btn-ghost px-3 py-2"
-            >
-              Restablecer
-            </button>
-          </div>
-        </div>
-      </section>
-
       <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <article className="ui-card p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                className="ui-btn-ghost px-3 py-1.5 text-xs"
+              >
+                {filtersOpen ? 'Ocultar filtros' : 'Filtros'}
+              </button>
+              {activeFilters && !filtersOpen ? (
+                <span className="text-[11px] text-white/35">Filtrando</span>
+              ) : null}
+            </div>
+            {activeFilters ? (
+              <button type="button" onClick={resetFilters} className="ui-btn-ghost px-3 py-1.5 text-xs">
+                Restablecer
+              </button>
+            ) : null}
+          </div>
+
+          {filtersOpen ? (
+            <div className="mb-3 rounded-xl border border-white/[0.08] bg-white/[0.025] p-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <input
+                  value={filters.name}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="Filtrar por nombre"
+                  className="ui-input"
+                />
+                <input
+                  value={filters.phone}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, phone: event.target.value }))}
+                  placeholder="Filtrar por teléfono"
+                  className="ui-input"
+                />
+                <input
+                  value={filters.tag}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, tag: event.target.value }))}
+                  placeholder="Filtrar por etiqueta"
+                  className="ui-input"
+                />
+              </div>
+            </div>
+          ) : null}
+
           {clientsLoading ? (
             <div className="space-y-3 animate-pulse">
               {Array.from({ length: 7 }).map((_, index) => (
@@ -681,9 +724,16 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
                 Agregar primer cliente
               </button>
             </div>
+          ) : filteredClients.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/15 px-6 py-10 text-center">
+              <p className="text-sm text-white/55">No encontramos clientes con esos filtros.</p>
+              <button type="button" onClick={resetFilters} className="ui-btn-ghost mt-4 px-3 py-1.5 text-xs">
+                Restablecer filtros
+              </button>
+            </div>
           ) : (
             <div className="space-y-2">
-              {clients.map((client) => {
+              {filteredClients.map((client) => {
                 const isActive = client.id === selectedClientId;
                 return (
                   <button
