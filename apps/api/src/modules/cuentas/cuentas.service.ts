@@ -6,10 +6,14 @@ import {
 } from '@nestjs/common';
 import {
   AccountEntry,
+  AccountEntryCategory,
   AccountEntrySource,
   AccountEntryStatus,
   AccountEntryType,
   AccountPayment,
+  CounterpartyType,
+  Currency,
+  DealStage,
   PaymentStatus,
   Prisma,
 } from '@prisma/client';
@@ -321,6 +325,118 @@ export class CuentasService {
     });
 
     return this.findEntry(entryId, tenantId);
+  }
+
+  // ─── Deal sync ───────────────────────────────────────────────────────────────
+
+  async syncDealReceivable(dealId: string, tenantId: string): Promise<void> {
+    const deal = await this.prisma.deal.findFirst({
+      where: { id: dealId, tenantId, deletedAt: null },
+      include: {
+        client: { select: { name: true } },
+        watch: { select: { brand: true, model: true } },
+      },
+    });
+
+    if (!deal) {
+      await this.cancelDealEntries(dealId, tenantId);
+      return;
+    }
+
+    if (
+      deal.stage !== DealStage.PENDING_PAYMENT &&
+      deal.stage !== DealStage.CLOSED_WON
+    ) {
+      await this.cancelDealEntries(dealId, tenantId);
+      return;
+    }
+
+    const existing = await this.prisma.accountEntry.findFirst({
+      where: {
+        tenantId,
+        dealId,
+        type: AccountEntryType.RECEIVABLE,
+        deletedAt: null,
+      },
+    });
+
+    if (!existing) {
+      await this.prisma.accountEntry.create({
+        data: {
+          tenant: { connect: { id: tenantId } },
+          type: AccountEntryType.RECEIVABLE,
+          status: AccountEntryStatus.OPEN,
+          category: AccountEntryCategory.SALE_BALANCE,
+          source: AccountEntrySource.DEAL_AUTO,
+          counterpartyName: deal.client.name,
+          counterpartyType: CounterpartyType.CLIENT,
+          concept: `Saldo pendiente — ${deal.watch.brand} ${deal.watch.model}`,
+          totalAmount: deal.agreedPrice,
+          currency: Currency.MXN,
+          exchangeRate: deal.exchangeRate ?? undefined,
+          issuedAt: deal.updatedAt,
+          client: { connect: { id: deal.clientId } },
+          deal: { connect: { id: deal.id } },
+          watch: { connect: { id: deal.watchId } },
+        },
+      });
+    } else if (!existing.totalAmount.equals(deal.agreedPrice)) {
+      await this.prisma.accountEntry.update({
+        where: { id: existing.id },
+        data: { totalAmount: deal.agreedPrice },
+      });
+    }
+
+    await this.refreshEntryStatusForDeal(dealId, tenantId);
+  }
+
+  async refreshEntryStatusForDeal(dealId: string, tenantId: string): Promise<void> {
+    const entry = await this.prisma.accountEntry.findFirst({
+      where: {
+        tenantId,
+        dealId,
+        type: AccountEntryType.RECEIVABLE,
+        deletedAt: null,
+      },
+    });
+
+    if (!entry) return;
+
+    const paidTotal = await this.getDealPaidTotal(tenantId, dealId);
+    const { status, closedAt } = this.resolveStatus(entry, paidTotal);
+
+    if (
+      entry.status !== status ||
+      entry.closedAt?.getTime() !== closedAt?.getTime()
+    ) {
+      await this.prisma.accountEntry.update({
+        where: { id: entry.id },
+        data: { status, closedAt },
+      });
+    }
+  }
+
+  private async cancelDealEntries(dealId: string, tenantId: string): Promise<void> {
+    const entries = await this.prisma.accountEntry.findMany({
+      where: {
+        tenantId,
+        dealId,
+        type: AccountEntryType.RECEIVABLE,
+        deletedAt: null,
+      },
+    });
+
+    const now = new Date();
+    for (const entry of entries) {
+      const paidTotal = await this.getDealPaidTotal(tenantId, dealId);
+      const { status } = this.resolveStatus(entry, paidTotal);
+      if (status !== AccountEntryStatus.PAID) {
+        await this.prisma.accountEntry.update({
+          where: { id: entry.id },
+          data: { deletedAt: now },
+        });
+      }
+    }
   }
 
   // ─── Computation ─────────────────────────────────────────────────────────────

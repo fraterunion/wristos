@@ -5,5 +5,6 @@ import { CuentasService } from './cuentas.service';
 @Module({
   controllers: [CuentasController],
   providers: [CuentasService],
+  exports: [CuentasService],
 })
 export class CuentasModule {}
