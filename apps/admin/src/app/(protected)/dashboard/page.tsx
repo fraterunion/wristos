@@ -65,9 +65,11 @@ function ExecutiveSectionTitle({
 function FinancialPositionHero({
   summary,
   pendingToPartners,
+  capitalContributed,
 }: {
   summary: AnalyticsSummary;
   pendingToPartners: string | null;
+  capitalContributed: string | null;
 }) {
   const cash = num(summary.cashBalance);
   const bank = num(summary.bankBalance);
@@ -75,6 +77,7 @@ function FinancialPositionHero({
   const receivable = num(summary.totalPendingBalance);
   const liquidityTotal = cash + bank + cesar;
   const pendingPartners = num(pendingToPartners);
+  const investedCapital = num(capitalContributed);
 
   const positions = [
     { label: 'Efectivo', value: fmtMxn(cash), tone: 'positive' as const },
@@ -90,6 +93,11 @@ function FinancialPositionHero({
       value: pendingToPartners !== null ? fmtMxn(pendingPartners) : '—',
       tone: pendingToPartners !== null && pendingPartners > 0 ? ('negative' as const) : ('muted' as const),
     },
+    {
+      label: 'Capital invertido',
+      value: capitalContributed !== null ? fmtMxn(investedCapital) : '—',
+      tone: capitalContributed !== null && investedCapital > 0 ? ('positive' as const) : ('muted' as const),
+    },
   ];
 
   const toneClass = (tone: 'default' | 'positive' | 'negative' | 'muted') =>
@@ -104,7 +112,7 @@ function FinancialPositionHero({
         <ExecutiveSectionTitle title="Posición financiera" />
       </div>
 
-      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-y-0">
+      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-6 lg:divide-x lg:divide-y-0">
         {positions.map((item) => (
           <div key={item.label} className="px-4 py-4 md:px-5 md:py-5">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
@@ -528,6 +536,7 @@ export default function DashboardPage() {
       <FinancialPositionHero
         summary={data.summary}
         pendingToPartners={capitalSummary?.totalPendingToPartners ?? null}
+        capitalContributed={capitalSummary?.totalCapitalContributed ?? null}
       />
 
       <BusinessSnapshot
