@@ -68,6 +68,11 @@ export type AccountEntry = {
   payments: AccountPayment[];
 };
 
+export type CurrencyTotals = {
+  MXN: string;
+  USD: string;
+};
+
 export type CuentasSummary = {
   totalReceivable: string;
   totalPayable: string;
@@ -75,6 +80,11 @@ export type CuentasSummary = {
   overduePayableCount: number;
   overdueReceivableAmount: string;
   overduePayableAmount: string;
+  totalReceivableByCurrency: CurrencyTotals;
+  totalPayableByCurrency: CurrencyTotals;
+  overdueReceivableByCurrency: CurrencyTotals;
+  overduePayableByCurrency: CurrencyTotals;
+  exchangeRateUsed: string | null;
 };
 
 // ─── API functions ────────────────────────────────────────────────────────────

@@ -214,6 +214,13 @@ function PillBtn({
 
 // ─── SummaryStrip ─────────────────────────────────────────────────────────────
 
+function currencyBreakdownLines(totals: { MXN: string; USD: string }) {
+  return [
+    `MXN: ${fmtEntryMoney(totals.MXN, 'MXN')}`,
+    `USD: ${fmtEntryMoney(totals.USD, 'USD')}`,
+  ];
+}
+
 function SummaryStrip({ summary }: { summary: CuentasSummary }) {
   const netFlow = Number(summary.totalReceivable) - Number(summary.totalPayable);
 
@@ -222,31 +229,40 @@ function SummaryStrip({ summary }: { summary: CuentasSummary }) {
       label: 'Por cobrar total',
       value: fmtSummaryAmount(summary.totalReceivable),
       tone: amountToneClass(summary.totalReceivable, 'emerald'),
-      sub: undefined,
+      subLines: currencyBreakdownLines(summary.totalReceivableByCurrency),
     },
     {
       label: 'Por pagar total',
       value: fmtSummaryAmount(summary.totalPayable),
       tone: amountToneClass(summary.totalPayable, 'amber'),
-      sub: undefined,
+      subLines: currencyBreakdownLines(summary.totalPayableByCurrency),
     },
     {
       label: 'Vencido por cobrar',
       value: fmtSummaryAmount(summary.overdueReceivableAmount),
       tone: amountToneClass(summary.overdueReceivableAmount, 'rose'),
-      sub: `${summary.overdueReceivableCount} cuenta${summary.overdueReceivableCount === 1 ? '' : 's'}`,
+      subLines: [
+        `${summary.overdueReceivableCount} cuenta${summary.overdueReceivableCount === 1 ? '' : 's'}`,
+        ...currencyBreakdownLines(summary.overdueReceivableByCurrency),
+      ],
     },
     {
       label: 'Vencido por pagar',
       value: fmtSummaryAmount(summary.overduePayableAmount),
       tone: amountToneClass(summary.overduePayableAmount, 'rose'),
-      sub: `${summary.overduePayableCount} cuenta${summary.overduePayableCount === 1 ? '' : 's'}`,
+      subLines: [
+        `${summary.overduePayableCount} cuenta${summary.overduePayableCount === 1 ? '' : 's'}`,
+        ...currencyBreakdownLines(summary.overduePayableByCurrency),
+      ],
     },
     {
       label: 'Flujo neto esperado',
       value: fmtSummaryAmount(String(netFlow)),
       tone: netFlowTone(netFlow),
-      sub: undefined,
+      subLines: [
+        'Consolidado en MXN',
+        ...(summary.exchangeRateUsed ? [`TC: ${summary.exchangeRateUsed}`] : []),
+      ],
     },
   ];
 
@@ -266,9 +282,11 @@ function SummaryStrip({ summary }: { summary: CuentasSummary }) {
             <p className={`mt-2 text-lg font-semibold tabular-nums md:text-2xl ${cell.tone}`}>
               {cell.value}
             </p>
-            {cell.sub ? (
-              <p className="mt-1 text-[11px] text-white/35">{cell.sub}</p>
-            ) : null}
+            {cell.subLines?.map((line) => (
+              <p key={line} className="mt-1 text-[11px] text-white/35">
+                {line}
+              </p>
+            ))}
           </div>
         ))}
       </div>

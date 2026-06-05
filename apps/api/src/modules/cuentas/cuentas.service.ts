@@ -18,6 +18,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FxService } from '../fx/fx.service';
 import { CreateAccountEntryDto } from './dto/create-account-entry.dto';
 import { CreateAccountPaymentDto } from './dto/create-account-payment.dto';
 import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto';
@@ -26,9 +27,17 @@ import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
 
 type EntryWithPayments = AccountEntry & { payments: AccountPayment[] };
 
+type CurrencyBreakdown = {
+  MXN: Prisma.Decimal;
+  USD: Prisma.Decimal;
+};
+
 @Injectable()
 export class CuentasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fxService: FxService,
+  ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
 
@@ -42,29 +51,61 @@ export class CuentasService {
 
     const computed = await this.computeEntries(entries, tenantId, false);
 
-    let totalReceivable = new Prisma.Decimal(0);
-    let totalPayable = new Prisma.Decimal(0);
+    const receivableByCurrency = this.emptyCurrencyBreakdown();
+    const payableByCurrency = this.emptyCurrencyBreakdown();
+    const overdueReceivableByCurrency = this.emptyCurrencyBreakdown();
+    const overduePayableByCurrency = this.emptyCurrencyBreakdown();
     let overdueReceivableCount = 0;
     let overduePayableCount = 0;
-    let overdueReceivableAmount = new Prisma.Decimal(0);
-    let overduePayableAmount = new Prisma.Decimal(0);
 
     for (const row of computed) {
       const balance = new Prisma.Decimal(row.balance);
+      const currency = row.currency as Currency;
       if (row.type === AccountEntryType.RECEIVABLE) {
-        totalReceivable = totalReceivable.plus(balance);
+        this.addToCurrencyBreakdown(receivableByCurrency, currency, balance);
         if (row.status === AccountEntryStatus.OVERDUE) {
           overdueReceivableCount += 1;
-          overdueReceivableAmount = overdueReceivableAmount.plus(balance);
+          this.addToCurrencyBreakdown(overdueReceivableByCurrency, currency, balance);
         }
       } else {
-        totalPayable = totalPayable.plus(balance);
+        this.addToCurrencyBreakdown(payableByCurrency, currency, balance);
         if (row.status === AccountEntryStatus.OVERDUE) {
           overduePayableCount += 1;
-          overduePayableAmount = overduePayableAmount.plus(balance);
+          this.addToCurrencyBreakdown(overduePayableByCurrency, currency, balance);
         }
       }
     }
+
+    const hasUsdBalances =
+      !receivableByCurrency.USD.isZero() ||
+      !payableByCurrency.USD.isZero() ||
+      !overdueReceivableByCurrency.USD.isZero() ||
+      !overduePayableByCurrency.USD.isZero();
+
+    let fxRate: number | null = null;
+    let exchangeRateUsed: string | null = null;
+    if (hasUsdBalances) {
+      try {
+        const fx = await this.fxService.getUsdMxn();
+        fxRate = fx.rate;
+        exchangeRateUsed = fx.rate.toFixed(2);
+      } catch {
+        // USD balances exist but FX is unavailable — consolidated totals exclude USD.
+        fxRate = null;
+        exchangeRateUsed = null;
+      }
+    }
+
+    const totalReceivable = this.consolidateBreakdownToMxn(receivableByCurrency, fxRate);
+    const totalPayable = this.consolidateBreakdownToMxn(payableByCurrency, fxRate);
+    const overdueReceivableAmount = this.consolidateBreakdownToMxn(
+      overdueReceivableByCurrency,
+      fxRate,
+    );
+    const overduePayableAmount = this.consolidateBreakdownToMxn(
+      overduePayableByCurrency,
+      fxRate,
+    );
 
     return {
       totalReceivable: totalReceivable.toFixed(2),
@@ -73,7 +114,52 @@ export class CuentasService {
       overduePayableCount,
       overdueReceivableAmount: overdueReceivableAmount.toFixed(2),
       overduePayableAmount: overduePayableAmount.toFixed(2),
+      totalReceivableByCurrency: this.formatCurrencyBreakdown(receivableByCurrency),
+      totalPayableByCurrency: this.formatCurrencyBreakdown(payableByCurrency),
+      overdueReceivableByCurrency: this.formatCurrencyBreakdown(overdueReceivableByCurrency),
+      overduePayableByCurrency: this.formatCurrencyBreakdown(overduePayableByCurrency),
+      exchangeRateUsed,
     };
+  }
+
+  private emptyCurrencyBreakdown(): CurrencyBreakdown {
+    return {
+      MXN: new Prisma.Decimal(0),
+      USD: new Prisma.Decimal(0),
+    };
+  }
+
+  private addToCurrencyBreakdown(
+    breakdown: CurrencyBreakdown,
+    currency: Currency,
+    amount: Prisma.Decimal,
+  ) {
+    if (currency === Currency.USD) {
+      breakdown.USD = breakdown.USD.plus(amount);
+    } else {
+      breakdown.MXN = breakdown.MXN.plus(amount);
+    }
+  }
+
+  private formatCurrencyBreakdown(breakdown: CurrencyBreakdown) {
+    return {
+      MXN: breakdown.MXN.toFixed(2),
+      USD: breakdown.USD.toFixed(2),
+    };
+  }
+
+  private consolidateBreakdownToMxn(
+    breakdown: CurrencyBreakdown,
+    fxRate: number | null,
+  ): Prisma.Decimal {
+    let total = breakdown.MXN;
+    if (!breakdown.USD.isZero()) {
+      if (fxRate === null) {
+        return breakdown.MXN;
+      }
+      total = total.plus(breakdown.USD.mul(fxRate));
+    }
+    return total;
   }
 
   // ─── Entries ─────────────────────────────────────────────────────────────────
