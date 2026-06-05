@@ -18,6 +18,7 @@ import {
 import { CommercialIntelligenceSection } from '@/components/dashboard/CommercialIntelligenceSection';
 import { apiGet } from '@/lib/api-client';
 import { getCapitalSummary, type CapitalSummary } from '@/lib/capital-api';
+import { getCuentasSummary, type CuentasSummary } from '@/lib/cuentas-api';
 import { getFxUsdMxn, type FxRateResult } from '@/lib/fx-api';
 import {
   AnalyticsPeriod,
@@ -76,11 +77,15 @@ function ExecutiveSectionTitle({
 
 function FinancialPositionHero({
   summary,
+  cuentasReceivable,
+  cuentasPayable,
   pendingToPartners,
   capitalContributed,
   capitalNeto,
 }: {
   summary: AnalyticsSummary;
+  cuentasReceivable: string | null;
+  cuentasPayable: string | null;
   pendingToPartners: string | null;
   capitalContributed: string | null;
   capitalNeto: string | null;
@@ -88,7 +93,8 @@ function FinancialPositionHero({
   const cash = num(summary.cashBalance);
   const bank = num(summary.bankBalance);
   const cesar = num(summary.cesarBalance);
-  const receivable = num(summary.totalPendingBalance);
+  const receivable = cuentasReceivable !== null ? num(cuentasReceivable) : null;
+  const payable = cuentasPayable !== null ? num(cuentasPayable) : null;
   const liquidityTotal = cash + bank + cesar;
   const pendingPartners = num(pendingToPartners);
   const investedCapital = num(capitalContributed);
@@ -101,8 +107,19 @@ function FinancialPositionHero({
     { label: 'Cuenta César', value: fmtMxn(cesar), tone: 'default' as const },
     {
       label: 'Cuentas por cobrar',
-      value: fmtMxn(receivable),
-      tone: receivable > 0 ? ('negative' as const) : ('default' as const),
+      value: receivable !== null ? fmtMxn(receivable) : '—',
+      tone:
+        receivable === null ? ('muted' as const) :
+        receivable > 0 ? ('negative' as const) :
+        ('default' as const),
+    },
+    {
+      label: 'Cuentas por pagar',
+      value: payable !== null ? fmtMxn(payable) : '—',
+      tone:
+        payable === null ? ('muted' as const) :
+        payable > 0 ? ('warning' as const) :
+        ('muted' as const),
     },
     {
       label: 'Por pagar socios',
@@ -145,15 +162,23 @@ function FinancialPositionHero({
     <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
       <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] px-5 py-3 md:px-6">
         <ExecutiveSectionTitle title="Posición financiera" />
-        <Link
-          href="/capital"
-          className="shrink-0 pt-0.5 text-[11px] font-medium tracking-wide text-white/30 transition-colors hover:text-emerald-400/90"
-        >
-          Ver módulo Capital →
-        </Link>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 pt-0.5">
+          <Link
+            href="/cuentas"
+            className="text-[11px] font-medium tracking-wide text-white/30 transition-colors hover:text-emerald-400/90"
+          >
+            Ver cuentas →
+          </Link>
+          <Link
+            href="/capital"
+            className="text-[11px] font-medium tracking-wide text-white/30 transition-colors hover:text-emerald-400/90"
+          >
+            Ver capital →
+          </Link>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 lg:divide-x lg:divide-y-0">
+      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-9 lg:divide-x lg:divide-y-0">
         {positions.map((item) => (
           <div key={item.label} className="px-4 py-4 md:px-5 md:py-5">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
@@ -443,6 +468,7 @@ export default function DashboardPage() {
   const [chartLoading, setChartLoading] = useState(true);
 
   const [capitalSummary, setCapitalSummary] = useState<CapitalSummary | null>(null);
+  const [cuentasSummary, setCuentasSummary] = useState<CuentasSummary | null>(null);
 
   const [fxRate, setFxRate] = useState<FxRateResult | null>(null);
   const [fxLoading, setFxLoading] = useState(true);
@@ -476,6 +502,12 @@ export default function DashboardPage() {
   useEffect(() => {
     getCapitalSummary()
       .then((s) => setCapitalSummary(s))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    getCuentasSummary()
+      .then((s) => setCuentasSummary(s))
       .catch(() => {});
   }, []);
 
@@ -576,6 +608,8 @@ export default function DashboardPage() {
 
       <FinancialPositionHero
         summary={data.summary}
+        cuentasReceivable={cuentasSummary?.totalReceivable ?? null}
+        cuentasPayable={cuentasSummary?.totalPayable ?? null}
         pendingToPartners={capitalSummary?.totalPendingToPartners ?? null}
         capitalContributed={capitalSummary?.totalCapitalContributed ?? null}
         capitalNeto={capitalSummary?.capitalNeto ?? null}
