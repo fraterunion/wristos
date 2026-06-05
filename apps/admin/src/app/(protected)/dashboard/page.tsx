@@ -122,7 +122,6 @@ function FinancialPositionHero({
         roi > 0 ? ('positive' as const) :
         roi < 0 ? ('negative' as const) :
         ('muted' as const),
-      helper: 'Retorno sobre capital invertido',
     },
     {
       label: 'Capital neto',
@@ -163,9 +162,6 @@ function FinancialPositionHero({
             <p className={`mt-2 text-xl font-semibold tabular-nums leading-none md:text-2xl ${toneClass(item.tone)}`}>
               {item.value}
             </p>
-            {'helper' in item && item.helper ? (
-              <p className="mt-1.5 text-[10px] leading-tight text-white/20">{item.helper}</p>
-            ) : null}
           </div>
         ))}
       </div>
