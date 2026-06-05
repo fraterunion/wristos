@@ -153,7 +153,7 @@ function statusPillClass(status: AccountEntryStatus) {
 
 function sourcePillClass(source: AccountEntrySource) {
   return source === 'DEAL_AUTO'
-    ? 'border-sky-500/25 bg-sky-500/10 text-sky-300'
+    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300'
     : 'border-white/15 bg-white/[0.05] text-white/60';
 }
 
@@ -191,7 +191,7 @@ function PillBtn({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+      className={`rounded-lg border px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 ${
         active
           ? 'border-white/35 bg-white/10 text-white'
           : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'
@@ -250,10 +250,10 @@ function SummaryStrip({ summary }: { summary: CuentasSummary }) {
       <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-y-0">
         {cells.map((cell) => (
           <div key={cell.label} className="px-4 py-4 md:px-5 md:py-5">
-            <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">
+            <p className="text-[10px] font-medium uppercase leading-snug tracking-[0.14em] text-white/40">
               {cell.label}
             </p>
-            <p className={`mt-2 text-xl font-semibold tabular-nums md:text-2xl ${cell.tone}`}>
+            <p className={`mt-2 text-lg font-semibold tabular-nums md:text-2xl ${cell.tone}`}>
               {cell.value}
             </p>
             {cell.sub ? (
@@ -400,14 +400,14 @@ function EntryModal({
             ✕
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
+        <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
           {error && (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {error}
             </div>
           )}
           {dealLinked && (
-            <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+            <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/55">
               Esta cuenta está ligada a una venta.
             </div>
           )}
@@ -671,7 +671,7 @@ function PaymentModal({
             ✕
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
+        <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
           {error && (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {error}
@@ -799,13 +799,13 @@ function EntryDrawer({
             type="button"
             aria-label="Cerrar"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-white/50 transition hover:bg-white/8 hover:text-white"
+            className="ml-3 shrink-0 rounded-lg p-1.5 text-white/50 transition hover:bg-white/8 hover:text-white"
           >
             ✕
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto pb-6">
+        <div className="flex-1 overflow-y-auto overscroll-contain pb-6">
           <div className="flex flex-wrap gap-2 border-b border-white/[0.06] px-5 py-3">
             <span
               className={`inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-medium ${statusPillClass(entry.status)}`}
@@ -882,8 +882,8 @@ function EntryDrawer({
               Pagos
             </p>
             {dealLinked ? (
-              <div className="mt-3 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-4 text-center">
-                <p className="text-xs leading-relaxed text-sky-200/70">
+              <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-4 text-center">
+                <p className="text-xs leading-relaxed text-white/45">
                   Esta cuenta se liquida desde Ventas.
                 </p>
               </div>
@@ -1064,7 +1064,13 @@ export default function CuentasPage() {
   if (loading && !summary) {
     return (
       <div className="ui-page">
-        <div className="flex items-center justify-center py-32">
+        <header className="ui-page-header">
+          <div>
+            <h1 className="ui-title">Cuentas</h1>
+            <p className="ui-subtitle">Control de cobros y pagos operativos.</p>
+          </div>
+        </header>
+        <div className="flex items-center justify-center rounded-2xl border border-white/[0.08] bg-panel/95 py-24">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-emerald-400" />
         </div>
       </div>
@@ -1113,44 +1119,56 @@ export default function CuentasPage() {
       {summary ? <SummaryStrip summary={summary} /> : null}
 
       {actionError ? (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {actionError}
+        <div className="flex items-center justify-between rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+          <p className="text-sm text-rose-200">{actionError}</p>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="ml-4 shrink-0 text-sm text-rose-300 transition hover:text-white"
+          >
+            ✕
+          </button>
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <PillBtn active={tab === 'RECEIVABLE'} onClick={() => setTab('RECEIVABLE')}>
-          Por cobrar
-        </PillBtn>
-        <PillBtn active={tab === 'PAYABLE'} onClick={() => setTab('PAYABLE')}>
-          Por pagar
-        </PillBtn>
-      </div>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <PillBtn active={tab === 'RECEIVABLE'} onClick={() => setTab('RECEIVABLE')}>
+            Por cobrar
+          </PillBtn>
+          <PillBtn active={tab === 'PAYABLE'} onClick={() => setTab('PAYABLE')}>
+            Por pagar
+          </PillBtn>
+        </div>
 
-      <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95">
+        <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/20">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-emerald-400" />
           </div>
         ) : entries.length === 0 ? (
-          <div className="px-6 py-16 text-center">
-            <p className="text-sm text-white/40">
-              {tab === 'RECEIVABLE'
-                ? 'Aún no hay cuentas por cobrar registradas.'
-                : 'Aún no hay cuentas por pagar registradas.'}
-            </p>
+          <div className="px-5 py-12 md:px-6">
+            <div className="rounded-lg border border-dashed border-white/[0.08] bg-black/15 px-4 py-10 text-center">
+              <p className="text-sm text-white/35">
+                {tab === 'RECEIVABLE'
+                  ? 'Aún no hay cuentas por cobrar registradas.'
+                  : 'Aún no hay cuentas por pagar registradas.'}
+              </p>
+            </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-left text-sm">
+          <div className="overflow-x-auto overscroll-x-contain">
+            <table className="w-full min-w-[960px] border-collapse text-left text-sm">
               <thead>
-                <tr className="border-b border-white/[0.06] text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
-                  <th className="px-4 py-3 font-semibold">Contraparte</th>
+                <tr className="border-b border-white/[0.06] bg-black/20 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
+                  <th className="sticky left-0 z-20 bg-[#121212] px-4 py-3 font-semibold shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)]">
+                    Contraparte
+                  </th>
                   <th className="px-4 py-3 font-semibold">Concepto</th>
-                  <th className="px-4 py-3 font-semibold text-right">Monto</th>
-                  <th className="px-4 py-3 font-semibold text-right">Pagado</th>
-                  <th className="px-4 py-3 font-semibold text-right">Pendiente</th>
-                  <th className="px-4 py-3 font-semibold">Vence</th>
+                  <th className="whitespace-nowrap px-4 py-3 font-semibold text-right">Monto</th>
+                  <th className="whitespace-nowrap px-4 py-3 font-semibold text-right">Pagado</th>
+                  <th className="whitespace-nowrap px-4 py-3 font-semibold text-right">Pendiente</th>
+                  <th className="whitespace-nowrap px-4 py-3 font-semibold">Vence</th>
                   <th className="px-4 py-3 font-semibold">Estado</th>
                   <th className="px-4 py-3 font-semibold">Fuente</th>
                   <th className="px-4 py-3 font-semibold text-right">Acciones</th>
@@ -1160,21 +1178,23 @@ export default function CuentasPage() {
                 {entries.map((entry) => (
                   <tr
                     key={entry.id}
-                    className="cursor-pointer transition hover:bg-white/[0.03]"
+                    className="group cursor-pointer transition hover:bg-white/[0.03]"
                     onClick={() => setDrawerEntry(entry)}
                   >
-                    <td className="px-4 py-3.5 font-medium text-white">{entry.counterpartyName}</td>
-                    <td className="max-w-[200px] truncate px-4 py-3.5 text-white/60">
+                    <td className="sticky left-0 z-10 bg-panel/95 px-4 py-3 font-medium text-white shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] group-hover:bg-[#141414]">
+                      {entry.counterpartyName}
+                    </td>
+                    <td className="max-w-[200px] truncate px-4 py-3 text-white/60">
                       {entry.concept}
                     </td>
-                    <td className="px-4 py-3.5 text-right tabular-nums text-white">
+                    <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-white">
                       {fmtMoney(entry.totalAmount, entry.currency)}
                     </td>
-                    <td className="px-4 py-3.5 text-right tabular-nums text-white/60">
+                    <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-white/60">
                       {fmtMoney(entry.paidTotal, entry.currency)}
                     </td>
                     <td
-                      className={`px-4 py-3.5 text-right tabular-nums ${
+                      className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${
                         entry.status === 'OVERDUE' && Number(entry.balance) > 0
                           ? 'text-rose-400'
                           : Number(entry.balance) > 0
@@ -1184,25 +1204,25 @@ export default function CuentasPage() {
                     >
                       {fmtMoney(entry.balance, entry.currency)}
                     </td>
-                    <td className="px-4 py-3.5 text-white/50">{fmtDate(entry.dueDate)}</td>
-                    <td className="px-4 py-3.5">
+                    <td className="whitespace-nowrap px-4 py-3 text-white/50">{fmtDate(entry.dueDate)}</td>
+                    <td className="px-4 py-3">
                       <span
                         className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${statusPillClass(entry.status)}`}
                       >
                         {STATUS_LABELS[entry.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5">
+                    <td className="px-4 py-3">
                       <span
                         className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${sourcePillClass(entry.source)}`}
                       >
                         {sourceLabel(entry.source)}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5 text-right">
+                    <td className="px-4 py-3 text-right">
                       <button
                         type="button"
-                        className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-white/50 transition hover:border-white/20 hover:text-white"
+                        className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-white/50 transition hover:border-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
                         onClick={(e) => {
                           e.stopPropagation();
                           setDrawerEntry(entry);
@@ -1217,6 +1237,7 @@ export default function CuentasPage() {
             </table>
           </div>
         )}
+        </div>
       </div>
 
       <EntryDrawer
