@@ -295,7 +295,9 @@ function InvestorCard({
           : undefined
       }
       className={`overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 ${
-        onClick ? 'cursor-pointer transition hover:border-white/20' : ''
+        onClick
+          ? 'cursor-pointer transition hover:border-white/20 hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/35'
+          : ''
       }`}
     >
       <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
@@ -330,7 +332,7 @@ function InvestorCard({
         <span className="text-sm font-medium text-white/60">Por cobrar</span>
         <span
           className={`text-xl font-semibold tabular-nums ${
-            pending > 0 ? 'text-emerald-400' : pending < 0 ? 'text-rose-400' : 'text-white/30'
+            pending > 0 ? 'text-amber-400' : pending < 0 ? 'text-rose-400' : 'text-white/30'
           }`}
         >
           {fmtMxn(investor.pendingProfit)}
@@ -427,14 +429,15 @@ function InvestorDrawer({
           </div>
           <button
             type="button"
+            aria-label="Cerrar"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-white/40 transition hover:bg-white/8 hover:text-white"
+            className="rounded-lg p-1.5 text-white/50 transition hover:bg-white/8 hover:text-white"
           >
             ✕
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto pb-6">
           <div className="divide-y divide-white/[0.06] border-b border-white/[0.06]">
             {metrics.map((metric) => (
               <div key={metric.label} className="flex items-center justify-between px-5 py-3.5">
@@ -446,25 +449,25 @@ function InvestorDrawer({
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-2 border-b border-white/[0.06] px-5 py-4">
+          <div className="grid grid-cols-1 gap-2 border-b border-white/[0.06] px-5 py-4 sm:grid-cols-3">
             <button
               type="button"
               onClick={() => onAporte(investor.id)}
-              className="ui-btn-secondary min-w-0 flex-1 px-3 py-2 text-sm"
+              className="ui-btn-secondary px-3 py-2 text-sm"
             >
               + Aporte
             </button>
             <button
               type="button"
               onClick={() => onRetiro(investor.id)}
-              className="ui-btn-primary min-w-0 flex-1 px-3 py-2 text-sm"
+              className="ui-btn-primary px-3 py-2 text-sm"
             >
               + Retiro
             </button>
             <button
               type="button"
               onClick={onConfigure}
-              className="ui-btn-ghost min-w-0 flex-1 px-3 py-2 text-sm"
+              className="ui-btn-ghost px-3 py-2 text-sm"
             >
               Configurar
             </button>
@@ -1628,21 +1631,22 @@ export default function CapitalPage() {
         </div>
       )}
 
-      {/* Summary hero */}
-      <CapitalHero
-        totalCapitalContributed={s.totalCapitalContributed}
-        totalBusinessProfit={s.totalBusinessProfit}
-        totalDistributionsPaid={s.totalDistributionsPaid}
-        totalPendingToPartners={s.totalPendingToPartners}
-        capitalNeto={s.capitalNeto}
-      />
+      <div className="space-y-3">
+        <CapitalHero
+          totalCapitalContributed={s.totalCapitalContributed}
+          totalBusinessProfit={s.totalBusinessProfit}
+          totalDistributionsPaid={s.totalDistributionsPaid}
+          totalPendingToPartners={s.totalPendingToPartners}
+          capitalNeto={s.capitalNeto}
+        />
 
-      <FinancialInsightStrip
-        totalBusinessProfit={s.totalBusinessProfit}
-        totalDistributionsPaid={s.totalDistributionsPaid}
-        totalPendingToPartners={s.totalPendingToPartners}
-        totalCapitalContributed={s.totalCapitalContributed}
-      />
+        <FinancialInsightStrip
+          totalBusinessProfit={s.totalBusinessProfit}
+          totalDistributionsPaid={s.totalDistributionsPaid}
+          totalPendingToPartners={s.totalPendingToPartners}
+          totalCapitalContributed={s.totalCapitalContributed}
+        />
+      </div>
 
       {/* Investor cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
