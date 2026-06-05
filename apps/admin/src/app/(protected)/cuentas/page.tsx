@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { ApiError } from '@/lib/api-client';
+import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ApiError, apiGet } from '@/lib/api-client';
 import {
   createAccountEntry,
   createAccountPayment,
@@ -20,7 +22,7 @@ import {
   type Currency,
   type CuentasSummary,
 } from '@/lib/cuentas-api';
-import type { PaymentMethod } from '@/types/domain';
+import type { Client, PaymentMethod } from '@/types/domain';
 
 // ─── Constants & labels ───────────────────────────────────────────────────────
 
@@ -797,6 +799,14 @@ function EntryDrawer({
           <div className="min-w-0">
             <p className="truncate text-base font-semibold text-white">{entry.counterpartyName}</p>
             <p className="mt-0.5 truncate text-sm text-white/40">{entry.concept}</p>
+            {entry.clientId ? (
+              <Link
+                href={`/crm/${entry.clientId}`}
+                className="mt-2 inline-flex text-xs font-medium text-emerald-400 underline-offset-4 transition hover:text-white hover:underline"
+              >
+                Abrir cliente →
+              </Link>
+            ) : null}
           </div>
           <button
             type="button"
@@ -936,11 +946,17 @@ function EntryDrawer({
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function CuentasPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const clientIdFilter = searchParams.get('clientId')?.trim() || null;
+
   const [tab, setTab] = useState<AccountEntryType>('RECEIVABLE');
   const [summary, setSummary] = useState<CuentasSummary | null>(null);
   const [entries, setEntries] = useState<AccountEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [clientFilterName, setClientFilterName] = useState<string | null>(null);
 
   const [drawerEntry, setDrawerEntry] = useState<AccountEntry | null>(null);
   const [entryModal, setEntryModal] = useState<{ open: boolean; editing: AccountEntry | null }>({
@@ -954,13 +970,21 @@ export default function CuentasPage() {
   }>({ open: false, entry: null, editing: null });
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const loadData = useCallback(async (type: AccountEntryType) => {
+  const entriesQuery = useMemo(
+    () => ({
+      type: tab,
+      ...(clientIdFilter ? { clientId: clientIdFilter } : {}),
+    }),
+    [tab, clientIdFilter],
+  );
+
+  const loadData = useCallback(async (query: { type: AccountEntryType; clientId?: string }) => {
     setLoading(true);
     setError(null);
     try {
       const [sum, list] = await Promise.all([
         getCuentasSummary(),
-        listAccountEntries({ type }),
+        listAccountEntries(query),
       ]);
       setSummary(sum);
       setEntries(list);
@@ -972,8 +996,30 @@ export default function CuentasPage() {
   }, []);
 
   useEffect(() => {
-    void loadData(tab);
-  }, [tab, loadData]);
+    void loadData(entriesQuery);
+  }, [entriesQuery, loadData]);
+
+  useEffect(() => {
+    if (!clientIdFilter) {
+      setClientFilterName(null);
+      return;
+    }
+    let cancelled = false;
+    void apiGet<Client>(`/crm/clients/${clientIdFilter}`, { authenticated: true })
+      .then((client) => {
+        if (!cancelled) setClientFilterName(client.name);
+      })
+      .catch(() => {
+        if (!cancelled) setClientFilterName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientIdFilter]);
+
+  function clearClientFilter() {
+    router.replace(pathname, { scroll: false });
+  }
 
   useEffect(() => {
     setDrawerEntry(null);
@@ -1027,7 +1073,7 @@ export default function CuentasPage() {
 
     const [sum, list] = await Promise.all([
       getCuentasSummary(),
-      listAccountEntries({ type: tab }),
+      listAccountEntries(entriesQuery),
     ]);
     setSummary(sum);
     setEntries(list);
@@ -1059,7 +1105,7 @@ export default function CuentasPage() {
     const entryId = entry.id;
     const [sum, list] = await Promise.all([
       getCuentasSummary(),
-      listAccountEntries({ type: tab }),
+      listAccountEntries(entriesQuery),
     ]);
     setSummary(sum);
     setEntries(list);
@@ -1079,7 +1125,7 @@ export default function CuentasPage() {
       await deleteAccountEntry(entry.id);
       setDrawerEntry(null);
       setActionError(null);
-      await loadData(tab);
+      await loadData(entriesQuery);
     } catch (e) {
       const message =
         e instanceof ApiError && e.status === 400
@@ -1120,7 +1166,7 @@ export default function CuentasPage() {
           <p className="text-sm text-rose-300">{error}</p>
           <button
             type="button"
-            onClick={() => void loadData(tab)}
+            onClick={() => void loadData(entriesQuery)}
             className="mt-4 rounded-lg border border-white/10 px-4 py-2 text-sm text-white/60 transition hover:border-white/20 hover:text-white"
           >
             Reintentar
@@ -1147,6 +1193,27 @@ export default function CuentasPage() {
       </header>
 
       {summary ? <SummaryStrip summary={summary} /> : null}
+
+      {clientIdFilter ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-1.5 text-sm text-white/70">
+            <span>
+              Cliente:{' '}
+              <span className="font-medium text-white">
+                {clientFilterName ?? 'Cargando…'}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={clearClientFilter}
+              className="rounded-md px-1.5 py-0.5 text-xs text-white/45 transition hover:bg-white/10 hover:text-white"
+              aria-label="Quitar filtro de cliente"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+      ) : null}
 
       {actionError ? (
         <div className="flex items-center justify-between rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
@@ -1212,7 +1279,17 @@ export default function CuentasPage() {
                     onClick={() => setDrawerEntry(entry)}
                   >
                     <td className="sticky left-0 z-10 bg-panel/95 px-4 py-3 font-medium text-white shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] group-hover:bg-[#141414]">
-                      {entry.counterpartyName}
+                      {entry.clientId ? (
+                        <Link
+                          href={`/crm/${entry.clientId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-white/80 underline-offset-4 transition hover:text-white hover:underline"
+                        >
+                          {entry.counterpartyName}
+                        </Link>
+                      ) : (
+                        entry.counterpartyName
+                      )}
                     </td>
                     <td className="max-w-[200px] truncate px-4 py-3 text-white/60">
                       {entry.concept}
