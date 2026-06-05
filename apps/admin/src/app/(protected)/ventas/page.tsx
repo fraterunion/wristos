@@ -406,12 +406,18 @@ export default function VentasPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+              <table className="w-full min-w-[520px] border-collapse text-left text-sm lg:min-w-[1080px]">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    <th className="w-[86px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Fecha</th>
-                    <th className="px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Reloj</th>
-                    <th className="w-[120px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden md:table-cell">Comprador</th>
+                    <th className="sticky left-0 z-20 w-[72px] bg-panel px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] md:static md:z-auto md:w-[86px] md:shadow-none">
+                      Fecha
+                    </th>
+                    <th className="sticky left-[72px] z-20 min-w-[148px] bg-panel px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] md:static md:z-auto md:min-w-0 md:shadow-none">
+                      Reloj
+                    </th>
+                    <th className="hidden w-[120px] px-3 py-3 text-left text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 md:table-cell">
+                      Comprador
+                    </th>
                     <th className="w-[100px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">Total</th>
                     <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden lg:table-cell">Costo</th>
                     <th className="w-[88px] px-3 py-3 text-right text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30 hidden lg:table-cell">Utilidad</th>
@@ -438,18 +444,18 @@ export default function VentasPage() {
                       <tr
                         key={sale.dealId}
                         onClick={() => setDrawerSale(sale)}
-                        className="cursor-pointer transition-colors duration-150 hover:bg-white/[0.02]"
+                        className="group cursor-pointer transition-colors duration-150 hover:bg-white/[0.02]"
                       >
 
                         {/* Fecha */}
-                        <td className="px-3 py-3.5 align-top pt-4">
+                        <td className="sticky left-0 z-10 bg-panel px-3 py-3.5 align-top pt-4 shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] group-hover:bg-[#141414] md:static md:z-auto md:shadow-none">
                           <span className="text-xs tabular-nums text-white/35 whitespace-nowrap">
                             {fmtDate(sale.soldAt)}
                           </span>
                         </td>
 
                         {/* Reloj */}
-                        <td className="px-3 py-3.5 align-middle overflow-hidden">
+                        <td className="sticky left-[72px] z-10 min-w-[148px] bg-panel px-3 py-3.5 align-middle overflow-hidden shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] group-hover:bg-[#141414] md:static md:z-auto md:min-w-0 md:shadow-none">
                           <p className="text-sm font-semibold text-white leading-tight truncate">{sale.watch.brand}</p>
                           <p className="mt-0.5 text-xs text-white/50 truncate">{sale.watch.model}</p>
                           {sale.watch.serialNumber && (
@@ -457,10 +463,11 @@ export default function VentasPage() {
                               {sale.watch.serialNumber}
                             </p>
                           )}
+                          <p className="mt-1 text-xs text-white/45 truncate md:hidden">{sale.buyer.name}</p>
                         </td>
 
                         {/* Comprador */}
-                        <td className="px-3 py-3.5 align-middle hidden md:table-cell overflow-hidden">
+                        <td className="hidden px-3 py-3.5 align-middle overflow-hidden md:table-cell">
                           <p className="text-sm text-white/55 truncate">{sale.buyer.name}</p>
                         </td>
 
