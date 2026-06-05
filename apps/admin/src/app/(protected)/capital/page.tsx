@@ -265,9 +265,11 @@ function FinancialInsightStrip({
 function InvestorCard({
   investor,
   isPrimary,
+  onClick,
 }: {
   investor: CapitalInvestorBalance;
   isPrimary: boolean;
+  onClick?: () => void;
 }) {
   const rows = [
     { label: 'Aportado',          value: fmtMxn(investor.capitalContributed) },
@@ -277,7 +279,24 @@ function InvestorCard({
   const pending = Number(investor.pendingProfit);
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95">
+    <article
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={`overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 ${
+        onClick ? 'cursor-pointer transition hover:border-white/20' : ''
+      }`}
+    >
       <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
         <div className="flex items-center gap-3">
           <div
@@ -317,6 +336,196 @@ function InvestorCard({
         </span>
       </div>
     </article>
+  );
+}
+
+// ─── InvestorDrawer ───────────────────────────────────────────────────────────
+
+function InvestorDrawer({
+  investor,
+  primaryInvestorId,
+  contributions,
+  distributions,
+  onClose,
+  onAporte,
+  onRetiro,
+}: {
+  investor: CapitalInvestorBalance | null;
+  primaryInvestorId: string | undefined;
+  contributions: CapitalContribution[];
+  distributions: CapitalDistribution[];
+  onClose: () => void;
+  onAporte: (investorId: string) => void;
+  onRetiro: (investorId: string) => void;
+}) {
+  useEffect(() => {
+    if (!investor) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [investor, onClose]);
+
+  if (!investor) return null;
+
+  const isPrimary = investor.id === primaryInvestorId;
+  const pending = Number(investor.pendingProfit);
+  const investorAportes = contributions
+    .filter((c) => c.investorId === investor.id)
+    .sort((a, b) => b.contributedAt.localeCompare(a.contributedAt));
+  const investorRetiros = distributions
+    .filter((d) => d.investorId === investor.id)
+    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+
+  const metrics = [
+    { label: 'Aportado', value: fmtMxn(investor.capitalContributed), tone: 'neutral' as const },
+    { label: 'Utilidad asignada', value: fmtMxn(investor.profitEntitlement), tone: 'neutral' as const },
+    { label: 'Retirado', value: fmtMxn(investor.distributionsPaid), tone: 'neutral' as const },
+    {
+      label: 'Por cobrar',
+      value: fmtMxn(investor.pendingProfit),
+      tone:
+        pending > 0 ? ('warning' as const) :
+        pending < 0 ? ('negative' as const) :
+        ('neutral' as const),
+    },
+  ];
+
+  const toneClass = (tone: 'neutral' | 'warning' | 'negative') =>
+    tone === 'warning' ? 'text-amber-400' :
+    tone === 'negative' ? 'text-rose-400' :
+    'text-white';
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Cerrar panel"
+        className="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <aside className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-white/[0.07] bg-[#0f0f0f] shadow-2xl sm:max-w-md">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold ${
+                isPrimary
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                  : 'border-white/15 bg-white/[0.06] text-white/60'
+              }`}
+            >
+              {investor.name[0]}
+            </div>
+            <div>
+              <p className="text-base font-semibold text-white">{investor.name}</p>
+              <p className="text-[11px] text-white/35">Socio · {investor.ownershipPercent}%</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-white/40 transition hover:bg-white/8 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="divide-y divide-white/[0.06] border-b border-white/[0.06]">
+            {metrics.map((metric) => (
+              <div key={metric.label} className="flex items-center justify-between px-5 py-3.5">
+                <span className="text-sm text-white/45">{metric.label}</span>
+                <span className={`text-sm font-semibold tabular-nums ${toneClass(metric.tone)}`}>
+                  {metric.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2 border-b border-white/[0.06] px-5 py-4">
+            <button
+              type="button"
+              onClick={() => onAporte(investor.id)}
+              className="ui-btn-secondary flex-1 px-3 py-2 text-sm"
+            >
+              + Aporte
+            </button>
+            <button
+              type="button"
+              onClick={() => onRetiro(investor.id)}
+              className="ui-btn-primary flex-1 px-3 py-2 text-sm"
+            >
+              + Retiro
+            </button>
+          </div>
+
+          <section className="px-5 py-4">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">
+              Aportes
+            </p>
+            {investorAportes.length === 0 ? (
+              <p className="mt-3 text-sm text-white/30">Sin aportes.</p>
+            ) : (
+              <ul className="mt-3 space-y-0 divide-y divide-white/[0.04]">
+                {investorAportes.map((item) => (
+                  <li key={item.id} className="py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs tabular-nums text-white/35">{fmtDate(item.contributedAt)}</p>
+                        {item.notes ? (
+                          <p className="mt-1 truncate text-sm text-white/40">{item.notes}</p>
+                        ) : null}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold tabular-nums text-white">
+                          {fmtMxn(item.amount)}
+                        </p>
+                        <div className="mt-1.5 flex justify-end">
+                          <AccountPill account={item.account} />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="border-t border-white/[0.06] px-5 py-4">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">
+              Retiros
+            </p>
+            {investorRetiros.length === 0 ? (
+              <p className="mt-3 text-sm text-white/30">Sin retiros.</p>
+            ) : (
+              <ul className="mt-3 space-y-0 divide-y divide-white/[0.04]">
+                {investorRetiros.map((item) => (
+                  <li key={item.id} className="py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs tabular-nums text-white/35">{fmtDate(item.paidAt)}</p>
+                        {item.notes ? (
+                          <p className="mt-1 truncate text-sm text-white/40">{item.notes}</p>
+                        ) : null}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold tabular-nums text-white">
+                          {fmtMxn(item.amount)}
+                        </p>
+                        <div className="mt-1.5 flex justify-end">
+                          <AccountPill account={item.account} />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -690,12 +899,14 @@ const EMPTY_APORTE: AporteForm = {
 function AporteModal({
   open,
   editing,
+  defaultInvestorId,
   investors,
   onClose,
   onSave,
 }: {
   open: boolean;
   editing: CapitalContribution | null;
+  defaultInvestorId?: string;
   investors: CapitalInvestorBalance[];
   onClose: () => void;
   onSave: (form: AporteForm) => Promise<void>;
@@ -705,7 +916,12 @@ function AporteModal({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (open && editing) {
+    if (!open) {
+      setForm(EMPTY_APORTE);
+      setError(null);
+      return;
+    }
+    if (editing) {
       setForm({
         investorId: editing.investorId,
         amount: editing.amount,
@@ -713,11 +929,12 @@ function AporteModal({
         contributedAt: isoToDateInput(editing.contributedAt),
         notes: editing.notes ?? '',
       });
-    } else if (!open) {
+    } else if (defaultInvestorId) {
+      setForm({ ...EMPTY_APORTE, investorId: defaultInvestorId });
+    } else {
       setForm(EMPTY_APORTE);
-      setError(null);
     }
-  }, [open, editing]);
+  }, [open, editing, defaultInvestorId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -886,12 +1103,14 @@ const EMPTY_RETIRO: RetiroForm = {
 function RetiroModal({
   open,
   editing,
+  defaultInvestorId,
   investors,
   onClose,
   onSave,
 }: {
   open: boolean;
   editing: CapitalDistribution | null;
+  defaultInvestorId?: string;
   investors: CapitalInvestorBalance[];
   onClose: () => void;
   onSave: (form: RetiroForm) => Promise<void>;
@@ -901,7 +1120,12 @@ function RetiroModal({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (open && editing) {
+    if (!open) {
+      setForm(EMPTY_RETIRO);
+      setError(null);
+      return;
+    }
+    if (editing) {
       setForm({
         investorId: editing.investorId,
         amount: editing.amount,
@@ -909,11 +1133,12 @@ function RetiroModal({
         paidAt: isoToDateInput(editing.paidAt),
         notes: editing.notes ?? '',
       });
-    } else if (!open) {
+    } else if (defaultInvestorId) {
+      setForm({ ...EMPTY_RETIRO, investorId: defaultInvestorId });
+    } else {
       setForm(EMPTY_RETIRO);
-      setError(null);
     }
-  }, [open, editing]);
+  }, [open, editing, defaultInvestorId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1089,12 +1314,15 @@ export default function CapitalPage() {
   const [aporteModal, setAporteModal] = useState<{
     open: boolean;
     editing: CapitalContribution | null;
+    defaultInvestorId?: string;
   }>({ open: false, editing: null });
   const [retiroModal, setRetiroModal] = useState<{
     open: boolean;
     editing: CapitalDistribution | null;
+    defaultInvestorId?: string;
   }>({ open: false, editing: null });
   const [setupModal, setSetupModal] = useState(false);
+  const [selectedInvestor, setSelectedInvestor] = useState<CapitalInvestorBalance | null>(null);
   const [deletingAporteId, setDeletingAporteId] = useState<string | null>(null);
   const [deletingRetiroId, setDeletingRetiroId] = useState<string | null>(null);
 
@@ -1364,9 +1592,30 @@ export default function CapitalPage() {
       {/* Investor cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {investors.map((inv, idx) => (
-          <InvestorCard key={inv.id} investor={inv} isPrimary={idx === 0} />
+          <InvestorCard
+            key={inv.id}
+            investor={inv}
+            isPrimary={idx === 0}
+            onClick={() => setSelectedInvestor(inv)}
+          />
         ))}
       </div>
+
+      <InvestorDrawer
+        investor={selectedInvestor}
+        primaryInvestorId={primaryInvestorId}
+        contributions={contributions}
+        distributions={distributions}
+        onClose={() => setSelectedInvestor(null)}
+        onAporte={(investorId) => {
+          setSelectedInvestor(null);
+          setAporteModal({ open: true, editing: null, defaultInvestorId: investorId });
+        }}
+        onRetiro={(investorId) => {
+          setSelectedInvestor(null);
+          setRetiroModal({ open: true, editing: null, defaultInvestorId: investorId });
+        }}
+      />
 
       {/* Tabs + Tables */}
       <div className="space-y-4">
@@ -1426,6 +1675,7 @@ export default function CapitalPage() {
       <AporteModal
         open={aporteModal.open}
         editing={aporteModal.editing}
+        defaultInvestorId={aporteModal.defaultInvestorId}
         investors={investors}
         onClose={() => setAporteModal({ open: false, editing: null })}
         onSave={handleSaveAporte}
@@ -1434,6 +1684,7 @@ export default function CapitalPage() {
       <RetiroModal
         open={retiroModal.open}
         editing={retiroModal.editing}
+        defaultInvestorId={retiroModal.defaultInvestorId}
         investors={investors}
         onClose={() => setRetiroModal({ open: false, editing: null })}
         onSave={handleSaveRetiro}
