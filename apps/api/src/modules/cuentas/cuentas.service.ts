@@ -758,6 +758,8 @@ export class CuentasService {
       method: payment.method,
       paidAt: payment.paidAt.toISOString(),
       notes: payment.notes,
+      cashAccount: payment.cashAccount,
+      exchangeRateUsed: payment.exchangeRateUsed?.toFixed(6) ?? null,
       deletedAt: payment.deletedAt?.toISOString() ?? null,
       createdAt: payment.createdAt.toISOString(),
       updatedAt: payment.updatedAt.toISOString(),

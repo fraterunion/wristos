@@ -23,7 +23,9 @@ import {
   type CounterpartyType,
   type Currency,
   type CuentasSummary,
+  type TreasuryAccount,
 } from '@/lib/cuentas-api';
+import { getFxUsdMxn } from '@/lib/fx-api';
 import type { Client, PaymentMethod } from '@/types/domain';
 
 // ─── Constants & labels ───────────────────────────────────────────────────────
@@ -73,6 +75,18 @@ const PAYMENT_METHOD_OPTIONS: PaymentMethod[] = [
   'CESAR',
   'OTHER',
 ];
+
+const TREASURY_ACCOUNT_OPTIONS: { value: TreasuryAccount; label: string }[] = [
+  { value: 'CASH', label: 'Efectivo' },
+  { value: 'BANK', label: 'Bancos' },
+  { value: 'CESAR', label: 'Cuenta César' },
+];
+
+const TREASURY_ACCOUNT_LABELS: Record<TreasuryAccount, string> = {
+  CASH: 'Efectivo',
+  BANK: 'Bancos',
+  CESAR: 'Cuenta César',
+};
 
 const CATEGORY_OPTIONS: AccountEntryCategory[] = [
   'SALE_BALANCE',
@@ -728,6 +742,8 @@ type PaymentForm = {
   method: PaymentMethod | '';
   paidAt: string;
   notes: string;
+  cashAccount: TreasuryAccount;
+  exchangeRateUsed: string;
 };
 
 const EMPTY_PAYMENT_FORM: PaymentForm = {
@@ -735,6 +751,8 @@ const EMPTY_PAYMENT_FORM: PaymentForm = {
   method: '',
   paidAt: todayIso(),
   notes: '',
+  cashAccount: 'BANK',
+  exchangeRateUsed: '',
 };
 
 function PaymentModal({
@@ -753,6 +771,7 @@ function PaymentModal({
   const [form, setForm] = useState<PaymentForm>(EMPTY_PAYMENT_FORM);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [fxLoading, setFxLoading] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -766,11 +785,27 @@ function PaymentModal({
         method: editing.method as PaymentMethod,
         paidAt: isoToDateInput(editing.paidAt),
         notes: editing.notes ?? '',
+        cashAccount: editing.cashAccount ?? 'BANK',
+        exchangeRateUsed: editing.exchangeRateUsed ?? '',
       });
     } else {
       setForm(EMPTY_PAYMENT_FORM);
     }
   }, [open, editing]);
+
+  useEffect(() => {
+    if (!open || !entry || entry.currency !== 'USD') return;
+    setFxLoading(true);
+    getFxUsdMxn()
+      .then((fx) => {
+        setForm((current) => ({
+          ...current,
+          exchangeRateUsed: current.exchangeRateUsed || String(fx.rate),
+        }));
+      })
+      .catch(() => {})
+      .finally(() => setFxLoading(false));
+  }, [open, entry]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -786,6 +821,17 @@ function PaymentModal({
     if (!form.paidAt) {
       setError('Selecciona una fecha.');
       return;
+    }
+    if (!form.cashAccount) {
+      setError('Selecciona la cuenta de tesorería afectada.');
+      return;
+    }
+    if (entry?.currency === 'USD') {
+      const rate = Number(form.exchangeRateUsed);
+      if (!form.exchangeRateUsed || !Number.isFinite(rate) || rate <= 0) {
+        setError('Ingresa un tipo de cambio válido para pagos en USD.');
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -845,6 +891,42 @@ function PaymentModal({
               onChange={(e) => setForm({ ...form, amount: e.target.value })}
             />
           </div>
+          <div>
+            <label className="ui-field-label">
+              {entry.type === 'RECEIVABLE'
+                ? '¿Dónde recibiste el dinero?'
+                : '¿De dónde salió el dinero?'}
+            </label>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {TREASURY_ACCOUNT_OPTIONS.map((option) => (
+                <PillBtn
+                  key={option.value}
+                  active={form.cashAccount === option.value}
+                  onClick={() => setForm({ ...form, cashAccount: option.value })}
+                >
+                  {option.label}
+                </PillBtn>
+              ))}
+            </div>
+          </div>
+          {entry.currency === 'USD' && (
+            <div>
+              <label className="ui-field-label">Tipo de cambio MXN/USD</label>
+              <input
+                type="number"
+                step="0.000001"
+                min="0.000001"
+                className="ui-input mt-1.5 w-full"
+                value={form.exchangeRateUsed}
+                onChange={(e) => setForm({ ...form, exchangeRateUsed: e.target.value })}
+                placeholder={fxLoading ? 'Cargando…' : '0.00'}
+                disabled={fxLoading && !form.exchangeRateUsed}
+              />
+              <p className="mt-1 text-[11px] text-white/35">
+                Necesario para reflejar el movimiento en MXN.
+              </p>
+            </div>
+          )}
           <div>
             <label className="ui-field-label">Método</label>
             <select
@@ -1078,6 +1160,9 @@ function EntryDrawer({
                         <p className="text-xs tabular-nums text-white/35">{fmtDate(payment.paidAt)}</p>
                         <p className="mt-1 text-xs text-white/40">
                           {PAYMENT_METHOD_LABELS[payment.method as PaymentMethod] ?? payment.method}
+                          {payment.cashAccount
+                            ? ` · ${TREASURY_ACCOUNT_LABELS[payment.cashAccount]}`
+                            : ''}
                         </p>
                         {payment.notes ? (
                           <p className="mt-1 truncate text-sm text-white/40">{payment.notes}</p>
@@ -1272,6 +1357,10 @@ export default function CuentasPage() {
       method: form.method as PaymentMethod,
       paidAt: form.paidAt,
       notes: form.notes.trim() || undefined,
+      cashAccount: form.cashAccount,
+      ...(entry.currency === 'USD'
+        ? { exchangeRateUsed: Number(form.exchangeRateUsed) }
+        : {}),
     };
 
     if (paymentModal.editing) {

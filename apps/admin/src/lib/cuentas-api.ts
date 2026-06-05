@@ -22,6 +22,7 @@ export type CounterpartyType =
   | 'LOGISTICS'
   | 'OTHER';
 export type Currency = 'MXN' | 'USD';
+export type TreasuryAccount = 'CASH' | 'BANK' | 'CESAR';
 export type AccountEntrySource = 'MANUAL' | 'DEAL_AUTO';
 
 export type AccountPayment = {
@@ -33,6 +34,8 @@ export type AccountPayment = {
   method: string;
   paidAt: string;
   notes: string | null;
+  cashAccount?: TreasuryAccount | null;
+  exchangeRateUsed?: string | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -165,6 +168,8 @@ export function createAccountPayment(
     method: PaymentMethod;
     paidAt: string;
     notes?: string;
+    cashAccount: TreasuryAccount;
+    exchangeRateUsed?: number;
   },
 ) {
   return apiPost<AccountPayment>(`/cuentas/entries/${entryId}/payments`, payload, AUTH);
@@ -178,6 +183,8 @@ export function updateAccountPayment(
     method?: PaymentMethod;
     paidAt?: string;
     notes?: string;
+    cashAccount?: TreasuryAccount;
+    exchangeRateUsed?: number;
   },
 ) {
   return apiPatch<AccountPayment>(
