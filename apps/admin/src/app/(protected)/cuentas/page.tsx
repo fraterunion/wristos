@@ -67,15 +67,6 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   CESAR: 'César',
 };
 
-const PAYMENT_METHOD_OPTIONS: PaymentMethod[] = [
-  'TRANSFER',
-  'CASH',
-  'CARD',
-  'BANCOS',
-  'CESAR',
-  'OTHER',
-];
-
 const TREASURY_ACCOUNT_OPTIONS: { value: TreasuryAccount; label: string }[] = [
   { value: 'CASH', label: 'Efectivo' },
   { value: 'BANK', label: 'Bancos' },
@@ -87,6 +78,24 @@ const TREASURY_ACCOUNT_LABELS: Record<TreasuryAccount, string> = {
   BANK: 'Bancos',
   CESAR: 'Cuenta César',
 };
+
+function treasuryAccountToPaymentMethod(account: TreasuryAccount): PaymentMethod {
+  switch (account) {
+    case 'CASH':
+      return 'CASH';
+    case 'BANK':
+      return 'BANCOS';
+    case 'CESAR':
+      return 'CESAR';
+  }
+}
+
+function paymentSourceLabel(payment: AccountPayment): string {
+  if (payment.cashAccount) {
+    return TREASURY_ACCOUNT_LABELS[payment.cashAccount];
+  }
+  return PAYMENT_METHOD_LABELS[payment.method as PaymentMethod] ?? payment.method;
+}
 
 const CATEGORY_OPTIONS: AccountEntryCategory[] = [
   'SALE_BALANCE',
@@ -739,7 +748,6 @@ function EntryModal({
 
 type PaymentForm = {
   amount: string;
-  method: PaymentMethod | '';
   paidAt: string;
   notes: string;
   cashAccount: TreasuryAccount;
@@ -748,7 +756,6 @@ type PaymentForm = {
 
 const EMPTY_PAYMENT_FORM: PaymentForm = {
   amount: '',
-  method: '',
   paidAt: todayIso(),
   notes: '',
   cashAccount: 'BANK',
@@ -782,7 +789,6 @@ function PaymentModal({
     if (editing) {
       setForm({
         amount: editing.amount,
-        method: editing.method as PaymentMethod,
         paidAt: isoToDateInput(editing.paidAt),
         notes: editing.notes ?? '',
         cashAccount: editing.cashAccount ?? 'BANK',
@@ -812,10 +818,6 @@ function PaymentModal({
     const amount = Number(form.amount);
     if (!form.amount || !Number.isFinite(amount) || amount <= 0) {
       setError('Ingresa un monto válido mayor a 0.');
-      return;
-    }
-    if (!form.method) {
-      setError('Selecciona un método de pago.');
       return;
     }
     if (!form.paidAt) {
@@ -873,7 +875,7 @@ function PaymentModal({
             ✕
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-5 px-5 py-5">
+        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
           {error && (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {error}
@@ -927,21 +929,6 @@ function PaymentModal({
               </p>
             </div>
           )}
-          <div>
-            <label className="ui-field-label">Método</label>
-            <select
-              className="ui-input mt-1.5 w-full"
-              value={form.method}
-              onChange={(e) => setForm({ ...form, method: e.target.value as PaymentMethod })}
-            >
-              <option value="">Seleccionar…</option>
-              {PAYMENT_METHOD_OPTIONS.map((m) => (
-                <option key={m} value={m}>
-                  {PAYMENT_METHOD_LABELS[m]}
-                </option>
-              ))}
-            </select>
-          </div>
           <div>
             <label className="ui-field-label">Fecha de pago</label>
             <input
@@ -1158,12 +1145,7 @@ function EntryDrawer({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-xs tabular-nums text-white/35">{fmtDate(payment.paidAt)}</p>
-                        <p className="mt-1 text-xs text-white/40">
-                          {PAYMENT_METHOD_LABELS[payment.method as PaymentMethod] ?? payment.method}
-                          {payment.cashAccount
-                            ? ` · ${TREASURY_ACCOUNT_LABELS[payment.cashAccount]}`
-                            : ''}
-                        </p>
+                        <p className="mt-1 text-xs text-white/40">{paymentSourceLabel(payment)}</p>
                         {payment.notes ? (
                           <p className="mt-1 truncate text-sm text-white/40">{payment.notes}</p>
                         ) : null}
@@ -1354,7 +1336,7 @@ export default function CuentasPage() {
 
     const body = {
       amount: Number(form.amount),
-      method: form.method as PaymentMethod,
+      method: treasuryAccountToPaymentMethod(form.cashAccount),
       paidAt: form.paidAt,
       notes: form.notes.trim() || undefined,
       cashAccount: form.cashAccount,
