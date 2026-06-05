@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import {
+  ArrowLeftRight,
   Bot,
   Boxes,
   History,
@@ -21,6 +22,7 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/inventory', label: 'Inventario', icon: Boxes },
   { href: '/crm', label: 'CRM', icon: Users },
   { href: '/ventas', label: 'Ventas', icon: ReceiptText },
+  { href: '/cuentas', label: 'Cuentas', icon: ArrowLeftRight },
   { href: '/matching', label: 'Coincidencias', icon: ScanSearch },
   { href: '/automations', label: 'Automatizaciones', icon: Bot },
   { href: '/history', label: 'Historial', icon: History },
