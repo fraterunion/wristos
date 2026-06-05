@@ -160,38 +160,43 @@ function FinancialPositionHero({
 
   return (
     <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
-      <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] px-5 py-3 md:px-6">
+      <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-3 sm:flex-row sm:items-start sm:justify-between md:px-6">
         <ExecutiveSectionTitle title="Posición financiera" />
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 pt-0.5">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 sm:justify-end sm:pt-0.5">
           <Link
             href="/cuentas"
-            className="text-[11px] font-medium tracking-wide text-white/30 transition-colors hover:text-emerald-400/90"
+            className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400/90 hover:underline"
           >
             Ver cuentas →
           </Link>
+          <span className="hidden text-white/15 sm:inline" aria-hidden>
+            ·
+          </span>
           <Link
             href="/capital"
-            className="text-[11px] font-medium tracking-wide text-white/30 transition-colors hover:text-emerald-400/90"
+            className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400/90 hover:underline"
           >
             Ver capital →
           </Link>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-9 lg:divide-x lg:divide-y-0">
+      <div className="grid grid-cols-2 divide-y divide-white/[0.06] sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-y-0 xl:grid-cols-9">
         {positions.map((item) => (
-          <div key={item.label} className="px-4 py-4 md:px-5 md:py-5">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
+          <div key={item.label} className="min-w-0 px-4 py-4 md:px-5 md:py-5">
+            <p className="text-[9px] font-semibold uppercase leading-snug tracking-[0.12em] text-white/30 xl:text-[10px] xl:tracking-[0.14em]">
               {item.label}
             </p>
-            <p className={`mt-2 text-xl font-semibold tabular-nums leading-none md:text-2xl ${toneClass(item.tone)}`}>
+            <p
+              className={`mt-2 text-lg font-semibold tabular-nums leading-none sm:text-xl xl:text-lg 2xl:text-2xl ${toneClass(item.tone)}`}
+            >
               {item.value}
             </p>
           </div>
         ))}
       </div>
 
-      <div className="flex flex-col gap-2 border-t border-white/[0.06] bg-black/20 px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6 md:py-5">
+      <div className="flex flex-col gap-2.5 border-t border-white/[0.06] bg-black/20 px-5 py-4 sm:flex-row sm:items-end sm:justify-between md:px-6 md:py-5">
         <div>
           <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/35">
             Liquidez total
