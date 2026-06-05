@@ -1,10 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Payment, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CuentasService } from '../cuentas/cuentas.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
 import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
@@ -12,7 +14,12 @@ import { UpdatePaymentDto } from './dto/update-payment.dto';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PaymentsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cuentasService: CuentasService,
+  ) {}
 
   async create(tenantId: string, dto: CreatePaymentDto) {
     await this.ensureDealInTenant(dto.dealId, tenantId);
@@ -41,6 +48,10 @@ export class PaymentsService {
         notes: dto.notes,
       },
     });
+
+    if (payment.status === PaymentStatus.PAID && payment.dealId) {
+      await this.refreshReceivableSafe(payment.dealId, tenantId);
+    }
 
     return this.serializePayment(payment);
   }
@@ -89,6 +100,8 @@ export class PaymentsService {
     if (!existing) {
       throw new NotFoundException('Payment not found');
     }
+
+    const previousDealId = existing.dealId;
 
     const nextDealId = dto.dealId ?? existing.dealId;
     if (dto.dealId !== undefined) {
@@ -139,6 +152,13 @@ export class PaymentsService {
       data,
     });
 
+    if (previousDealId) {
+      await this.refreshReceivableSafe(previousDealId, tenantId);
+    }
+    if (payment.dealId && payment.dealId !== previousDealId) {
+      await this.refreshReceivableSafe(payment.dealId, tenantId);
+    }
+
     return this.serializePayment(payment);
   }
 
@@ -160,6 +180,8 @@ export class PaymentsService {
       },
     });
 
+    await this.refreshReceivableSafe(existing.dealId, tenantId);
+
     return this.serializePayment(payment);
   }
 
@@ -176,6 +198,8 @@ export class PaymentsService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+
+    await this.refreshReceivableSafe(existing.dealId, tenantId);
   }
 
   async getDealPaymentSummary(dealId: string, tenantId: string) {
@@ -213,6 +237,22 @@ export class PaymentsService {
       totalPaid: totalPaid.toString(),
       pendingBalance: pendingBalance.toString(),
     };
+  }
+
+  private async refreshReceivableSafe(
+    dealId: string | null | undefined,
+    tenantId: string,
+  ): Promise<void> {
+    if (!dealId) return;
+
+    try {
+      await this.cuentasService.refreshEntryStatusForDeal(dealId, tenantId);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed refreshing receivable for deal ${dealId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private async ensureDealInTenant(dealId: string, tenantId: string) {
