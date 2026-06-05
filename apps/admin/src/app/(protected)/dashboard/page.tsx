@@ -133,8 +133,8 @@ function FinancialKpiCard({
 }) {
   const valueClass =
     valueType === 'percentage'
-      ? 'text-lg font-semibold tabular-nums leading-none xl:text-[1.45rem]'
-      : 'text-xl font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.65rem]';
+      ? 'text-base font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.2rem]'
+      : 'text-lg font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.35rem]';
 
   return (
     <div
