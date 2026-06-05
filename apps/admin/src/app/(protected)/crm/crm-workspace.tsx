@@ -97,6 +97,15 @@ function hasActiveFilters(filters: ClientFilters) {
   return Boolean(filters.name.trim() || filters.phone.trim() || filters.tag.trim());
 }
 
+function clientInitials(name: string) {
+  const tokens = name.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return '?';
+  if (tokens.length === 1) return tokens[0]![0]!.toUpperCase();
+  const first = tokens[0]![0]!;
+  const last = tokens[tokens.length - 1]![0]!;
+  return `${first}${last}`.toUpperCase();
+}
+
 function parseList(input?: string) {
   if (!input) return [];
   return input
@@ -747,11 +756,21 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold">{client.name}</p>
-                        <p className="mt-1 text-xs text-muted">{client.email ?? 'Sin correo'} · {client.phone ?? 'Sin teléfono'}</p>
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <span
+                          aria-hidden
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-xs font-semibold tracking-wide text-white/70"
+                        >
+                          {clientInitials(client.name)}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="font-semibold">{client.name}</p>
+                          <p className="mt-1 text-xs text-muted">
+                            {client.email ?? 'Sin correo'} · {client.phone ?? 'Sin teléfono'}
+                          </p>
+                        </div>
                       </div>
-                      <span className="text-xs text-muted">{client.budgetRange ?? 'Sin presupuesto'}</span>
+                      <span className="shrink-0 text-xs text-muted">{client.budgetRange ?? 'Sin presupuesto'}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {(client.tags ?? []).length ? (
