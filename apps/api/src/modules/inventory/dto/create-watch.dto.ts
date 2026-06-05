@@ -29,6 +29,10 @@ export class CreateWatchDto {
 
   @IsOptional()
   @IsString()
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
   serialNumber?: string;
 
   @IsOptional()

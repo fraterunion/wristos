@@ -33,6 +33,38 @@ export function listClients(): Promise<Client[]> {
   return apiGet<Client[]>('/crm/clients', AUTH);
 }
 
+export function createClient(payload: {
+  name: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+}): Promise<Client> {
+  return apiPost<Client>('/crm/clients', payload, AUTH);
+}
+
+export function createQuickWatch(payload: {
+  brand: string;
+  model: string;
+  reference?: string;
+  cost: number;
+  costCurrency: 'MXN' | 'USD';
+}): Promise<Watch> {
+  const body: Record<string, unknown> = {
+    brand: payload.brand.trim(),
+    model: payload.model.trim(),
+    condition: 'Bueno',
+    costCurrency: payload.costCurrency,
+    cost: payload.cost,
+    priceMin: 0,
+    priceMax: 0,
+    ownershipType: 'OWNED',
+    status: 'AVAILABLE',
+  };
+  const reference = payload.reference?.trim();
+  if (reference) body.reference = reference;
+  return apiPost<Watch>('/inventory', body, AUTH);
+}
+
 export type SoldItem = {
   dealId: string;
   watch: {

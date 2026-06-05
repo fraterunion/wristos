@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api-client';
 import {
+  createClient,
+  createQuickWatch,
   getFxUsdMxn,
   listClients,
   listSellableWatches,
@@ -116,6 +118,39 @@ type Props = {
   onSaved: () => void;
 };
 
+type WatchQuickForm = {
+  brand: string;
+  model: string;
+  reference: string;
+  cost: string;
+  costCurrency: 'MXN' | 'USD';
+};
+
+type ClientQuickForm = {
+  name: string;
+  phone: string;
+  email: string;
+  notes: string;
+};
+
+const EMPTY_WATCH_QUICK: WatchQuickForm = {
+  brand: '',
+  model: '',
+  reference: '',
+  cost: '',
+  costCurrency: 'MXN',
+};
+
+const EMPTY_CLIENT_QUICK: ClientQuickForm = {
+  name: '',
+  phone: '',
+  email: '',
+  notes: '',
+};
+
+const quickCreatePanelCls =
+  'rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 space-y-3';
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
@@ -147,6 +182,25 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
   // ── Submit ─────────────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // ── Quick-create ───────────────────────────────────────────────────────────
+  const [watchCreateOpen, setWatchCreateOpen] = useState(false);
+  const [clientCreateOpen, setClientCreateOpen] = useState(false);
+  const [watchQuickForm, setWatchQuickForm] = useState<WatchQuickForm>(EMPTY_WATCH_QUICK);
+  const [clientQuickForm, setClientQuickForm] = useState<ClientQuickForm>(EMPTY_CLIENT_QUICK);
+  const [watchCreating, setWatchCreating] = useState(false);
+  const [clientCreating, setClientCreating] = useState(false);
+  const [watchCreateError, setWatchCreateError] = useState<string | null>(null);
+  const [clientCreateError, setClientCreateError] = useState<string | null>(null);
+
+  async function reloadSellableWatches() {
+    const ws = await listSellableWatches();
+    setWatches(ws.filter((w) => SELLABLE_STATUSES.has(w.status)));
+  }
+
+  async function reloadClientsList() {
+    setClients(await listClients());
+  }
 
   // Load watches + clients once when modal opens
   useEffect(() => {
@@ -180,6 +234,80 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
     setSaleDate(todayIso()); setNotes('');
     setInitAmount(''); setInitMethod(''); setInitDate(''); setBankChannel('');
     setSubmitError(null);
+    setWatchCreateOpen(false);
+    setClientCreateOpen(false);
+    setWatchQuickForm(EMPTY_WATCH_QUICK);
+    setClientQuickForm(EMPTY_CLIENT_QUICK);
+    setWatchCreateError(null);
+    setClientCreateError(null);
+  }
+
+  async function handleQuickCreateWatch() {
+    const brand = watchQuickForm.brand.trim();
+    const model = watchQuickForm.model.trim();
+    const cost = Number(watchQuickForm.cost);
+    if (!brand || !model) {
+      setWatchCreateError('Marca y modelo son obligatorios.');
+      return;
+    }
+    if (!Number.isFinite(cost) || cost < 0) {
+      setWatchCreateError('Ingresa un costo válido.');
+      return;
+    }
+
+    setWatchCreating(true);
+    setWatchCreateError(null);
+    try {
+      const created = await createQuickWatch({
+        brand,
+        model,
+        reference: watchQuickForm.reference.trim() || undefined,
+        cost,
+        costCurrency: watchQuickForm.costCurrency,
+      });
+      await reloadSellableWatches();
+      setWatchId(created.id);
+      setWatchCreateOpen(false);
+      setWatchQuickForm(EMPTY_WATCH_QUICK);
+    } catch (err) {
+      setWatchCreateError(
+        err instanceof ApiError ? err.message : 'No se pudo crear el reloj.',
+      );
+    } finally {
+      setWatchCreating(false);
+    }
+  }
+
+  async function handleQuickCreateClient() {
+    const name = clientQuickForm.name.trim();
+    if (!name) {
+      setClientCreateError('El nombre es obligatorio.');
+      return;
+    }
+
+    setClientCreating(true);
+    setClientCreateError(null);
+    try {
+      const payload: { name: string; email?: string; phone?: string; notes?: string } = { name };
+      const email = clientQuickForm.email.trim();
+      const phone = clientQuickForm.phone.trim();
+      const notes = clientQuickForm.notes.trim();
+      if (email) payload.email = email;
+      if (phone) payload.phone = phone;
+      if (notes) payload.notes = notes;
+
+      const created = await createClient(payload);
+      await reloadClientsList();
+      setClientId(created.id);
+      setClientCreateOpen(false);
+      setClientQuickForm(EMPTY_CLIENT_QUICK);
+    } catch (err) {
+      setClientCreateError(
+        err instanceof ApiError ? err.message : 'No se pudo crear el comprador.',
+      );
+    } finally {
+      setClientCreating(false);
+    }
   }
 
   // Derived
@@ -299,34 +427,245 @@ export function RegisterSaleModal({ open, onClose, onSaved }: Props) {
 
           {/* Reloj */}
           <div>
-            <label className="ui-field-label" htmlFor="register-sale-watch">
-              Reloj vendido
-            </label>
-            <SearchableSelect
-              id="register-sale-watch"
-              value={watchId}
-              onChange={setWatchId}
-              options={watchOptions}
-              placeholder="Seleccionar reloj"
-              disabled={submitting}
-              loading={dataLoading}
-            />
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="ui-field-label mb-0" htmlFor="register-sale-watch">
+                Reloj vendido
+              </label>
+              {!watchCreateOpen && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWatchCreateOpen(true);
+                    setWatchCreateError(null);
+                  }}
+                  disabled={submitting || watchCreating}
+                  className="text-[11px] font-medium text-emerald-400/80 transition hover:text-emerald-400 disabled:opacity-40"
+                >
+                  + Crear reloj
+                </button>
+              )}
+            </div>
+            {watchCreateOpen ? (
+              <div className={quickCreatePanelCls}>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                  Nuevo reloj en inventario
+                </p>
+                {watchCreateError && (
+                  <div className="rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                    {watchCreateError}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="ui-field-label">Marca</label>
+                    <input
+                      type="text"
+                      value={watchQuickForm.brand}
+                      onChange={(e) => setWatchQuickForm((f) => ({ ...f, brand: e.target.value }))}
+                      className="ui-input"
+                      disabled={watchCreating}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="ui-field-label">Modelo</label>
+                    <input
+                      type="text"
+                      value={watchQuickForm.model}
+                      onChange={(e) => setWatchQuickForm((f) => ({ ...f, model: e.target.value }))}
+                      className="ui-input"
+                      disabled={watchCreating}
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="ui-field-label">Referencia (opcional)</label>
+                  <input
+                    type="text"
+                    value={watchQuickForm.reference}
+                    onChange={(e) => setWatchQuickForm((f) => ({ ...f, reference: e.target.value }))}
+                    className="ui-input"
+                    disabled={watchCreating}
+                    placeholder="ej. 126610LN"
+                  />
+                </div>
+                <div>
+                  <label className="ui-field-label">Moneda del costo</label>
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <PillBtn
+                      active={watchQuickForm.costCurrency === 'MXN'}
+                      disabled={watchCreating}
+                      onClick={() => setWatchQuickForm((f) => ({ ...f, costCurrency: 'MXN' }))}
+                    >
+                      Pesos
+                    </PillBtn>
+                    <PillBtn
+                      active={watchQuickForm.costCurrency === 'USD'}
+                      disabled={watchCreating}
+                      onClick={() => setWatchQuickForm((f) => ({ ...f, costCurrency: 'USD' }))}
+                    >
+                      Dólares
+                    </PillBtn>
+                  </div>
+                </div>
+                <div>
+                  <label className="ui-field-label">Costo inventario</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={watchQuickForm.cost}
+                    onChange={(e) => setWatchQuickForm((f) => ({ ...f, cost: e.target.value }))}
+                    className="ui-input"
+                    disabled={watchCreating}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWatchCreateOpen(false);
+                      setWatchCreateError(null);
+                      setWatchQuickForm(EMPTY_WATCH_QUICK);
+                    }}
+                    disabled={watchCreating}
+                    className="ui-btn-ghost px-3 py-1.5 text-xs"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleQuickCreateWatch()}
+                    disabled={watchCreating}
+                    className="ui-btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+                  >
+                    {watchCreating ? 'Creando…' : 'Crear y seleccionar'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <SearchableSelect
+                id="register-sale-watch"
+                value={watchId}
+                onChange={setWatchId}
+                options={watchOptions}
+                placeholder="Seleccionar reloj"
+                disabled={submitting}
+                loading={dataLoading}
+              />
+            )}
           </div>
 
           {/* Comprador */}
           <div>
-            <label className="ui-field-label" htmlFor="register-sale-client">
-              Comprador
-            </label>
-            <SearchableSelect
-              id="register-sale-client"
-              value={clientId}
-              onChange={setClientId}
-              options={clientOptions}
-              placeholder="Seleccionar comprador"
-              disabled={submitting}
-              loading={dataLoading}
-            />
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="ui-field-label mb-0" htmlFor="register-sale-client">
+                Comprador
+              </label>
+              {!clientCreateOpen && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClientCreateOpen(true);
+                    setClientCreateError(null);
+                  }}
+                  disabled={submitting || clientCreating}
+                  className="text-[11px] font-medium text-emerald-400/80 transition hover:text-emerald-400 disabled:opacity-40"
+                >
+                  + Crear comprador
+                </button>
+              )}
+            </div>
+            {clientCreateOpen ? (
+              <div className={quickCreatePanelCls}>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                  Nuevo comprador en CRM
+                </p>
+                {clientCreateError && (
+                  <div className="rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                    {clientCreateError}
+                  </div>
+                )}
+                <div>
+                  <label className="ui-field-label">Nombre</label>
+                  <input
+                    type="text"
+                    value={clientQuickForm.name}
+                    onChange={(e) => setClientQuickForm((f) => ({ ...f, name: e.target.value }))}
+                    className="ui-input"
+                    disabled={clientCreating}
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="ui-field-label">Teléfono (opcional)</label>
+                    <input
+                      type="text"
+                      value={clientQuickForm.phone}
+                      onChange={(e) => setClientQuickForm((f) => ({ ...f, phone: e.target.value }))}
+                      className="ui-input"
+                      disabled={clientCreating}
+                    />
+                  </div>
+                  <div>
+                    <label className="ui-field-label">Email (opcional)</label>
+                    <input
+                      type="email"
+                      value={clientQuickForm.email}
+                      onChange={(e) => setClientQuickForm((f) => ({ ...f, email: e.target.value }))}
+                      className="ui-input"
+                      disabled={clientCreating}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="ui-field-label">Notas (opcional)</label>
+                  <textarea
+                    rows={2}
+                    value={clientQuickForm.notes}
+                    onChange={(e) => setClientQuickForm((f) => ({ ...f, notes: e.target.value }))}
+                    className="ui-input resize-none"
+                    disabled={clientCreating}
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientCreateOpen(false);
+                      setClientCreateError(null);
+                      setClientQuickForm(EMPTY_CLIENT_QUICK);
+                    }}
+                    disabled={clientCreating}
+                    className="ui-btn-ghost px-3 py-1.5 text-xs"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleQuickCreateClient()}
+                    disabled={clientCreating}
+                    className="ui-btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+                  >
+                    {clientCreating ? 'Creando…' : 'Crear y seleccionar'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <SearchableSelect
+                id="register-sale-client"
+                value={clientId}
+                onChange={setClientId}
+                options={clientOptions}
+                placeholder="Seleccionar comprador"
+                disabled={submitting}
+                loading={dataLoading}
+              />
+            )}
           </div>
 
           {/* Moneda */}
