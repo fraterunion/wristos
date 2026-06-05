@@ -6,11 +6,11 @@ import {
   TreasuryDirection,
 } from '@prisma/client';
 
-const INITIAL_CASH = 0;
-const INITIAL_BANK = 0;
-const INITIAL_CESAR = 0;
+const INITIAL_CASH = 7100;
+const INITIAL_BANK = 633146;
+const INITIAL_CESAR = 535780;
 
-const TENANT_ID = '...';
+const TENANT_ID = 'cmnzph8dm0000qotapt94alxs';
 
 const BOOTSTRAP_DESCRIPTION = 'Saldo inicial de tesorería';
 
