@@ -144,6 +144,17 @@ enum Currency {
   USD
 }
 
+enum TreasuryAccount {
+  CASH
+  BANK
+  CESAR
+}
+
+enum TreasuryDirection {
+  INFLOW
+  OUTFLOW
+}
+
 enum AccountEntrySource {
   MANUAL
   DEAL_AUTO
@@ -239,6 +250,7 @@ model Tenant {
   investorDistributions    InvestorDistribution[]
   accountEntries           AccountEntry[]
   accountPayments          AccountPayment[]
+  treasuryEntries          TreasuryEntry[]
 
   @@index([slug])
   @@map("tenants")
@@ -457,8 +469,9 @@ model Payment {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deal          Deal           @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  treasuryEntry TreasuryEntry?
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -783,8 +796,9 @@ model InvestorContribution {
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?
 
-  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  investor Investor @relation(fields: [investorId], references: [id], onDelete: Restrict)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  investor      Investor       @relation(fields: [investorId], references: [id], onDelete: Restrict)
+  treasuryEntry TreasuryEntry?
 
   @@index([tenantId])
   @@index([tenantId, investorId])
@@ -805,14 +819,52 @@ model InvestorDistribution {
   updatedAt  DateTime       @updatedAt
   deletedAt  DateTime?
 
-  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  investor Investor @relation(fields: [investorId], references: [id], onDelete: Restrict)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  investor      Investor       @relation(fields: [investorId], references: [id], onDelete: Restrict)
+  treasuryEntry TreasuryEntry?
 
   @@index([tenantId])
   @@index([tenantId, investorId])
   @@index([tenantId, paidAt])
   @@index([tenantId, deletedAt])
   @@map("investor_distributions")
+}
+
+// --- Treasury (cash ledger) ---
+
+model TreasuryEntry {
+  id              String            @id @default(cuid())
+  tenantId        String
+  account         TreasuryAccount
+  direction       TreasuryDirection
+  amount          Decimal           @db.Decimal(12, 2)
+  currency        Currency
+  amountMxn       Decimal           @db.Decimal(12, 2)
+  exchangeRate    Decimal?          @db.Decimal(12, 6)
+  transactionDate DateTime
+  description     String?
+
+  accountPaymentId String? @unique
+  dealPaymentId    String? @unique
+  contributionId   String? @unique
+  distributionId   String? @unique
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountPayment AccountPayment?       @relation(fields: [accountPaymentId], references: [id], onDelete: SetNull)
+  dealPayment    Payment?              @relation(fields: [dealPaymentId], references: [id], onDelete: SetNull)
+  contribution   InvestorContribution? @relation(fields: [contributionId], references: [id], onDelete: SetNull)
+  distribution   InvestorDistribution? @relation(fields: [distributionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, account])
+  @@index([tenantId, account, direction])
+  @@index([tenantId, transactionDate])
+  @@index([tenantId, deletedAt])
+  @@map("treasury_entries")
 }
 
 // --- Cuentas (AR/AP) ---
@@ -866,20 +918,23 @@ model AccountEntry {
 }
 
 model AccountPayment {
-  id        String        @id @default(cuid())
-  tenantId  String
-  entryId   String
-  amount    Decimal       @db.Decimal(12, 2)
-  currency  Currency      @default(MXN)
-  method    PaymentMethod
-  paidAt    DateTime
-  notes     String?
-  deletedAt DateTime?
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id               String            @id @default(cuid())
+  tenantId         String
+  entryId          String
+  amount           Decimal           @db.Decimal(12, 2)
+  currency         Currency          @default(MXN)
+  method           PaymentMethod
+  paidAt           DateTime
+  notes            String?
+  cashAccount      TreasuryAccount?
+  exchangeRateUsed Decimal?          @db.Decimal(12, 6)
+  deletedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
-  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  entry  AccountEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entry         AccountEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  treasuryEntry TreasuryEntry?
 
   @@index([tenantId])
   @@index([entryId])
