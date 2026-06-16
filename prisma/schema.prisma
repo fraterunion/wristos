@@ -160,6 +160,13 @@ enum AccountEntrySource {
   DEAL_AUTO
 }
 
+enum StorefrontReservationStatus {
+  PENDING    // Stripe session created, awaiting payment
+  PAID       // checkout.session.completed webhook received
+  CANCELLED  // session expired or explicitly cancelled
+  PROCESSED  // admin reviewed and converted to deal
+}
+
 // --- AI Market Radar ---
 
 enum ChannelType {
@@ -251,6 +258,7 @@ model Tenant {
   accountEntries           AccountEntry[]
   accountPayments          AccountPayment[]
   treasuryEntries          TreasuryEntry[]
+  storefrontReservations   StorefrontReservation[]
 
   @@index([slug])
   @@map("tenants")
@@ -319,13 +327,14 @@ model Client {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  deals            Deal[]
-  preferences      ClientPreference[]
-  matchSuggestions MatchSuggestion[]
-  interactions     ClientInteraction[]
-  radarContacts    Contact[]
-  accountEntries   AccountEntry[]
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deals                  Deal[]
+  preferences            ClientPreference[]
+  matchSuggestions       MatchSuggestion[]
+  interactions           ClientInteraction[]
+  radarContacts          Contact[]
+  accountEntries         AccountEntry[]
+  storefrontReservations StorefrontReservation[]
 
   @@index([tenantId])
   @@index([tenantId, email])
@@ -391,18 +400,26 @@ model Watch {
   costOriginalAmount         Decimal?           @db.Decimal(12, 2)
   costExchangeRate           Decimal?           @db.Decimal(12, 6)
   status                     WatchStatus        @default(AVAILABLE)
+  isPublished                Boolean            @default(false)
+  publicSlug                 String?
+  publicDescription          String?            @db.Text
+  publicPrice                Decimal?           @db.Decimal(12, 2)
+  reservationAmount          Decimal?           @db.Decimal(12, 2)
   deletedAt                  DateTime?
   createdAt                  DateTime           @default(now())
   updatedAt                  DateTime           @updatedAt
 
-  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  deals            Deal[]
-  expenses         WatchExpense[]
-  matchSuggestions MatchSuggestion[]
-  accountEntries   AccountEntry[]
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deals                  Deal[]
+  expenses               WatchExpense[]
+  matchSuggestions       MatchSuggestion[]
+  accountEntries         AccountEntry[]
+  storefrontReservations StorefrontReservation[]
 
+  @@unique([tenantId, publicSlug])
   @@index([tenantId])
   @@index([tenantId, status])
+  @@index([tenantId, isPublished])
   @@index([tenantId, deletedAt])
   @@map("watches")
 }
@@ -440,12 +457,13 @@ model Deal {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  client            Client             @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  watch             Watch              @relation(fields: [watchId], references: [id], onDelete: Restrict)
-  payments          Payment[]
-  operatingExpenses OperatingExpense[]
-  accountEntries    AccountEntry[]
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client                Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  watch                 Watch                  @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  payments              Payment[]
+  operatingExpenses     OperatingExpense[]
+  accountEntries        AccountEntry[]
+  storefrontReservation StorefrontReservation?
 
   @@index([tenantId])
   @@index([tenantId, stage])
@@ -942,4 +960,49 @@ model AccountPayment {
   @@index([tenantId, paidAt])
   @@index([tenantId, deletedAt])
   @@map("account_payments")
+}
+
+// --- Storefront ---
+
+model StorefrontReservation {
+  id       String @id @default(cuid())
+  tenantId String
+  watchId  String
+  clientId String?
+
+  customerName  String
+  customerEmail String
+  customerPhone String?
+
+  stripeCheckoutSessionId String  @unique
+  stripePaymentIntentId   String? @unique
+
+  reservationAmount    Decimal @db.Decimal(12, 2)
+  currency             String  @default("mxn")
+
+  status               StorefrontReservationStatus @default(PENDING)
+  webhookEventId       String?
+  reservationExpiresAt DateTime?
+  processedAt          DateTime?
+  expiredAt            DateTime?
+  cancelledAt          DateTime?
+
+  dealId String? @unique
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  watch  Watch    @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  client Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  deal   Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, watchId])
+  @@index([tenantId, customerEmail])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, deletedAt])
+  @@map("storefront_reservations")
 }
