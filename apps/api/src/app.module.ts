@@ -20,6 +20,7 @@ import { FxModule } from './modules/fx/fx.module';
 import { CapitalModule } from './modules/capital/capital.module';
 import { CuentasModule } from './modules/cuentas/cuentas.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
+import { StripeModule } from './modules/stripe/stripe.module';
 import { StorefrontModule } from './modules/storefront/storefront.module';
 
 @Module({
@@ -46,6 +47,7 @@ import { StorefrontModule } from './modules/storefront/storefront.module';
     CapitalModule,
     CuentasModule,
     TreasuryModule,
+    StripeModule,
     StorefrontModule,
   ],
   controllers: [AppController],
