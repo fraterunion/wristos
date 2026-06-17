@@ -2,11 +2,12 @@ import { createHash } from 'crypto';
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, Watch, WatchExpense, WatchOwnershipType } from '@prisma/client';
+import { Prisma, Watch, WatchExpense, WatchOwnershipType, WatchStatus } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FxService } from '../fx/fx.service';
@@ -14,6 +15,10 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateWatchDto } from './dto/create-watch.dto';
 import { ListWatchesDto } from './dto/list-watches.dto';
 import { UpdateWatchDto } from './dto/update-watch.dto';
+import {
+  isValidPublicSlug,
+  normalizePublicSlug,
+} from './validators/public-slug.validator';
 
 type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
 
@@ -60,10 +65,19 @@ export class InventoryService {
           : null,
     };
 
-    const watch = await this.prisma.watch.create({
-      data,
-      include: { expenses: { orderBy: { createdAt: 'asc' } } },
-    });
+    const status = dto.status ?? WatchStatus.AVAILABLE;
+    this.applyPublishFieldsToCreate(data, dto, status);
+
+    let watch: WatchWithExpenses;
+    try {
+      watch = await this.prisma.watch.create({
+        data,
+        include: { expenses: { orderBy: { createdAt: 'asc' } } },
+      });
+    } catch (error) {
+      this.rethrowPublicSlugConflict(error);
+      throw error;
+    }
     return this.serializeWatch(watch);
   }
 
@@ -164,15 +178,24 @@ export class InventoryService {
       }
     }
 
+    const nextStatus = dto.status ?? existing.status;
+    this.applyPublishFieldsToUpdate(data, dto, existing, nextStatus);
+
     if (Object.keys(data).length === 0) {
       return this.serializeWatch(existing);
     }
 
-    const watch = await this.prisma.watch.update({
-      where: { id },
-      data,
-      include: { expenses: { orderBy: { createdAt: 'asc' } } },
-    });
+    let watch: WatchWithExpenses;
+    try {
+      watch = await this.prisma.watch.update({
+        where: { id },
+        data,
+        include: { expenses: { orderBy: { createdAt: 'asc' } } },
+      });
+    } catch (error) {
+      this.rethrowPublicSlugConflict(error);
+      throw error;
+    }
 
     return this.serializeWatch(watch);
   }
@@ -266,6 +289,180 @@ export class InventoryService {
     };
   }
 
+  private applyPublishFieldsToCreate(
+    data: Prisma.WatchCreateInput,
+    dto: CreateWatchDto,
+    status: WatchStatus,
+  ) {
+    const hasPublishInput =
+      dto.isPublished !== undefined ||
+      dto.publicSlug !== undefined ||
+      dto.publicDescription !== undefined ||
+      dto.publicPrice !== undefined ||
+      dto.reservationAmount !== undefined;
+
+    if (!hasPublishInput) return;
+
+    let isPublished = dto.isPublished ?? false;
+    if (status !== WatchStatus.AVAILABLE) {
+      isPublished = false;
+    }
+
+    const publicSlug = this.resolvePublicSlug(dto.publicSlug);
+    const publicDescription = this.resolvePublicDescription(dto.publicDescription);
+    const publicPrice = this.resolvePublicPrice(dto.publicPrice);
+    const reservationAmount = this.resolveReservationAmount(dto.reservationAmount);
+
+    if (publicSlug !== undefined && publicSlug !== null && !isValidPublicSlug(publicSlug)) {
+      throw new BadRequestException(
+        'publicSlug must contain only lowercase letters, numbers, and hyphens',
+      );
+    }
+
+    if (isPublished) {
+      this.assertPublishRequirements(status, publicSlug, publicPrice, reservationAmount);
+    }
+
+    data.isPublished = isPublished;
+    if (dto.publicSlug !== undefined) data.publicSlug = publicSlug;
+    if (dto.publicDescription !== undefined) data.publicDescription = publicDescription;
+    if (dto.publicPrice !== undefined) {
+      data.publicPrice = publicPrice === null ? null : new Prisma.Decimal(publicPrice);
+    }
+    if (dto.reservationAmount !== undefined) {
+      data.reservationAmount =
+        reservationAmount === null ? null : new Prisma.Decimal(reservationAmount);
+    }
+  }
+
+  private applyPublishFieldsToUpdate(
+    data: Prisma.WatchUpdateInput,
+    dto: UpdateWatchDto,
+    existing: Watch,
+    nextStatus: WatchStatus,
+  ) {
+    const hasPublishInput =
+      dto.isPublished !== undefined ||
+      dto.publicSlug !== undefined ||
+      dto.publicDescription !== undefined ||
+      dto.publicPrice !== undefined ||
+      dto.reservationAmount !== undefined;
+
+    const statusChanged = nextStatus !== existing.status;
+    if (!hasPublishInput && !statusChanged) return;
+
+    let isPublished =
+      dto.isPublished !== undefined ? dto.isPublished : existing.isPublished;
+    if (nextStatus !== WatchStatus.AVAILABLE) {
+      isPublished = false;
+    }
+
+    const publicSlug =
+      dto.publicSlug !== undefined
+        ? this.resolvePublicSlug(dto.publicSlug)
+        : existing.publicSlug;
+    const publicDescription =
+      dto.publicDescription !== undefined
+        ? this.resolvePublicDescription(dto.publicDescription)
+        : existing.publicDescription;
+    const publicPrice =
+      dto.publicPrice !== undefined
+        ? this.resolvePublicPrice(dto.publicPrice)
+        : existing.publicPrice?.toNumber() ?? null;
+    const reservationAmount =
+      dto.reservationAmount !== undefined
+        ? this.resolveReservationAmount(dto.reservationAmount)
+        : existing.reservationAmount?.toNumber() ?? null;
+
+    if (dto.publicSlug !== undefined && publicSlug !== null && !isValidPublicSlug(publicSlug)) {
+      throw new BadRequestException(
+        'publicSlug must contain only lowercase letters, numbers, and hyphens',
+      );
+    }
+
+    if (isPublished) {
+      this.assertPublishRequirements(nextStatus, publicSlug, publicPrice, reservationAmount);
+    }
+
+    if (hasPublishInput || statusChanged) {
+      data.isPublished = isPublished;
+    }
+    if (dto.publicSlug !== undefined) data.publicSlug = publicSlug;
+    if (dto.publicDescription !== undefined) data.publicDescription = publicDescription;
+    if (dto.publicPrice !== undefined) {
+      data.publicPrice = publicPrice === null ? null : new Prisma.Decimal(publicPrice);
+    }
+    if (dto.reservationAmount !== undefined) {
+      data.reservationAmount =
+        reservationAmount === null ? null : new Prisma.Decimal(reservationAmount);
+    }
+  }
+
+  private assertPublishRequirements(
+    status: WatchStatus,
+    publicSlug: string | null | undefined,
+    publicPrice: number | null | undefined,
+    reservationAmount: number | null | undefined,
+  ) {
+    if (status !== WatchStatus.AVAILABLE) {
+      throw new BadRequestException('Only AVAILABLE watches can be published');
+    }
+    if (!publicSlug?.trim()) {
+      throw new BadRequestException('publicSlug is required when publishing');
+    }
+    if (publicPrice === null || publicPrice === undefined || publicPrice <= 0) {
+      throw new BadRequestException('publicPrice is required and must be greater than 0');
+    }
+    if (
+      reservationAmount === null ||
+      reservationAmount === undefined ||
+      reservationAmount <= 0
+    ) {
+      throw new BadRequestException(
+        'reservationAmount is required and must be greater than 0',
+      );
+    }
+  }
+
+  private resolvePublicSlug(value: string | null | undefined): string | null {
+    if (value === undefined) return null;
+    if (value === null) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return normalizePublicSlug(trimmed);
+  }
+
+  private resolvePublicDescription(value: string | null | undefined): string | null {
+    if (value === undefined || value === null) return null;
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  private resolvePublicPrice(value: number | null | undefined): number | null {
+    if (value === undefined || value === null) return null;
+    return value;
+  }
+
+  private resolveReservationAmount(value: number | null | undefined): number | null {
+    if (value === undefined || value === null) return null;
+    return value;
+  }
+
+  private rethrowPublicSlugConflict(error: unknown): void {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      const target = error.meta?.target;
+      const fields = Array.isArray(target) ? target : [];
+      if (fields.includes('publicSlug') || fields.includes('tenantId_publicSlug')) {
+        throw new ConflictException(
+          'This public slug is already in use by another watch in your store.',
+        );
+      }
+    }
+  }
+
   private serializeWatch(watch: WatchWithExpenses) {
     return {
       id: watch.id,
@@ -290,6 +487,11 @@ export class InventoryService {
         watch.consignmentSplitPercentage === null
           ? null
           : watch.consignmentSplitPercentage.toString(),
+      isPublished: watch.isPublished,
+      publicSlug: watch.publicSlug,
+      publicDescription: watch.publicDescription,
+      publicPrice: watch.publicPrice?.toString() ?? null,
+      reservationAmount: watch.reservationAmount?.toString() ?? null,
       expenses: watch.expenses.map((e) => this.serializeExpense(e)),
       createdAt: watch.createdAt.toISOString(),
       updatedAt: watch.updatedAt.toISOString(),

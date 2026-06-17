@@ -80,6 +80,9 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   const imageUrl = watchForm('imageUrl') ?? '';
   const costCurrency = watchForm('costCurrency');
   const costValue = watchForm('cost');
+  const watchStatus = watchForm('status');
+  const isPublished = watchForm('isPublished');
+  const canPublish = watchStatus === 'AVAILABLE';
 
   // Determine if this is a legacy watch (costCurrency not set on existing record)
   const isLegacy = mode === 'edit' && watch != null && watch.costCurrency == null;
@@ -109,6 +112,12 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
     setValue('consignmentSplitPercentage', '');
     clearErrors(['consignmentOwnerName', 'consignmentSplitPercentage']);
   }, [ownershipType, open, setValue, clearErrors]);
+
+  useEffect(() => {
+    if (!open || canPublish) return;
+    setValue('isPublished', false);
+    clearErrors(['publicSlug', 'publicPrice', 'reservationAmount']);
+  }, [canPublish, open, setValue, clearErrors]);
 
   // Fetch FX rate when user selects USD (once per modal open)
   useEffect(() => {
@@ -516,6 +525,96 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
               </div>
             </div>
           ) : null}
+
+          {/* Storefront publication */}
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                  Publicación
+                </p>
+                <p className="mt-0.5 text-xs text-muted/70">
+                  Configura cómo aparece este reloj en la tienda pública.
+                </p>
+              </div>
+              <label
+                className={`inline-flex items-center gap-2 text-sm ${
+                  canPublish ? 'text-white' : 'text-muted/60'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  disabled={!canPublish}
+                  checked={isPublished}
+                  onChange={(event) =>
+                    setValue('isPublished', event.target.checked, { shouldDirty: true })
+                  }
+                  className="h-4 w-4 rounded border-white/30 bg-surface disabled:opacity-40"
+                />
+                Publicar en tienda
+              </label>
+            </div>
+
+            {!canPublish ? (
+              <p className="mt-3 text-xs text-amber-200/80">
+                Solo relojes disponibles pueden publicarse.
+              </p>
+            ) : null}
+
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="block text-sm sm:col-span-2">
+                <span className="mb-1.5 block text-xs text-muted">Slug público</span>
+                <input
+                  {...register('publicSlug')}
+                  className="ui-input font-mono text-sm"
+                  placeholder="ej. rolex-submariner-date"
+                  autoComplete="off"
+                />
+                {isPublished && formState.errors.publicSlug ? (
+                  <p className="ui-error">{formState.errors.publicSlug.message}</p>
+                ) : (
+                  <p className="mt-1 text-xs text-muted/60">
+                    URL: /watches/tu-slug
+                  </p>
+                )}
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1.5 block text-xs text-muted">Precio público (MXN)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  {...register('publicPrice', { valueAsNumber: true })}
+                  className="ui-input"
+                />
+                {isPublished && formState.errors.publicPrice ? (
+                  <p className="ui-error">{formState.errors.publicPrice.message}</p>
+                ) : null}
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1.5 block text-xs text-muted">Apartado Stripe (MXN)</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  {...register('reservationAmount', { valueAsNumber: true })}
+                  className="ui-input"
+                />
+                {isPublished && formState.errors.reservationAmount ? (
+                  <p className="ui-error">{formState.errors.reservationAmount.message}</p>
+                ) : null}
+              </label>
+              <label className="block text-sm sm:col-span-2">
+                <span className="mb-1.5 block text-xs text-muted">Descripción pública</span>
+                <textarea
+                  {...register('publicDescription')}
+                  rows={3}
+                  className="ui-input min-h-[4.5rem] resize-y"
+                  placeholder="Descripción para la tienda (opcional)"
+                />
+              </label>
+            </div>
+          </div>
 
           {/* Additional Costs */}
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">

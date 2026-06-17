@@ -116,6 +116,11 @@ export type Watch = {
   ownershipType: WatchOwnershipType;
   consignmentOwnerName?: string | null;
   consignmentSplitPercentage?: string | null;
+  isPublished?: boolean;
+  publicSlug?: string | null;
+  publicDescription?: string | null;
+  publicPrice?: string | null;
+  reservationAmount?: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;

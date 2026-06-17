@@ -393,6 +393,18 @@ export default function InventoryPage() {
                     <td className="px-4 py-3">
                       <div className="font-medium text-white">{watch.brand}</div>
                       <div className="text-xs text-muted">{watch.model}</div>
+                      {watch.isPublished ? (
+                        <div className="mt-1.5 flex flex-col items-start gap-0.5">
+                          <span className="inline-flex rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                            Publicado
+                          </span>
+                          {watch.publicSlug ? (
+                            <span className="font-mono text-[10px] text-muted/70">
+                              /{watch.publicSlug}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-muted">{dash(watch.serialNumber)}</td>
                     <td className="px-4 py-3 text-muted">{watch.condition}</td>

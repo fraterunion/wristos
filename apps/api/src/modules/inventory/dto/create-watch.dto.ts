@@ -1,6 +1,7 @@
 import { WatchOwnershipType, WatchStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsNotEmpty,
@@ -78,4 +79,30 @@ export class CreateWatchDto {
   @Min(0)
   @Max(100)
   consignmentSplitPercentage?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isPublished?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @ValidateIf((o: CreateWatchDto) => o.publicSlug !== null && o.publicSlug !== undefined)
+  @IsNotEmpty()
+  publicSlug?: string | null;
+
+  @IsOptional()
+  @IsString()
+  publicDescription?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  publicPrice?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  reservationAmount?: number | null;
 }

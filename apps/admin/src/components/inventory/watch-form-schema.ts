@@ -15,12 +15,22 @@ export const WATCH_OWNERSHIP_VALUES = ['OWNED', 'CONSIGNMENT'] as const;
 export const COST_CURRENCY_VALUES = ['MXN', 'USD'] as const;
 export type CostCurrency = (typeof COST_CURRENCY_VALUES)[number];
 
+export const PUBLIC_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 /** NULL/unknown costCurrency is treated as legacy USD for display. */
 export function inferWatchCostCurrency(costCurrency?: string | null): CostCurrency {
   return costCurrency === 'MXN' ? 'MXN' : 'USD';
 }
 
 const numericField = (label: string) =>
+  z.preprocess((val) => {
+    if (val === '' || val === null || val === undefined) return 0;
+    if (typeof val === 'number' && Number.isNaN(val)) return 0;
+    const n = Number(val);
+    return Number.isFinite(n) ? n : 0;
+  }, z.number().min(0, `${label} must be 0 or more`));
+
+const publishNumericField = (label: string) =>
   z.preprocess((val) => {
     if (val === '' || val === null || val === undefined) return 0;
     if (typeof val === 'number' && Number.isNaN(val)) return 0;
@@ -43,6 +53,11 @@ export const watchFormSchema = z
     ownershipType: z.enum(WATCH_OWNERSHIP_VALUES),
     consignmentOwnerName: z.string().optional(),
     consignmentSplitPercentage: z.string().optional(),
+    isPublished: z.boolean(),
+    publicSlug: z.string().optional(),
+    publicDescription: z.string().optional(),
+    publicPrice: publishNumericField('Public price'),
+    reservationAmount: publishNumericField('Reservation amount'),
   })
   .superRefine((data, ctx) => {
     if (data.priceMax < data.priceMin) {
@@ -65,6 +80,36 @@ export const watchFormSchema = z
         }
       }
     }
+    if (data.isPublished && data.status === 'AVAILABLE') {
+      const slug = data.publicSlug?.trim().toLowerCase() ?? '';
+      if (!slug) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Slug público requerido',
+          path: ['publicSlug'],
+        });
+      } else if (!PUBLIC_SLUG_PATTERN.test(slug)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Solo minúsculas, números y guiones',
+          path: ['publicSlug'],
+        });
+      }
+      if (data.publicPrice <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Precio público requerido',
+          path: ['publicPrice'],
+        });
+      }
+      if (data.reservationAmount <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Apartado requerido',
+          path: ['reservationAmount'],
+        });
+      }
+    }
   });
 
 export type WatchFormValues = z.infer<typeof watchFormSchema>;
@@ -83,6 +128,11 @@ export const defaultWatchFormValues: WatchFormValues = {
   ownershipType: 'OWNED',
   consignmentOwnerName: '',
   consignmentSplitPercentage: '',
+  isPublished: false,
+  publicSlug: '',
+  publicDescription: '',
+  publicPrice: 0,
+  reservationAmount: 0,
 };
 
 export function watchToFormValues(watch: Watch): WatchFormValues {
@@ -104,7 +154,27 @@ export function watchToFormValues(watch: Watch): WatchFormValues {
       watch.consignmentSplitPercentage != null
         ? String(watch.consignmentSplitPercentage)
         : '',
+    isPublished: watch.isPublished ?? false,
+    publicSlug: watch.publicSlug ?? '',
+    publicDescription: watch.publicDescription ?? '',
+    publicPrice: watch.publicPrice != null ? Number(watch.publicPrice) : 0,
+    reservationAmount:
+      watch.reservationAmount != null ? Number(watch.reservationAmount) : 0,
   };
+}
+
+function appendPublishFields(body: Record<string, unknown>, values: WatchFormValues) {
+  const canPublish = values.status === 'AVAILABLE';
+  body.isPublished = canPublish && values.isPublished;
+
+  const slug = values.publicSlug?.trim().toLowerCase();
+  body.publicSlug = slug || null;
+
+  const description = values.publicDescription?.trim();
+  body.publicDescription = description || null;
+
+  body.publicPrice = values.publicPrice > 0 ? values.publicPrice : null;
+  body.reservationAmount = values.reservationAmount > 0 ? values.reservationAmount : null;
 }
 
 export function buildCreateWatchBody(values: WatchFormValues) {
@@ -132,6 +202,8 @@ export function buildCreateWatchBody(values: WatchFormValues) {
     const split = values.consignmentSplitPercentage?.trim();
     if (split) body.consignmentSplitPercentage = Number(split);
   }
+
+  appendPublishFields(body, values);
 
   return body;
 }
@@ -165,6 +237,8 @@ export function buildUpdateWatchBody(values: WatchFormValues) {
     body.consignmentOwnerName = null;
     body.consignmentSplitPercentage = null;
   }
+
+  appendPublishFields(body, values);
 
   return body;
 }
