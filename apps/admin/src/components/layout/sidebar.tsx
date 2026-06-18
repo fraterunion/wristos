@@ -10,6 +10,7 @@ import {
   Radar,
   ReceiptText,
   ScanSearch,
+  Store,
   TrendingUp,
   Users,
   WalletCards,
@@ -20,6 +21,7 @@ import { usePathname } from 'next/navigation';
 const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/dashboard', label: 'Panel', icon: LayoutDashboard },
   { href: '/inventory', label: 'Inventario', icon: Boxes },
+  { href: '/storefront', label: 'Tienda', icon: Store },
   { href: '/crm', label: 'CRM', icon: Users },
   { href: '/ventas', label: 'Ventas', icon: ReceiptText },
   { href: '/cuentas', label: 'Cuentas', icon: ArrowLeftRight },
