@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import type { PublicWatch } from '@/lib/api';
 import { getWatchDisplayImages, watchImageAlt } from '@/lib/watch-images';
@@ -65,6 +65,7 @@ export function WatchImageGallery({ watch }: { watch: PublicWatch }) {
   const images = getWatchDisplayImages(watch);
   const [activeIndex, setActiveIndex] = useState(0);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(() => new Set());
+  const touchStartX = useRef<number | null>(null);
 
   const visibleImages = images.filter((image) => !brokenUrls.has(image.url));
 
@@ -73,7 +74,7 @@ export function WatchImageGallery({ watch }: { watch: PublicWatch }) {
       <WatchImagePlaceholder
         brand={watch.brand}
         model={watch.model}
-        className="aspect-square w-full rounded-2xl"
+        className="aspect-[4/5] w-full lg:min-h-[68vh] lg:aspect-auto"
       />
     );
   }
@@ -90,21 +91,78 @@ export function WatchImageGallery({ watch }: { watch: PublicWatch }) {
     });
   }
 
+  function goTo(index: number) {
+    setActiveIndex((index + visibleImages.length) % visibleImages.length);
+  }
+
+  function goPrev() {
+    goTo(safeIndex - 1);
+  }
+
+  function goNext() {
+    goTo(safeIndex + 1);
+  }
+
+  function handleTouchStart(event: React.TouchEvent) {
+    touchStartX.current = event.touches[0]?.clientX ?? null;
+  }
+
+  function handleTouchEnd(event: React.TouchEvent) {
+    if (touchStartX.current === null) return;
+    const endX = event.changedTouches[0]?.clientX;
+    if (endX === undefined) return;
+
+    const diff = touchStartX.current - endX;
+    touchStartX.current = null;
+
+    if (Math.abs(diff) < 48) return;
+    if (diff > 0) goNext();
+    else goPrev();
+  }
+
   return (
-    <div className="space-y-3">
-      <div className="aspect-square w-full overflow-hidden rounded-2xl bg-graphite ring-1 ring-white/10">
+    <div className="space-y-4">
+      <div
+        className="relative aspect-[4/5] w-full overflow-hidden bg-graphite/50 lg:min-h-[68vh] lg:aspect-auto"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           key={active.url}
           src={active.url}
           alt={heroAlt}
-          className="h-full w-full object-contain sm:object-cover"
+          className="h-full w-full object-contain p-2 sm:object-cover sm:p-0"
           onError={() => markBroken(active.url)}
         />
+
+        {visibleImages.length > 1 ? (
+          <>
+            <button
+              type="button"
+              onClick={goPrev}
+              className="absolute left-3 top-1/2 hidden -translate-y-1/2 border border-white/15 bg-surface/60 px-3 py-2 text-white/70 backdrop-blur-sm transition hover:border-white/30 hover:text-white sm:block"
+              aria-label="Imagen anterior"
+            >
+              ←
+            </button>
+            <button
+              type="button"
+              onClick={goNext}
+              className="absolute right-3 top-1/2 hidden -translate-y-1/2 border border-white/15 bg-surface/60 px-3 py-2 text-white/70 backdrop-blur-sm transition hover:border-white/30 hover:text-white sm:block"
+              aria-label="Imagen siguiente"
+            >
+              →
+            </button>
+            <p className="absolute bottom-3 right-3 bg-surface/70 px-2 py-1 text-[10px] uppercase tracking-widest text-white/50 backdrop-blur-sm sm:hidden">
+              {safeIndex + 1} / {visibleImages.length}
+            </p>
+          </>
+        ) : null}
       </div>
 
       {visibleImages.length > 1 ? (
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="sf-gallery-scroll">
           {visibleImages.map((image, index) => {
             const selected = index === safeIndex;
             const thumbAlt = watchImageAlt(image, watch);
@@ -113,10 +171,10 @@ export function WatchImageGallery({ watch }: { watch: PublicWatch }) {
                 key={image.id}
                 type="button"
                 onClick={() => setActiveIndex(index)}
-                className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-graphite ring-1 transition ${
+                className={`relative h-[4.5rem] w-[4.5rem] shrink-0 snap-start overflow-hidden bg-graphite transition sm:h-20 sm:w-20 ${
                   selected
-                    ? 'ring-emerald/60 ring-offset-2 ring-offset-surface'
-                    : 'ring-white/10 hover:ring-white/25'
+                    ? 'ring-2 ring-emerald ring-offset-2 ring-offset-surface'
+                    : 'opacity-60 hover:opacity-100'
                 }`}
                 aria-label={`Ver imagen ${index + 1}`}
                 aria-current={selected ? 'true' : undefined}
@@ -146,10 +204,33 @@ export function WatchMetaLine({
 }) {
   if (!value?.trim()) return null;
   return (
-    <p className="text-sm text-muted">
-      <span className="text-white/50">{label}: </span>
-      {value}
-    </p>
+    <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] py-3">
+      <span className="sf-eyebrow text-[9px]">{label}</span>
+      <span className="text-right text-sm text-white/75">{value}</span>
+    </div>
+  );
+}
+
+export function WatchDescription({ text }: { text: string }) {
+  const paragraphs = text
+    .split(/\n{2,}|\r\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const blocks =
+    paragraphs.length > 0 ? paragraphs : text.trim() ? [text.trim()] : [];
+
+  if (blocks.length === 0) return null;
+
+  return (
+    <div className="space-y-4 border-t border-white/[0.06] pt-6">
+      <p className="sf-eyebrow">Descripción</p>
+      <div className="sf-prose space-y-4">
+        {blocks.map((paragraph, index) => (
+          <p key={index}>{paragraph}</p>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -164,18 +245,19 @@ export function PriceBlock({
 }) {
   const priceClass =
     size === 'lg'
-      ? 'text-3xl sm:text-4xl'
+      ? 'text-4xl sm:text-5xl'
       : size === 'sm'
         ? 'text-lg'
         : 'text-2xl';
 
   return (
-    <div className="space-y-2">
-      <p className={`font-semibold tabular-nums tracking-tight text-white ${priceClass}`}>
+    <div className="space-y-3 border-t border-white/[0.06] pt-6">
+      <p className="sf-eyebrow">Precio</p>
+      <p className={`font-display tabular-nums tracking-tight text-white ${priceClass}`}>
         {formatMxn(publicPrice)}
       </p>
-      <p className="text-sm text-muted">
-        Apartado:{' '}
+      <p className="text-sm text-white/45">
+        Apartado{' '}
         <span className="font-medium text-emerald">{formatMxn(reservationAmount)}</span>
       </p>
     </div>

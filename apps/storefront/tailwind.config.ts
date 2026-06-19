@@ -10,16 +10,37 @@ const config: Config = {
     extend: {
       colors: {
         surface: '#050505',
-        panel: '#111111',
-        graphite: '#1a1a1a',
-        muted: '#8a8a8a',
+        panel: '#0c0c0c',
+        graphite: '#161616',
+        muted: '#737373',
         emerald: {
           DEFAULT: '#10b981',
           dim: '#059669',
+          glow: '#34d399',
         },
       },
       fontFamily: {
-        sans: ['var(--font-geist-sans)', 'system-ui', 'sans-serif'],
+        sans: [
+          'ui-sans-serif',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Segoe UI',
+          'sans-serif',
+        ],
+        display: ['Georgia', 'Cambria', 'Times New Roman', 'serif'],
+      },
+      maxWidth: {
+        boutique: '1400px',
+      },
+      animation: {
+        shimmer: 'shimmer 1.8s ease-in-out infinite',
+      },
+      keyframes: {
+        shimmer: {
+          '0%, 100%': { opacity: '0.35' },
+          '50%': { opacity: '0.65' },
+        },
       },
     },
   },

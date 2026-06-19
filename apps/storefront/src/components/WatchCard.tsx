@@ -7,44 +7,40 @@ import { WatchImage } from './WatchDisplay';
 
 type Props = {
   watch: PublicWatch;
+  priority?: boolean;
 };
 
-export function WatchCard({ watch }: Props) {
+export function WatchCard({ watch, priority = false }: Props) {
   return (
-    <article className="sf-card group flex flex-col overflow-hidden transition duration-200 hover:border-white/20">
-      <Link href={`/watches/${watch.publicSlug}`} className="block">
+    <article className="group">
+      <Link
+        href={`/watches/${watch.publicSlug}`}
+        className="sf-image-zoom block bg-graphite/40"
+      >
         <WatchImage
           watch={watch}
-          className="aspect-[4/3] w-full transition duration-300 group-hover:scale-[1.01]"
+          priority={priority}
+          className="aspect-[3/4] w-full"
         />
       </Link>
 
-      <div className="flex flex-1 flex-col gap-3 p-5">
-        <div className="space-y-1">
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted">
-            {watch.brand}
-          </p>
-          <h2 className="text-lg font-semibold tracking-tight text-white">
-            <Link href={`/watches/${watch.publicSlug}`} className="hover:text-white/90">
-              {watch.model}
-            </Link>
-          </h2>
-          {watch.reference ? (
-            <p className="font-mono text-xs text-muted/80">Ref. {watch.reference}</p>
-          ) : null}
-          <p className="text-sm text-muted">{watch.condition}</p>
-        </div>
-
-        <div className="mt-auto flex items-end justify-between gap-4 border-t border-white/10 pt-4">
-          <p className="text-lg font-semibold tabular-nums text-white">
-            {formatMxn(watch.publicPrice)}
-          </p>
+      <div className="mt-5 space-y-2 px-0.5">
+        <p className="sf-eyebrow">{watch.brand}</p>
+        <h2 className="sf-display text-xl leading-snug sm:text-2xl">
           <Link
             href={`/watches/${watch.publicSlug}`}
-            className="sf-btn-secondary px-4 py-2 text-xs uppercase tracking-wide"
+            className="transition hover:text-white/85"
           >
-            View details
+            {watch.model}
           </Link>
+        </h2>
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pt-1">
+          {watch.reference ? (
+            <p className="font-mono text-[11px] tracking-wide text-white/30">
+              Ref. {watch.reference}
+            </p>
+          ) : null}
+          <p className="text-[13px] tabular-nums text-white/45">{formatMxn(watch.publicPrice)}</p>
         </div>
       </div>
     </article>
@@ -53,9 +49,9 @@ export function WatchCard({ watch }: Props) {
 
 export function WatchGrid({ watches }: { watches: PublicWatch[] }) {
   return (
-    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-      {watches.map((watch) => (
-        <WatchCard key={watch.id} watch={watch} />
+    <div className="grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-x-8 md:gap-y-14 lg:gap-x-12 lg:gap-y-16">
+      {watches.map((watch, index) => (
+        <WatchCard key={watch.id} watch={watch} priority={index < 2} />
       ))}
     </div>
   );
@@ -63,9 +59,9 @@ export function WatchGrid({ watches }: { watches: PublicWatch[] }) {
 
 export function EmptyCatalog() {
   return (
-    <div className="sf-card mx-auto max-w-lg px-6 py-16 text-center">
-      <p className="text-lg font-medium text-white">No watches available right now.</p>
-      <p className="mt-2 text-sm text-muted">
+    <div className="mx-auto max-w-md py-24 text-center">
+      <p className="sf-display text-2xl text-white">Colección en preparación</p>
+      <p className="mt-4 text-sm leading-relaxed text-white/40">
         Vuelve pronto — actualizamos el catálogo con piezas seleccionadas.
       </p>
     </div>

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { SiteFooter } from '@/components/SiteFooter';
 import { SiteHeader } from '@/components/SiteHeader';
 import { WatchDetailView } from '@/components/WatchDetailView';
 import { getPublicWatch } from '@/lib/api';
@@ -29,17 +30,18 @@ export default async function WatchDetailPage({ params }: Props) {
   if (!watch) notFound();
 
   return (
-    <div className="min-h-screen">
-      <SiteHeader />
-      <main className="sf-container py-8 sm:py-12">
+    <div className="flex min-h-screen flex-col">
+      <SiteHeader variant="minimal" />
+      <main className="sf-container flex-1 py-8 sm:py-12 lg:py-16">
         <Link
           href="/watches"
-          className="mb-8 inline-flex text-sm text-muted transition hover:text-white"
+          className="mb-8 inline-flex text-[11px] font-medium uppercase tracking-[0.2em] text-white/40 transition hover:text-white sm:mb-10"
         >
-          ← Volver al catálogo
+          ← Colección
         </Link>
         <WatchDetailView watch={watch} />
       </main>
+      <SiteFooter />
     </div>
   );
 }

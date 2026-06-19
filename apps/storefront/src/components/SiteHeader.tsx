@@ -1,17 +1,32 @@
 import Link from 'next/link';
 
-export function SiteHeader() {
+type Props = {
+  variant?: 'default' | 'minimal';
+};
+
+export function SiteHeader({ variant = 'default' }: Props) {
   return (
-    <header className="border-b border-white/10 bg-surface/90 backdrop-blur-md">
-      <div className="sf-container flex flex-col gap-1 py-8 sm:py-10">
-        <Link href="/watches" className="group inline-block">
-          <p className="text-[11px] font-medium uppercase tracking-[0.35em] text-muted">
+    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-surface/80 backdrop-blur-xl">
+      <div className="sf-container flex h-16 items-center justify-between sm:h-[4.5rem]">
+        <Link href="/" className="group flex flex-col">
+          <span className="sf-eyebrow text-[9px] tracking-[0.38em] transition group-hover:text-white/80">
             Wrist Caviar
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white transition group-hover:text-white/90 sm:text-3xl">
-            Curated pre-owned luxury watches
-          </h1>
+          </span>
+          {variant === 'default' ? (
+            <span className="hidden text-[11px] text-white/35 sm:block">
+              Curated luxury timepieces
+            </span>
+          ) : null}
         </Link>
+
+        <nav className="flex items-center gap-6">
+          <Link
+            href="/watches"
+            className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/55 transition hover:text-white"
+          >
+            Colección
+          </Link>
+        </nav>
       </div>
     </header>
   );
