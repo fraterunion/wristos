@@ -10,6 +10,20 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { CreateReservationCheckoutDto } from './dto/create-reservation-checkout.dto';
 
+const PUBLIC_WATCH_IMAGE_SELECT = {
+  id: true,
+  url: true,
+  altText: true,
+  sortOrder: true,
+  isPrimary: true,
+} satisfies Prisma.WatchImageSelect;
+
+const PUBLIC_WATCH_IMAGE_ORDER: Prisma.WatchImageOrderByWithRelationInput[] = [
+  { isPrimary: 'desc' },
+  { sortOrder: 'asc' },
+  { createdAt: 'asc' },
+];
+
 const PUBLIC_WATCH_SELECT = {
   id: true,
   brand: true,
@@ -24,6 +38,11 @@ const PUBLIC_WATCH_SELECT = {
   reservationAmount: true,
   createdAt: true,
   updatedAt: true,
+  images: {
+    where: { deletedAt: null },
+    select: PUBLIC_WATCH_IMAGE_SELECT,
+    orderBy: PUBLIC_WATCH_IMAGE_ORDER,
+  },
 } satisfies Prisma.WatchSelect;
 
 type PublicWatchRecord = Prisma.WatchGetPayload<{ select: typeof PUBLIC_WATCH_SELECT }>;
@@ -184,6 +203,13 @@ export class StorefrontService {
       model: watch.model,
       reference: watch.reference,
       imageUrl: watch.imageUrl,
+      images: watch.images.map((image) => ({
+        id: image.id,
+        url: image.url,
+        altText: image.altText,
+        sortOrder: image.sortOrder,
+        isPrimary: image.isPrimary,
+      })),
       condition: watch.condition,
       status: watch.status,
       publicSlug: watch.publicSlug!,
