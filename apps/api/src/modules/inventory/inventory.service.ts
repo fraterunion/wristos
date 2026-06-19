@@ -7,20 +7,28 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, Watch, WatchExpense, WatchOwnershipType, WatchStatus } from '@prisma/client';
+import { Prisma, Watch, WatchExpense, WatchImage, WatchOwnershipType, WatchStatus } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FxService } from '../fx/fx.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateWatchDto } from './dto/create-watch.dto';
+import { CreateWatchImageDto } from './dto/create-watch-image.dto';
 import { ListWatchesDto } from './dto/list-watches.dto';
 import { UpdateWatchDto } from './dto/update-watch.dto';
+import { UpdateWatchImageDto } from './dto/update-watch-image.dto';
 import {
   isValidPublicSlug,
   normalizePublicSlug,
 } from './validators/public-slug.validator';
 
 type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
+
+const WATCH_IMAGE_ORDER: Prisma.WatchImageOrderByWithRelationInput[] = [
+  { isPrimary: 'desc' },
+  { sortOrder: 'asc' },
+  { createdAt: 'asc' },
+];
 
 @Injectable()
 export class InventoryService {
@@ -240,6 +248,106 @@ export class InventoryService {
     await this.prisma.watchExpense.delete({ where: { id: expenseId } });
   }
 
+  async listWatchImages(watchId: string, tenantId: string) {
+    await this.ensureWatchInTenant(watchId, tenantId);
+
+    const images = await this.prisma.watchImage.findMany({
+      where: { tenantId, watchId, deletedAt: null },
+      orderBy: WATCH_IMAGE_ORDER,
+    });
+
+    return images.map((image) => this.serializeWatchImage(image));
+  }
+
+  async createWatchImage(watchId: string, tenantId: string, dto: CreateWatchImageDto) {
+    await this.ensureWatchInTenant(watchId, tenantId);
+
+    const isPrimary = dto.isPrimary ?? false;
+
+    const image = await this.prisma.$transaction(async (tx) => {
+      if (isPrimary) {
+        await this.unsetOtherPrimaryImages(tx, tenantId, watchId);
+      }
+
+      return tx.watchImage.create({
+        data: {
+          tenant: { connect: { id: tenantId } },
+          watch: { connect: { id: watchId } },
+          url: dto.url.trim(),
+          altText: dto.altText?.trim() || null,
+          sortOrder: dto.sortOrder ?? 0,
+          isPrimary,
+        },
+      });
+    });
+
+    return this.serializeWatchImage(image);
+  }
+
+  async updateWatchImage(
+    watchId: string,
+    imageId: string,
+    tenantId: string,
+    dto: UpdateWatchImageDto,
+  ) {
+    await this.ensureWatchInTenant(watchId, tenantId);
+    const existing = await this.findWatchImageOrThrow(watchId, imageId, tenantId);
+
+    const isPrimary = dto.isPrimary === true;
+
+    const image = await this.prisma.$transaction(async (tx) => {
+      if (isPrimary) {
+        await this.unsetOtherPrimaryImages(tx, tenantId, watchId, imageId);
+      }
+
+      const data: Prisma.WatchImageUpdateInput = {};
+      if (dto.url !== undefined) data.url = dto.url.trim();
+      if (dto.altText !== undefined) {
+        data.altText =
+          dto.altText === null ? null : dto.altText.trim() || null;
+      }
+      if (dto.sortOrder !== undefined) data.sortOrder = dto.sortOrder;
+      if (dto.isPrimary !== undefined) data.isPrimary = dto.isPrimary;
+
+      if (Object.keys(data).length === 0) {
+        return existing;
+      }
+
+      return tx.watchImage.update({
+        where: { id: existing.id },
+        data,
+      });
+    });
+
+    return this.serializeWatchImage(image);
+  }
+
+  async removeWatchImage(watchId: string, imageId: string, tenantId: string) {
+    await this.ensureWatchInTenant(watchId, tenantId);
+    await this.findWatchImageOrThrow(watchId, imageId, tenantId);
+
+    await this.prisma.watchImage.update({
+      where: { id: imageId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async setPrimaryWatchImage(watchId: string, imageId: string, tenantId: string) {
+    await this.ensureWatchInTenant(watchId, tenantId);
+    await this.findWatchImageOrThrow(watchId, imageId, tenantId);
+
+    const image = await this.prisma.$transaction(async (tx) => {
+      await this.unsetOtherPrimaryImages(tx, tenantId, watchId, imageId);
+
+      return tx.watchImage.update({
+        where: { id: imageId },
+        data: { isPrimary: true },
+      });
+    });
+
+    return this.serializeWatchImage(image);
+  }
+
   generateUploadSignature(tenantId: string) {
     const cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME');
     const apiKey = this.configService.get<string>('CLOUDINARY_API_KEY');
@@ -446,6 +554,60 @@ export class InventoryService {
   private resolveReservationAmount(value: number | null | undefined): number | null {
     if (value === undefined || value === null) return null;
     return value;
+  }
+
+  private async ensureWatchInTenant(watchId: string, tenantId: string) {
+    const watch = await this.prisma.watch.findFirst({
+      where: { id: watchId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!watch) {
+      throw new NotFoundException('Watch not found');
+    }
+  }
+
+  private async findWatchImageOrThrow(
+    watchId: string,
+    imageId: string,
+    tenantId: string,
+  ): Promise<WatchImage> {
+    const image = await this.prisma.watchImage.findFirst({
+      where: { id: imageId, watchId, tenantId, deletedAt: null },
+    });
+    if (!image) {
+      throw new NotFoundException('Watch image not found');
+    }
+    return image;
+  }
+
+  private async unsetOtherPrimaryImages(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    watchId: string,
+    excludeImageId?: string,
+  ) {
+    await tx.watchImage.updateMany({
+      where: {
+        tenantId,
+        watchId,
+        deletedAt: null,
+        ...(excludeImageId ? { id: { not: excludeImageId } } : {}),
+      },
+      data: { isPrimary: false },
+    });
+  }
+
+  private serializeWatchImage(image: WatchImage) {
+    return {
+      id: image.id,
+      watchId: image.watchId,
+      url: image.url,
+      altText: image.altText,
+      sortOrder: image.sortOrder,
+      isPrimary: image.isPrimary,
+      createdAt: image.createdAt.toISOString(),
+      updatedAt: image.updatedAt.toISOString(),
+    };
   }
 
   private rethrowPublicSlugConflict(error: unknown): void {
