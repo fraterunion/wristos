@@ -3,7 +3,7 @@ import Link from 'next/link';
 import type { PublicWatch } from '@/lib/api';
 import { formatMxn } from '@/lib/format';
 
-import { PriceBlock, WatchImage } from './WatchDisplay';
+import { WatchImage } from './WatchDisplay';
 
 type Props = {
   watch: PublicWatch;

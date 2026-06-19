@@ -6,7 +6,7 @@ import { createReservationCheckout, type PublicWatch } from '@/lib/api';
 import { buildWhatsAppUrl } from '@/lib/whatsapp';
 import { formatMxn, watchTitle } from '@/lib/format';
 
-import { PriceBlock, WatchImage, WatchMetaLine } from './WatchDisplay';
+import { PriceBlock, WatchImageGallery, WatchMetaLine } from './WatchDisplay';
 
 type Props = {
   watch: PublicWatch;
@@ -55,7 +55,7 @@ export function WatchDetailView({ watch }: Props) {
   return (
     <>
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-2 lg:gap-14">
-        <WatchImage watch={watch} className="aspect-square w-full rounded-2xl" priority />
+        <WatchImageGallery watch={watch} />
 
         <div className="flex flex-col gap-6">
           <div className="space-y-3">

@@ -1,11 +1,20 @@
 import { apiBaseUrl, tenantSlug } from './config';
 
+export type PublicWatchImage = {
+  id: string;
+  url: string;
+  altText: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+};
+
 export type PublicWatch = {
   id: string;
   brand: string;
   model: string;
   reference: string | null;
   imageUrl: string | null;
+  images: PublicWatchImage[];
   condition: string;
   status: string;
   publicSlug: string;
