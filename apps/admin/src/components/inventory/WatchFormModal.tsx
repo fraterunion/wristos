@@ -8,6 +8,7 @@ import { apiDelete, apiGet, apiPost, apiPatch, ApiError } from '@/lib/api-client
 import type { Watch, WatchExpense, WatchExpenseCategory } from '@/types/domain';
 
 import { ImageUploader } from './ImageUploader';
+import { WatchImageGallery } from './WatchImageGallery';
 import {
   buildCreateWatchBody,
   buildUpdateWatchBody,
@@ -345,6 +346,8 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
               Se usa en el catálogo PDF generado. JPG, PNG o WEBP hasta 5 MB.
             </p>
           </div>
+
+          <WatchImageGallery watchId={mode === 'edit' && watch ? watch.id : null} mode={mode} />
 
           {/* Cost with currency selector */}
           <div className="space-y-2">
