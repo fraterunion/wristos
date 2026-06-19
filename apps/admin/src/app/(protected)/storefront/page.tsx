@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ApiError } from '@/lib/api-client';
 import {
+  convertStorefrontReservation,
   listStorefrontReservations,
   type StorefrontReservation,
   type StorefrontReservationStatus,
@@ -183,14 +184,82 @@ function KpiStrip({
   );
 }
 
+// ─── Convert modal ────────────────────────────────────────────────────────────
+
+function ConvertConfirmModal({
+  reservation,
+  open,
+  loading,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  reservation: StorefrontReservation | null;
+  open: boolean;
+  loading: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open || !reservation) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end justify-center p-4 sm:items-center">
+      <button
+        type="button"
+        aria-label="Cerrar"
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={() => !loading && onCancel()}
+      />
+      <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-panel p-6 shadow-2xl">
+        <h2 className="text-lg font-semibold text-white">Convertir a venta</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted">
+          Se creará un deal para{' '}
+          <span className="text-white">{reservation.customerName}</span> con el reloj{' '}
+          <span className="text-white">{watchLabel(reservation.watch)}</span>. El apartado de{' '}
+          {fmtMoney(reservation.reservationAmount, reservation.currency)} se registrará como pago
+          inicial.
+        </p>
+        {error ? (
+          <p className="mt-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onCancel}
+            className="ui-btn-ghost px-4 py-2"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onConfirm}
+            className="ui-btn-primary px-5 py-2"
+          >
+            {loading ? 'Convirtiendo…' : 'Confirmar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Drawer ───────────────────────────────────────────────────────────────────
 
 function ReservationDrawer({
   reservation,
+  converting,
   onClose,
+  onRequestConvert,
 }: {
   reservation: StorefrontReservation | null;
+  converting: boolean;
   onClose: () => void;
+  onRequestConvert: () => void;
 }) {
   useEffect(() => {
     if (!reservation) return;
@@ -329,23 +398,30 @@ function ReservationDrawer({
             <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/30">
               Acciones
             </p>
-            <button
-              type="button"
-              disabled={reservation.status !== 'PAID'}
-              title={
-                reservation.status === 'PAID'
-                  ? 'Disponible en el siguiente commit.'
-                  : 'Solo apartados pagados pueden convertirse a venta.'
-              }
-              className="ui-btn-primary mt-3 w-full px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Convertir a venta
-            </button>
-            {reservation.status === 'PAID' ? (
-              <p className="mt-2 text-center text-[11px] text-white/35">
-                Disponible en el siguiente commit.
-              </p>
-            ) : null}
+            {reservation.dealId ? (
+              <Link
+                href="/deals"
+                className="ui-btn-secondary mt-3 inline-flex w-full justify-center px-4 py-2.5 text-sm"
+              >
+                Ver ventas →
+              </Link>
+            ) : (
+              <button
+                type="button"
+                disabled={reservation.status !== 'PAID' || converting}
+                title={
+                  reservation.status === 'PAID'
+                    ? 'Crear deal y registrar el apartado como pago inicial'
+                    : reservation.status === 'PROCESSED'
+                      ? 'Este apartado ya fue convertido'
+                      : 'Solo apartados pagados pueden convertirse a venta.'
+                }
+                onClick={onRequestConvert}
+                className="ui-btn-primary mt-3 w-full px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {converting ? 'Convirtiendo…' : 'Convertir a venta'}
+              </button>
+            )}
           </section>
         </div>
       </aside>
@@ -363,6 +439,12 @@ export default function StorefrontPage() {
   const [drawerReservation, setDrawerReservation] = useState<StorefrontReservation | null>(
     null,
   );
+  const [convertTarget, setConvertTarget] = useState<StorefrontReservation | null>(null);
+  const [converting, setConverting] = useState(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null,
+  );
 
   const loadReservations = useCallback(async () => {
     setLoading(true);
@@ -370,12 +452,14 @@ export default function StorefrontPage() {
     try {
       const data = await listStorefrontReservations();
       setReservations(data);
+      return data;
     } catch (caught) {
       setError(
         caught instanceof ApiError
           ? caught.message
           : 'No se pudieron cargar los apartados.',
       );
+      return null;
     } finally {
       setLoading(false);
     }
@@ -384,6 +468,46 @@ export default function StorefrontPage() {
   useEffect(() => {
     void loadReservations();
   }, [loadReservations]);
+
+  useEffect(() => {
+    if (!flash) return;
+    const timer = window.setTimeout(() => setFlash(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+
+  useEffect(() => {
+    if (!drawerReservation) return;
+    const fresh = reservations.find((r) => r.id === drawerReservation.id);
+    if (fresh && fresh.updatedAt !== drawerReservation.updatedAt) {
+      setDrawerReservation(fresh);
+    }
+  }, [reservations, drawerReservation]);
+
+  const handleConvert = async () => {
+    if (!convertTarget) return;
+    setConverting(true);
+    setConvertError(null);
+    try {
+      const result = await convertStorefrontReservation(convertTarget.id);
+      setConvertTarget(null);
+      setDrawerReservation(result.reservation);
+      setReservations((prev) =>
+        prev.map((r) => (r.id === result.reservation.id ? result.reservation : r)),
+      );
+      setFlash({
+        type: 'success',
+        message: 'Apartado convertido a venta correctamente.',
+      });
+    } catch (caught) {
+      setConvertError(
+        caught instanceof ApiError
+          ? caught.message
+          : 'No se pudo convertir este apartado.',
+      );
+    } finally {
+      setConverting(false);
+    }
+  };
 
   const filteredReservations = useMemo(
     () => filterReservations(reservations, filters),
@@ -412,6 +536,19 @@ export default function StorefrontPage() {
       </header>
 
       <KpiStrip {...kpis} />
+
+      {flash ? (
+        <div
+          role="status"
+          className={`rounded-xl border px-4 py-3 text-sm ${
+            flash.type === 'success'
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+              : 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+          }`}
+        >
+          {flash.message}
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 p-5">
@@ -578,7 +715,28 @@ export default function StorefrontPage() {
 
       <ReservationDrawer
         reservation={drawerReservation}
+        converting={converting}
         onClose={() => setDrawerReservation(null)}
+        onRequestConvert={() => {
+          if (drawerReservation) {
+            setConvertError(null);
+            setConvertTarget(drawerReservation);
+          }
+        }}
+      />
+
+      <ConvertConfirmModal
+        reservation={convertTarget}
+        open={Boolean(convertTarget)}
+        loading={converting}
+        error={convertError}
+        onCancel={() => {
+          if (!converting) {
+            setConvertTarget(null);
+            setConvertError(null);
+          }
+        }}
+        onConfirm={() => void handleConvert()}
       />
     </div>
   );

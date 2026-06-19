@@ -1,4 +1,6 @@
-import { apiGet } from '@/lib/api-client';
+import { apiGet, apiPost } from '@/lib/api-client';
+import type { Deal } from '@/types/domain';
+import type { AccountEntry } from '@/lib/cuentas-api';
 
 export type StorefrontReservationStatus = 'PENDING' | 'PAID' | 'CANCELLED' | 'PROCESSED';
 
@@ -57,4 +59,18 @@ export function listStorefrontReservations(query?: {
 
 export function getStorefrontReservation(id: string) {
   return apiGet<StorefrontReservation>(`/storefront/reservations/${id}`, AUTH);
+}
+
+export type ConvertStorefrontReservationResponse = {
+  reservation: StorefrontReservation;
+  deal: Deal;
+  accountEntry: AccountEntry | null;
+};
+
+export function convertStorefrontReservation(id: string) {
+  return apiPost<ConvertStorefrontReservationResponse>(
+    `/storefront/reservations/${id}/convert`,
+    {},
+    AUTH,
+  );
 }

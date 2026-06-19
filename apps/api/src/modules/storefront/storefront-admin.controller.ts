@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
@@ -21,5 +21,10 @@ export class StorefrontAdminController {
   @Get('reservations/:id')
   findReservation(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
     return this.storefrontAdminService.findReservation(id, user.tenantId);
+  }
+
+  @Post('reservations/:id/convert')
+  convertReservation(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
+    return this.storefrontAdminService.convertReservation(id, user.tenantId);
   }
 }

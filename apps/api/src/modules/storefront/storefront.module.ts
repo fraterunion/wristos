@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CuentasModule } from '../cuentas/cuentas.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { StorefrontAdminController } from './storefront-admin.controller';
 import { StorefrontAdminService } from './storefront-admin.service';
@@ -7,7 +8,7 @@ import { StorefrontController } from './storefront.controller';
 import { StorefrontService } from './storefront.service';
 
 @Module({
-  imports: [StripeModule],
+  imports: [StripeModule, CuentasModule],
   controllers: [
     StorefrontController,
     StorefrontCheckoutController,
