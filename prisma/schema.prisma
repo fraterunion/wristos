@@ -240,6 +240,7 @@ model Tenant {
   clientPreferences  ClientPreference[]
   clientInteractions ClientInteraction[]
   watches            Watch[]
+  watchImages        WatchImage[]
   watchExpenses      WatchExpense[]
   operatingExpenses  OperatingExpense[]
   deals              Deal[]
@@ -412,6 +413,7 @@ model Watch {
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deals                  Deal[]
   expenses               WatchExpense[]
+  images                 WatchImage[]
   matchSuggestions       MatchSuggestion[]
   accountEntries         AccountEntry[]
   storefrontReservations StorefrontReservation[]
@@ -422,6 +424,28 @@ model Watch {
   @@index([tenantId, isPublished])
   @@index([tenantId, deletedAt])
   @@map("watches")
+}
+
+model WatchImage {
+  id        String    @id @default(cuid())
+  tenantId  String
+  watchId   String
+  url       String
+  altText   String?
+  sortOrder Int       @default(0)
+  isPrimary Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  watch  Watch  @relation(fields: [watchId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, watchId])
+  @@index([tenantId, watchId, sortOrder])
+  @@index([tenantId, deletedAt])
+  @@map("watch_images")
 }
 
 model WatchExpense {
