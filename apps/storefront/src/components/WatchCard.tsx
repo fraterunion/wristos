@@ -8,14 +8,17 @@ import { WatchImage } from './WatchDisplay';
 type Props = {
   watch: PublicWatch;
   priority?: boolean;
+  variant?: 'default' | 'luxury';
 };
 
-export function WatchCard({ watch, priority = false }: Props) {
+export function WatchCard({ watch, priority = false, variant = 'default' }: Props) {
+  const isLuxury = variant === 'luxury';
+
   return (
-    <article className="group">
+    <article className={isLuxury ? 'sf-watch-card' : 'group'}>
       <Link
         href={`/watches/${watch.publicSlug}`}
-        className="sf-image-zoom block bg-graphite/40"
+        className={`sf-image-zoom block ${isLuxury ? 'bg-graphite' : 'bg-graphite/40'}`}
       >
         <WatchImage
           watch={watch}
@@ -24,24 +27,29 @@ export function WatchCard({ watch, priority = false }: Props) {
         />
       </Link>
 
-      <div className="mt-5 space-y-2 px-0.5">
-        <p className="sf-eyebrow">{watch.brand}</p>
-        <h2 className="sf-display text-xl leading-snug sm:text-2xl">
+      <div className={`space-y-2 ${isLuxury ? 'border-t border-white/[0.06] px-5 py-5' : 'mt-5 px-0.5'}`}>
+        <p className="sf-eyebrow text-[9px]">{watch.brand}</p>
+        <h2 className="sf-display text-lg leading-snug sm:text-xl">
           <Link
             href={`/watches/${watch.publicSlug}`}
-            className="transition hover:text-white/85"
+            className="transition hover:text-champagne-light"
           >
             {watch.model}
           </Link>
         </h2>
-        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pt-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 pt-1">
           {watch.reference ? (
-            <p className="font-mono text-[11px] tracking-wide text-white/30">
+            <p className="font-mono text-[10px] tracking-wide text-white/30">
               Ref. {watch.reference}
             </p>
-          ) : null}
-          <p className="text-[13px] tabular-nums text-white/45">{formatMxn(watch.publicPrice)}</p>
+          ) : (
+            <span />
+          )}
+          <p className="text-sm tabular-nums text-white/70">{formatMxn(watch.publicPrice)}</p>
         </div>
+        {watch.condition ? (
+          <p className="text-[11px] uppercase tracking-[0.12em] text-white/30">{watch.condition}</p>
+        ) : null}
       </div>
     </article>
   );
@@ -49,9 +57,9 @@ export function WatchCard({ watch, priority = false }: Props) {
 
 export function WatchGrid({ watches }: { watches: PublicWatch[] }) {
   return (
-    <div className="grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-x-8 md:gap-y-14 lg:gap-x-12 lg:gap-y-16">
+    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 lg:gap-8">
       {watches.map((watch, index) => (
-        <WatchCard key={watch.id} watch={watch} priority={index < 2} />
+        <WatchCard key={watch.id} watch={watch} priority={index < 3} variant="luxury" />
       ))}
     </div>
   );
@@ -59,10 +67,10 @@ export function WatchGrid({ watches }: { watches: PublicWatch[] }) {
 
 export function EmptyCatalog() {
   return (
-    <div className="mx-auto max-w-md py-24 text-center">
-      <p className="sf-display text-2xl text-white">Colección en preparación</p>
+    <div className="mx-auto max-w-md py-20 text-center">
+      <p className="sf-display text-2xl text-white">Inventory in preparation</p>
       <p className="mt-4 text-sm leading-relaxed text-white/40">
-        Vuelve pronto — actualizamos el catálogo con piezas seleccionadas.
+        New pieces are being prepared for our catalog. Return soon.
       </p>
     </div>
   );

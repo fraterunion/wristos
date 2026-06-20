@@ -3,11 +3,12 @@ import type { Metadata } from 'next';
 import { EmptyCatalog, WatchGrid } from '@/components/WatchCard';
 import { SiteFooter } from '@/components/SiteFooter';
 import { SiteHeader } from '@/components/SiteHeader';
+import { TrustSection } from '@/components/TrustSection';
 import { listPublicWatches } from '@/lib/api';
 
 export const metadata: Metadata = {
-  title: 'Catálogo — Wrist Caviar',
-  description: 'Curated pre-owned luxury watches',
+  title: 'Collection — Wrist Caviar',
+  description: 'Browse verified luxury watches from Wrist Caviar.',
 };
 
 export const revalidate = 60;
@@ -19,36 +20,41 @@ export default async function WatchesPage() {
   try {
     watches = await listPublicWatches();
   } catch {
-    loadError = 'No pudimos cargar el catálogo en este momento.';
+    loadError = 'We could not load the collection at this time.';
   }
 
   return (
     <div className="flex min-h-screen flex-col">
-      <SiteHeader variant="minimal" />
-      <main className="sf-container flex-1 py-12 sm:py-16 lg:py-20">
-        <header className="mb-12 max-w-2xl sm:mb-16 lg:mb-20">
-          <p className="sf-eyebrow">Colección</p>
-          <h1 className="sf-display mt-4 text-3xl sm:text-4xl lg:text-5xl">Catálogo</h1>
-          <p className="mt-5 text-[15px] leading-relaxed text-white/45">
-            Piezas seleccionadas de las casas más prestigiosas. Cada reloj es inspeccionado y
-            presentado con el detalle que merece.
-          </p>
-          {!loadError && watches.length > 0 ? (
-            <p className="mt-4 text-xs uppercase tracking-[0.2em] text-white/30">
-              {watches.length} {watches.length === 1 ? 'pieza disponible' : 'piezas disponibles'}
+      <SiteHeader />
+      <main className="flex-1">
+        <div className="sf-container py-10 sm:py-12 lg:py-14">
+          <header className="max-w-xl">
+            <p className="sf-eyebrow">Wrist Caviar</p>
+            <h1 className="sf-display mt-4 text-3xl sm:text-4xl">The Collection</h1>
+            <p className="mt-4 text-[15px] leading-relaxed text-white/45">
+              Every piece verified, photographed, and presented with the care it deserves.
             </p>
-          ) : null}
-        </header>
+            {!loadError && watches.length > 0 ? (
+              <p className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/30">
+                {watches.length} {watches.length === 1 ? 'piece' : 'pieces'} available
+              </p>
+            ) : null}
+          </header>
+        </div>
 
-        {loadError ? (
-          <div className="mx-auto max-w-md py-16 text-center">
-            <p className="text-sm text-rose-100/90">{loadError}</p>
-          </div>
-        ) : watches.length === 0 ? (
-          <EmptyCatalog />
-        ) : (
-          <WatchGrid watches={watches} />
-        )}
+        <div className="sf-container pb-12 sm:pb-16 lg:pb-20">
+          {loadError ? (
+            <div className="mx-auto max-w-md py-16 text-center">
+              <p className="text-sm text-rose-100/90">{loadError}</p>
+            </div>
+          ) : watches.length === 0 ? (
+            <EmptyCatalog />
+          ) : (
+            <WatchGrid watches={watches} />
+          )}
+        </div>
+
+        <TrustSection />
       </main>
       <SiteFooter />
     </div>

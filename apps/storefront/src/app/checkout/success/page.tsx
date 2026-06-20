@@ -5,7 +5,7 @@ import { SiteFooter } from '@/components/SiteFooter';
 import { SiteHeader } from '@/components/SiteHeader';
 
 export const metadata: Metadata = {
-  title: 'Apartado confirmado — Wrist Caviar',
+  title: 'Reservation confirmed — Wrist Caviar',
   robots: { index: false },
 };
 
@@ -18,25 +18,23 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <SiteHeader variant="minimal" />
+      <SiteHeader />
       <main className="sf-container flex flex-1 flex-col items-center justify-center py-16 sm:py-24">
         <div className="mx-auto max-w-md text-center">
-          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center border border-emerald/30 bg-emerald/10">
-            <span className="text-xl text-emerald">✓</span>
+          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center border border-champagne/30 bg-champagne/10">
+            <span className="text-xl text-champagne">✓</span>
           </div>
-          <p className="sf-eyebrow">Confirmado</p>
-          <h1 className="sf-display mt-3 text-3xl text-white">Apartado recibido</h1>
+          <p className="sf-eyebrow">Confirmed</p>
+          <h1 className="sf-display mt-3 text-3xl text-white">Reservation received</h1>
           <p className="mt-4 text-sm leading-relaxed text-white/45">
-            Gracias por tu apartado. Confirmaremos el pago y te contactaremos para los
-            siguientes pasos.
+            Thank you for your reservation. We will confirm payment and contact you with next
+            steps.
           </p>
           {sessionId ? (
-            <p className="mt-6 font-mono text-[10px] text-white/25">
-              Referencia: {sessionId}
-            </p>
+            <p className="mt-6 font-mono text-[10px] text-white/25">Reference: {sessionId}</p>
           ) : null}
           <Link href="/watches" className="sf-btn-primary mt-10 inline-flex">
-            Volver al catálogo
+            Back to collection
           </Link>
         </div>
       </main>

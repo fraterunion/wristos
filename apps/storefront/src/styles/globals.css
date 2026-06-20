@@ -15,16 +15,16 @@ a {
 }
 
 ::selection {
-  @apply bg-emerald/30 text-white;
+  @apply bg-champagne/25 text-white;
 }
 
 @layer components {
   .sf-container {
-    @apply mx-auto w-full max-w-boutique px-5 sm:px-8 lg:px-12;
+    @apply mx-auto w-full max-w-boutique px-4 sm:px-6 lg:px-10;
   }
 
   .sf-eyebrow {
-    @apply text-[10px] font-medium uppercase tracking-[0.32em] text-muted;
+    @apply text-[10px] font-medium uppercase tracking-[0.28em] text-silver-dim;
   }
 
   .sf-display {
@@ -32,27 +32,27 @@ a {
   }
 
   .sf-btn {
-    @apply inline-flex items-center justify-center rounded-none px-6 py-3.5 text-xs font-semibold uppercase tracking-[0.18em] transition duration-300 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center px-7 py-3.5 text-[11px] font-medium uppercase tracking-[0.22em] transition duration-500 ease-luxury disabled:cursor-not-allowed disabled:opacity-40;
   }
 
   .sf-btn-primary {
-    @apply sf-btn bg-emerald text-black hover:bg-emerald-glow;
+    @apply sf-btn border border-champagne bg-champagne text-black hover:border-champagne-light hover:bg-champagne-light;
   }
 
   .sf-btn-secondary {
-    @apply sf-btn border border-white/20 bg-transparent text-white hover:border-white/40 hover:bg-white/[0.04];
+    @apply sf-btn border border-white/25 bg-transparent text-white hover:border-champagne/50 hover:text-champagne-light;
   }
 
   .sf-btn-ghost {
-    @apply sf-btn border border-transparent text-white/70 hover:text-white;
+    @apply sf-btn border border-transparent text-silver hover:text-white;
   }
 
   .sf-input {
-    @apply w-full rounded-none border border-white/15 bg-graphite px-4 py-3 text-sm text-white outline-none transition duration-150 placeholder:text-muted/50 focus:border-emerald/40 focus:ring-1 focus:ring-emerald/20;
+    @apply w-full border border-white/10 bg-graphite px-4 py-3 text-sm text-white outline-none transition duration-300 placeholder:text-muted/40 focus:border-champagne/40 focus:ring-1 focus:ring-champagne/20;
   }
 
-  .sf-card {
-    @apply border border-white/[0.06] bg-panel/40;
+  .sf-divider {
+    @apply h-px w-full bg-white/[0.08];
   }
 
   .sf-image-zoom {
@@ -60,28 +60,36 @@ a {
   }
 
   .sf-image-zoom img {
-    @apply transition duration-700 ease-out will-change-transform;
+    @apply transition duration-[900ms] ease-luxury will-change-transform;
   }
 
   .sf-image-zoom:hover img {
-    @apply scale-[1.06];
+    @apply scale-[1.04];
   }
 
   .sf-skeleton {
-    @apply animate-shimmer bg-gradient-to-r from-white/[0.04] via-white/[0.08] to-white/[0.04];
+    @apply animate-shimmer bg-gradient-to-r from-white/[0.03] via-white/[0.07] to-white/[0.03];
   }
 
   .sf-prose {
-    @apply text-[15px] leading-[1.85] text-white/65;
+    @apply text-[15px] leading-[1.9] text-white/60;
   }
 
   .sf-gallery-scroll {
-    @apply flex snap-x snap-mandatory gap-2 overflow-x-auto pb-2;
+    @apply flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
 
   .sf-gallery-scroll::-webkit-scrollbar {
     display: none;
+  }
+
+  .sf-trust-card {
+    @apply border border-white/[0.08] bg-panel px-6 py-8 transition duration-500 hover:border-champagne/25;
+  }
+
+  .sf-watch-card {
+    @apply border border-white/[0.06] bg-panel transition duration-500 hover:border-champagne/20;
   }
 }

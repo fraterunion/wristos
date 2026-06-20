@@ -15,7 +15,7 @@ type Props = {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const watch = await getPublicWatch(slug);
-  if (!watch) return { title: 'Reloj no encontrado — Wrist Caviar' };
+  if (!watch) return { title: 'Watch not found — Wrist Caviar' };
   return {
     title: `${watchTitle(watch)} — Wrist Caviar`,
     description: watch.publicDescription ?? `${watch.brand} ${watch.model}`,
@@ -31,13 +31,13 @@ export default async function WatchDetailPage({ params }: Props) {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <SiteHeader variant="minimal" />
-      <main className="sf-container flex-1 py-8 sm:py-12 lg:py-16">
+      <SiteHeader />
+      <main className="sf-container flex-1 py-6 sm:py-10 lg:py-12">
         <Link
           href="/watches"
-          className="mb-8 inline-flex text-[11px] font-medium uppercase tracking-[0.2em] text-white/40 transition hover:text-white sm:mb-10"
+          className="mb-6 inline-flex text-[10px] font-medium uppercase tracking-[0.22em] text-white/35 transition hover:text-champagne-light sm:mb-8"
         >
-          ← Colección
+          ← Collection
         </Link>
         <WatchDetailView watch={watch} />
       </main>
