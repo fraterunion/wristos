@@ -22,6 +22,7 @@ import { CuentasModule } from './modules/cuentas/cuentas.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
 import { StripeModule } from './modules/stripe/stripe.module';
 import { StorefrontModule } from './modules/storefront/storefront.module';
+import { DataOnboardingModule } from './modules/data-onboarding/data-onboarding.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { StorefrontModule } from './modules/storefront/storefront.module';
     TreasuryModule,
     StripeModule,
     StorefrontModule,
+    DataOnboardingModule,
   ],
   controllers: [AppController],
 })

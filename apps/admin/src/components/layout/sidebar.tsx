@@ -14,6 +14,7 @@ import {
   TrendingUp,
   Users,
   WalletCards,
+  Upload,
   type LucideIcon,
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
@@ -31,6 +32,7 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/expenses', label: 'Gastos', icon: WalletCards },
   { href: '/capital', label: 'Capital', icon: TrendingUp },
   { href: '/radar', label: 'Radar', icon: Radar },
+  { href: '/data-onboarding', label: 'Importar datos', icon: Upload },
 ];
 
 export function Sidebar() {

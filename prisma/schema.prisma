@@ -167,6 +167,71 @@ enum StorefrontReservationStatus {
   PROCESSED  // admin reviewed and converted to deal
 }
 
+
+enum DataImportStatus {
+  CREATED
+  UPLOADING
+  PROCESSING
+  READY_FOR_REVIEW
+  IMPORTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DataImportFileStatus {
+  UPLOADED
+  PROCESSING
+  PARSED
+  FAILED
+}
+
+enum DataImportFileType {
+  PDF
+  XLSX
+  CSV
+  JSON
+}
+
+enum DataImportEntityType {
+  INVENTORY
+  CLIENTS
+  DEALS
+  PAYMENTS
+  EXPENSES
+  ACCOUNTS
+  TREASURY
+  INVESTORS
+  RADAR
+  UNKNOWN
+}
+
+enum DataImportRecordStatus {
+  STAGED
+  SELECTED
+  SKIPPED
+  IMPORTED
+  FAILED
+}
+
+enum DataImportDuplicateStatus {
+  NONE
+  POSSIBLE_DUPLICATE
+  CONFIRMED_DUPLICATE
+}
+
+enum DataImportEventType {
+  SESSION_CREATED
+  FILE_UPLOADED
+  FILE_PROCESSING
+  FILE_PARSED
+  FILE_FAILED
+  PROCESSING_STARTED
+  PROCESSING_COMPLETED
+  SESSION_FAILED
+  SESSION_CANCELLED
+}
+
 // --- AI Market Radar ---
 
 enum ChannelType {
@@ -260,6 +325,10 @@ model Tenant {
   accountPayments          AccountPayment[]
   treasuryEntries          TreasuryEntry[]
   storefrontReservations   StorefrontReservation[]
+  dataImportSessions       DataImportSession[]
+  dataImportFiles          DataImportFile[]
+  dataImportRecords        DataImportRecord[]
+  dataImportEvents         DataImportEvent[]
 
   @@index([slug])
   @@map("tenants")
@@ -274,7 +343,8 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  tenantUsers TenantUser[]
+  tenantUsers        TenantUser[]
+  dataImportSessions DataImportSession[] @relation("DataImportCreatedBy")
 
   @@map("users")
 }
@@ -1029,4 +1099,120 @@ model StorefrontReservation {
   @@index([tenantId, createdAt])
   @@index([tenantId, deletedAt])
   @@map("storefront_reservations")
+}
+
+// --- Data onboarding (staging only — never writes operational tables in Phase 1) ---
+
+model DataImportSession {
+  id              String           @id @default(cuid())
+  tenantId        String           @map("tenant_id")
+  createdByUserId String           @map("created_by_user_id")
+  status          DataImportStatus @default(CREATED)
+  title           String?
+  totalFiles      Int              @default(0) @map("total_files")
+  processedFiles  Int              @default(0) @map("processed_files")
+  totalRows       Int              @default(0) @map("total_rows")
+  validRows       Int              @default(0) @map("valid_rows")
+  invalidRows     Int              @default(0) @map("invalid_rows")
+  importedRows    Int              @default(0) @map("imported_rows")
+  startedAt       DateTime?        @map("started_at")
+  completedAt     DateTime?        @map("completed_at")
+  errorMessage    String?          @map("error_message")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy User               @relation("DataImportCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  files     DataImportFile[]
+  records   DataImportRecord[]
+  events    DataImportEvent[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("data_import_sessions")
+}
+
+model DataImportFile {
+  id                 String               @id @default(cuid())
+  tenantId           String               @map("tenant_id")
+  sessionId          String               @map("session_id")
+  originalFilename   String               @map("original_filename")
+  storageKey         String               @map("storage_key")
+  mimeType           String               @map("mime_type")
+  fileType           DataImportFileType   @map("file_type")
+  byteSize           Int                  @map("byte_size")
+  checksum           String?
+  status             DataImportFileStatus @default(UPLOADED)
+  detectedEntityType DataImportEntityType @default(UNKNOWN) @map("detected_entity_type")
+  sheetNames         Json?                @map("sheet_names")
+  rowCount           Int                  @default(0) @map("row_count")
+  classificationMeta Json?                @map("classification_meta")
+  errorMessage       String?              @map("error_message")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session DataImportSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  records DataImportRecord[]
+
+  @@index([tenantId])
+  @@index([sessionId])
+  @@index([tenantId, sessionId])
+  @@index([status])
+  @@map("data_import_files")
+}
+
+model DataImportRecord {
+  id                 String                    @id @default(cuid())
+  tenantId           String                    @map("tenant_id")
+  sessionId          String                    @map("session_id")
+  fileId             String                    @map("file_id")
+  entityType         DataImportEntityType      @default(UNKNOWN) @map("entity_type")
+  sourceSheet        String?                   @map("source_sheet")
+  sourceRowNumber    Int?                      @map("source_row_number")
+  rawData            Json                      @map("raw_data")
+  normalizedData     Json?                     @map("normalized_data")
+  validationErrors   Json?                     @map("validation_errors")
+  validationWarnings Json?                     @map("validation_warnings")
+  isValid            Boolean                   @default(true) @map("is_valid")
+  isSelected         Boolean                   @default(true) @map("is_selected")
+  duplicateKey       String?                   @map("duplicate_key")
+  duplicateStatus    DataImportDuplicateStatus @default(NONE) @map("duplicate_status")
+  importStatus       DataImportRecordStatus    @default(STAGED) @map("import_status")
+  targetRecordId     String?                   @map("target_record_id")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session DataImportSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  file    DataImportFile    @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([sessionId])
+  @@index([fileId])
+  @@index([tenantId, sessionId])
+  @@index([entityType])
+  @@index([tenantId, entityType])
+  @@index([importStatus])
+  @@map("data_import_records")
+}
+
+model DataImportEvent {
+  id        String              @id @default(cuid())
+  tenantId  String              @map("tenant_id")
+  sessionId String              @map("session_id")
+  eventType DataImportEventType @map("event_type")
+  message   String
+  metadata  Json?
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session DataImportSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([sessionId])
+  @@index([tenantId, sessionId])
+  @@index([tenantId, createdAt])
+  @@map("data_import_events")
 }

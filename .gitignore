@@ -24,3 +24,6 @@ logs
 # misc
 coverage/
 .cache/
+
+# Local import uploads only (do NOT ignore apps/**/storage source modules)
+/storage/
