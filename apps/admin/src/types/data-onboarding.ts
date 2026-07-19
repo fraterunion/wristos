@@ -60,6 +60,9 @@ export type DataImportFile = {
   classificationMeta: unknown;
   fieldMapping: MappingEntry[] | null;
   mappingVersion: string | null;
+  extractionProvider: string | null;
+  extractionModel: string | null;
+  extractionError: string | null;
   errorMessage: string | null;
   pdfPhase1Message: string | null;
   createdAt: string;
@@ -150,4 +153,51 @@ export type ValidationIssue = {
   code: string;
   field: string;
   message: string;
+};
+
+// ─── PDF Invoice Import (Sprint 3) ───────────────────────────────────────────
+
+export type InvoiceMetadata = {
+  supplierName?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  currency?: string;
+  notes?: string;
+};
+
+export type ExtractedWatch = {
+  brand?: string;
+  model?: string;
+  referenceNumber?: string;
+  serialNumber?: string;
+  condition?: string;
+  ownershipType?: string;
+  costCurrency?: string;
+  purchasePrice?: number;
+  askingPriceMin?: number;
+  askingPriceMax?: number;
+  watchStatus?: string;
+  consignmentOwnerName?: string;
+  consignmentSplitPercentage?: number;
+  imageUrl?: string;
+  confidence?: Record<string, number>;
+};
+
+export type InventoryInvoiceExtraction = {
+  invoice: InvoiceMetadata;
+  watches: ExtractedWatch[];
+  extractionVersion: string;
+  overallConfidence?: number;
+};
+
+export type ExtractionState = 'not_processed' | 'processing' | 'failed' | 'corrupt' | 'ready';
+
+export type DocumentExtractionResponse = {
+  fileId: string;
+  extractionState: ExtractionState;
+  extraction: InventoryInvoiceExtraction | null;
+  extractionProvider: string | null;
+  extractionModel: string | null;
+  extractionError: string | null;
+  watchCount: number;
 };

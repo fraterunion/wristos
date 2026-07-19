@@ -24,6 +24,7 @@ logs
 # misc
 coverage/
 .cache/
+*.tsbuildinfo
 
 # Local import uploads only (do NOT ignore apps/**/storage source modules)
 /storage/

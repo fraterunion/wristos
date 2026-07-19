@@ -235,6 +235,10 @@ enum DataImportEventType {
   IMPORT_STARTED
   IMPORT_COMPLETED
   IMPORT_FAILED
+  DOCUMENT_EXTRACTION_STARTED
+  DOCUMENT_EXTRACTION_COMPLETED
+  DOCUMENT_EXTRACTION_FAILED
+  DOCUMENT_EXTRACTION_EDITED
 }
 
 // --- AI Market Radar ---
@@ -1156,9 +1160,13 @@ model DataImportFile {
   sheetNames         Json?                @map("sheet_names")
   rowCount           Int                  @default(0) @map("row_count")
   classificationMeta Json?                @map("classification_meta")
-  fieldMapping       Json?                @map("field_mapping")
-  mappingVersion     String?              @map("mapping_version")
-  errorMessage       String?              @map("error_message")
+  fieldMapping          Json?                @map("field_mapping")
+  mappingVersion        String?              @map("mapping_version")
+  extractionProvider    String?              @map("extraction_provider")
+  extractionModel       String?              @map("extraction_model")
+  extractedDocumentData Json?                @map("extracted_document_data")
+  extractionError       String?              @map("extraction_error")
+  errorMessage          String?              @map("error_message")
   createdAt          DateTime             @default(now()) @map("created_at")
   updatedAt          DateTime             @updatedAt @map("updated_at")
 

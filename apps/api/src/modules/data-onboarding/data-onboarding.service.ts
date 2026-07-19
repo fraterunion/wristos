@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -21,12 +22,12 @@ import { parseCsvBuffer } from './parsers/csv.parser';
 import { parseJsonBuffer } from './parsers/json.parser';
 import { PDF_PHASE1_MESSAGE, parsePdfBuffer } from './parsers/pdf.parser';
 import { parseXlsxBuffer } from './parsers/xlsx.parser';
-import { createImportFileStorage } from './storage/import-file-storage.factory';
+import { IMPORT_FILE_STORAGE } from './tokens';
 import type { ImportFileStorage } from './storage/import-file-storage.interface';
 import { sha256Checksum } from './storage/local-import-file.storage';
 import type { MulterFile } from './types/multer-file.type';
 import { classifyEntityFromHeaders } from './utils/entity-classification.util';
-import { maxImportRows, sniffJson, sniffXlsx, validateImportUpload } from './utils/file-validation.util';
+import { maxImportRows, sniffJson, sniffPdf, sniffXlsx, validateImportUpload } from './utils/file-validation.util';
 import { CreateDataImportSessionDto, ListDataImportRecordsQueryDto } from './dto/data-onboarding.dto';
 
 const UPLOADABLE: DataImportStatus[] = [
@@ -85,9 +86,11 @@ export function buildRecordsWhere(
 @Injectable()
 export class DataOnboardingService {
   private readonly logger = new Logger(DataOnboardingService.name);
-  private readonly storage: ImportFileStorage = createImportFileStorage();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(IMPORT_FILE_STORAGE) private readonly storage: ImportFileStorage,
+  ) {}
 
   async createSession(tenantId: string, userId: string, dto: CreateDataImportSessionDto) {
     const session = await this.prisma.dataImportSession.create({
@@ -156,6 +159,9 @@ export class DataOnboardingService {
     }
     if (fileType === DataImportFileType.XLSX && !sniffXlsx(file.buffer)) {
       throw new BadRequestException('El contenido no parece ser un archivo Excel XLSX válido.');
+    }
+    if (fileType === DataImportFileType.PDF && !sniffPdf(file.buffer)) {
+      throw new BadRequestException('El archivo no contiene una firma PDF válida (%PDF-). Verifique que sea un PDF real.');
     }
 
     const checksum = sha256Checksum(file.buffer);
@@ -328,6 +334,14 @@ export class DataOnboardingService {
     );
 
     return this.serializeSession(updated);
+  }
+
+  async getFileRecord(tenantId: string, sessionId: string, fileId: string) {
+    const file = await this.prisma.dataImportFile.findFirst({
+      where: { id: fileId, tenantId, sessionId },
+    });
+    if (!file) throw new NotFoundException('Import file not found');
+    return file;
   }
 
   async deleteSession(tenantId: string, sessionId: string) {

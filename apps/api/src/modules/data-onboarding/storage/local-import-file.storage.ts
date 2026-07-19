@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { createReadStream } from 'fs';
 import { mkdir, readFile, rm, writeFile } from 'fs/promises';
 import path from 'path';
 
@@ -37,6 +38,10 @@ export class LocalImportFileStorage implements ImportFileStorage {
 
   async read(storageKey: string): Promise<Buffer> {
     return readFile(this.resolveAbsolute(storageKey));
+  }
+
+  readStream(storageKey: string): NodeJS.ReadableStream {
+    return createReadStream(this.resolveAbsolute(storageKey));
   }
 
   async delete(storageKey: string): Promise<void> {

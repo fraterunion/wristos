@@ -2,19 +2,24 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Download, Loader2, UploadCloud, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Download, Loader2, RefreshCw, Trash2, UploadCloud, XCircle } from 'lucide-react';
 
 import { ApiError } from '@/lib/api-client';
 import {
   commitImport,
   downloadErrorReport,
+  fetchPdfFileBlob,
   getDataImportSession,
+  getDocumentExtraction,
   getImportMapping,
   listDataImportRecords,
   processDataImportSession,
+  processDocument,
+  reprocessDocument,
   runDryRun,
   saveImportMapping,
+  updateDocumentExtraction,
   uploadDataImportFile,
 } from '@/lib/data-onboarding-api';
 import type {
@@ -22,8 +27,11 @@ import type {
   DataImportFile,
   DataImportRecord,
   DataImportSessionDetail,
+  DocumentExtractionResponse,
   DryRunSummary,
   DuplicatePolicy,
+  ExtractedWatch,
+  InventoryInvoiceExtraction,
   MappingEntry,
   MappingProposal,
   MappingResponse,
@@ -84,6 +92,104 @@ function deriveRowState(record: DataImportRecord): 'VALID' | 'WARNING' | 'INVALI
   return 'VALID';
 }
 
+// ─── Extraction error UX ─────────────────────────────────────────────────────
+
+type ExtractionErrorUX = { title: string; description: string; action: string };
+
+function parseExtractionError(errorJson: string | null): { code: string; safeMessage: string } | null {
+  if (!errorJson) return null;
+  try {
+    const parsed = JSON.parse(errorJson) as { code?: unknown; safeMessage?: unknown };
+    if (typeof parsed.code === 'string') {
+      return {
+        code: parsed.code,
+        safeMessage: typeof parsed.safeMessage === 'string' ? parsed.safeMessage : 'Error de extracción.',
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getExtractionErrorUX(code: string, safeMessage: string): ExtractionErrorUX {
+  switch (code) {
+    case 'EXTRACTION_OUTPUT_TRUNCATED':
+      return {
+        title: 'Factura demasiado extensa',
+        description: 'La factura tiene más información de la que el sistema puede procesar en una extracción.',
+        action: 'Divide la factura en partes más pequeñas (menos relojes por página) y vuelve a intentarlo.',
+      };
+    case 'EXTRACTION_PDF_ENCRYPTED':
+      return {
+        title: 'PDF protegido con contraseña',
+        description: 'Este PDF está protegido con contraseña y no puede ser leído por el sistema.',
+        action: 'Descarga o guarda una copia sin protección de contraseña y vuelve a subirla.',
+      };
+    case 'EXTRACTION_PDF_CORRUPT':
+      return {
+        title: 'Archivo PDF dañado',
+        description: 'El archivo PDF no se puede abrir o está incompleto.',
+        action: 'Verifica el archivo original y sube una copia nueva.',
+      };
+    case 'EXTRACTION_TIMEOUT':
+      return {
+        title: 'Tiempo de espera agotado',
+        description: 'El servicio de extracción con IA tardó demasiado en responder.',
+        action: 'Espera un momento e intenta extraer de nuevo.',
+      };
+    case 'EXTRACTION_RATE_LIMITED':
+      return {
+        title: 'Límite de solicitudes alcanzado',
+        description: 'Se han realizado demasiadas solicitudes en poco tiempo.',
+        action: 'Espera unos minutos e intenta de nuevo.',
+      };
+    case 'EXTRACTION_PROVIDER_UNAVAILABLE':
+      return {
+        title: 'Servicio no disponible',
+        description: 'El servicio de inteligencia artificial no está disponible temporalmente.',
+        action: 'Intenta de nuevo más tarde.',
+      };
+    case 'EXTRACTION_SCHEMA_INVALID':
+    case 'EXTRACTION_NO_TOOL_RESPONSE':
+      return {
+        title: 'Formato de respuesta inesperado',
+        description: 'El modelo de IA devolvió una respuesta con un formato incorrecto.',
+        action: 'Intenta extraer de nuevo. Si el problema persiste, contacta a soporte.',
+      };
+    case 'EXTRACTION_PAGE_LIMIT_EXCEEDED':
+      return {
+        title: 'PDF con demasiadas páginas',
+        description: 'El PDF supera el número máximo de páginas permitido por extracción.',
+        action: 'Divide el PDF en documentos más cortos y vuelve a intentarlo.',
+      };
+    default:
+      return {
+        title: 'Error al procesar el PDF',
+        description: safeMessage,
+        action: 'Intenta extraer de nuevo.',
+      };
+  }
+}
+
+function ExtractionErrorBanner({ errorJson }: { errorJson: string | null }) {
+  const parsed = parseExtractionError(errorJson);
+  if (!parsed) return null;
+  const ux = getExtractionErrorUX(parsed.code, parsed.safeMessage);
+  return (
+    <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-4">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+        <div>
+          <p className="text-sm font-medium text-rose-200">{ux.title}</p>
+          <p className="mt-1 text-sm text-rose-200/80">{ux.description}</p>
+          <p className="mt-2 text-xs text-rose-300/70">{ux.action}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: 'green' | 'amber' | 'red' }) {
@@ -93,6 +199,385 @@ function StatCard({ label, value, accent }: { label: string; value: string; acce
       <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
       <p className={`mt-2 text-xl font-semibold ${color}`}>{value}</p>
     </article>
+  );
+}
+
+// ─── Confidence badge ─────────────────────────────────────────────────────────
+
+function ConfidenceDot({ score }: { score?: number }) {
+  if (score === undefined) return null;
+  const color = score >= 0.9 ? 'bg-emerald-400' : score >= 0.5 ? 'bg-amber-400' : 'bg-rose-400';
+  return <span title={`Confianza: ${Math.round(score * 100)}%`} className={`ml-1.5 inline-block h-1.5 w-1.5 rounded-full ${color}`} />;
+}
+
+// ─── Step: PDF Upload ─────────────────────────────────────────────────────────
+
+function PdfUploadStep({
+  session,
+  onFilesSelected,
+  onExtract,
+  uploading,
+  extracting,
+}: {
+  session: DataImportSessionDetail;
+  onFilesSelected: (files: FileList | null) => Promise<void>;
+  onExtract: () => Promise<void>;
+  uploading: boolean;
+  extracting: boolean;
+}) {
+  const hasFile = session.totalFiles >= 1;
+  const pdfFile = session.files.find((f) => f.fileType === 'PDF');
+  const uploadDisabled = uploading || extracting || hasFile;
+  const canExtract = hasFile && !uploading && !extracting;
+
+  return (
+    <>
+      <section className="ui-card mb-8">
+        <h2 className="text-sm font-medium text-white">1 · Subir factura PDF</h2>
+        <p className="mt-1 text-xs text-muted">
+          PDF · máx. 25 MB · un archivo por sesión
+        </p>
+        <label className={`mt-4 flex flex-col items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-6 py-10 transition ${uploadDisabled ? 'opacity-40' : 'cursor-pointer hover:border-white/30'}`}>
+          <UploadCloud className="h-8 w-8 text-white/40" />
+          <span className="mt-3 text-sm text-white/80">
+            {uploading
+              ? 'Subiendo…'
+              : hasFile
+                ? 'Esta sesión ya tiene un archivo. Crea una nueva sesión para importar otro.'
+                : 'Arrastra un PDF o haz clic para seleccionar'}
+          </span>
+          <input
+            type="file"
+            accept=".pdf,application/pdf"
+            className="hidden"
+            disabled={uploadDisabled}
+            onChange={(e) => void onFilesSelected(e.target.files)}
+          />
+        </label>
+      </section>
+
+      {pdfFile && (
+        <section className="ui-card mb-8">
+          <h2 className="mb-4 text-sm font-medium text-white">Archivo</h2>
+          <div className="rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium text-white">{pdfFile.originalFilename}</p>
+              <span className="text-xs text-muted">{pdfFile.status}</span>
+            </div>
+            <p className="mt-1 text-xs text-muted">PDF · {(pdfFile.byteSize / 1024 / 1024).toFixed(1)} MB</p>
+            <ExtractionErrorBanner errorJson={pdfFile.extractionError} />
+          </div>
+        </section>
+      )}
+
+      <button
+        type="button"
+        onClick={() => void onExtract()}
+        disabled={!canExtract}
+        className="ui-btn-primary inline-flex items-center gap-2 disabled:opacity-40"
+      >
+        {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        {extracting ? 'Extrayendo con IA…' : '2 · Extraer datos con IA'}
+      </button>
+    </>
+  );
+}
+
+// ─── Confirm Reprocess Modal ─────────────────────────────────────────────────
+
+function ConfirmReprocessModal({ onConfirm, onCancel }: { onConfirm: () => Promise<void>; onCancel: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const handleConfirm = async () => {
+    setConfirming(true);
+    try {
+      await onConfirm();
+    } finally {
+      setConfirming(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div className="w-full max-w-md rounded-2xl border border-white/15 bg-surface p-6 shadow-2xl">
+        <div className="mb-4 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+          <h2 className="text-base font-semibold text-white">¿Descartar ediciones manuales?</h2>
+        </div>
+        <p className="mb-6 text-sm text-muted">
+          Has editado manualmente la extracción. Al re-extraer el PDF se sobrescribirán esos cambios y no podrán recuperarse.
+        </p>
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={confirming}
+            className="ui-btn-secondary disabled:opacity-40"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleConfirm()}
+            disabled={confirming}
+            className="ui-btn-primary inline-flex items-center gap-2 disabled:opacity-40"
+          >
+            {confirming ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {confirming ? 'Re-extrayendo…' : 'Sí, re-extraer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step: Extraction Review ──────────────────────────────────────────────────
+
+function ExtractionReviewStep({
+  session,
+  onValidate,
+  onReprocess,
+}: {
+  session: DataImportSessionDetail;
+  onValidate: () => Promise<void>;
+  onReprocess: () => Promise<void>;
+}) {
+  const pdfFile = session.files.find((f) => f.fileType === 'PDF');
+  const [extraction, setExtraction] = useState<DocumentExtractionResponse | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [validating, setValidating] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const resp = await getDocumentExtraction(session.id);
+        setExtraction(resp);
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Error cargando la extracción.');
+      }
+    })();
+  }, [session.id]);
+
+  useEffect(() => {
+    if (!pdfFile) return;
+    void (async () => {
+      try {
+        const blob = await fetchPdfFileBlob(session.id, pdfFile.id);
+        const url = URL.createObjectURL(blob);
+        blobUrlRef.current = url;
+        setPdfUrl(url);
+      } catch {
+        // PDF preview optional — extraction review still usable without it
+      }
+    })();
+    return () => {
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+    };
+  }, [session.id, pdfFile]);
+
+  const handleDeleteWatch = async (index: number) => {
+    if (!extraction?.extraction) return;
+    const updated: InventoryInvoiceExtraction = {
+      ...extraction.extraction,
+      watches: extraction.extraction.watches.filter((_, i) => i !== index),
+    };
+    setSaving(true);
+    setError(null);
+    try {
+      await updateDocumentExtraction(session.id, updated);
+      setExtraction((prev) => prev ? { ...prev, extraction: updated, watchCount: updated.watches.length } : prev);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Error al actualizar la extracción.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleValidate = async () => {
+    setValidating(true);
+    setError(null);
+    try {
+      await onValidate();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Error al validar.');
+      setValidating(false);
+    }
+  };
+
+  const handleReprocess = async () => {
+    setReprocessing(true);
+    setError(null);
+    try {
+      await onReprocess();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Error al re-extraer.');
+      setReprocessing(false);
+    }
+  };
+
+  if (!extraction) {
+    return <div className="h-40 animate-pulse rounded-xl bg-white/10" />;
+  }
+
+  const watches = extraction.extraction?.watches ?? [];
+  const invoice = extraction.extraction?.invoice;
+
+  return (
+    <>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Revisión de extracción IA</h2>
+          <p className="mt-1 text-sm text-muted">
+            {watches.length} {watches.length === 1 ? 'reloj extraído' : 'relojes extraídos'} ·{' '}
+            {extraction.extractionProvider && (
+              <span className="text-white/60">{extraction.extractionProvider} / {extraction.extractionModel}</span>
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleReprocess()}
+          disabled={reprocessing || saving}
+          className="ui-btn-secondary inline-flex items-center gap-1.5 text-xs disabled:opacity-40"
+        >
+          {reprocessing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          Re-extraer PDF
+        </button>
+      </div>
+
+      {error && <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+      <ExtractionErrorBanner errorJson={extraction.extractionError} />
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Left: PDF preview */}
+        <div>
+          {pdfUrl ? (
+            <div className="aspect-[3/4] rounded-xl border border-white/10 overflow-hidden">
+              <object data={pdfUrl} type="application/pdf" className="h-full w-full">
+                <p className="p-4 text-xs text-muted">No se puede mostrar el PDF en este navegador.</p>
+              </object>
+            </div>
+          ) : (
+            <div className="aspect-[3/4] flex items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.02]">
+              <p className="text-xs text-muted">Cargando previsualización…</p>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Invoice metadata + watch cards */}
+        <div className="space-y-4 overflow-y-auto max-h-[70vh] pr-1">
+          {invoice && (
+            <section className="ui-card">
+              <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">Factura</h3>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                {invoice.supplierName && (
+                  <><dt className="text-muted">Proveedor</dt><dd className="text-white">{invoice.supplierName}</dd></>
+                )}
+                {invoice.invoiceNumber && (
+                  <><dt className="text-muted">No. factura</dt><dd className="text-white">{invoice.invoiceNumber}</dd></>
+                )}
+                {invoice.invoiceDate && (
+                  <><dt className="text-muted">Fecha</dt><dd className="text-white">{invoice.invoiceDate}</dd></>
+                )}
+                {invoice.currency && (
+                  <><dt className="text-muted">Moneda</dt><dd className="text-white">{invoice.currency}</dd></>
+                )}
+              </dl>
+              {invoice.notes && <p className="mt-2 text-xs text-muted/80 italic">{invoice.notes}</p>}
+            </section>
+          )}
+
+          {watches.length === 0 ? (
+            <p className="text-sm text-muted">No se extrajeron relojes. Puedes re-extraer el PDF.</p>
+          ) : (
+            watches.map((watch, i) => (
+              <WatchExtractionCard
+                key={i}
+                watch={watch}
+                index={i}
+                onDelete={() => void handleDeleteWatch(i)}
+                disabled={saving}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="mt-6 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void handleValidate()}
+          disabled={validating || watches.length === 0}
+          className="ui-btn-primary inline-flex items-center gap-2 disabled:opacity-40"
+        >
+          {validating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {validating ? 'Validando…' : 'Validar y continuar →'}
+        </button>
+        <p className="text-xs text-muted">
+          {watches.length} reloj{watches.length !== 1 ? 'es' : ''} · las filas con errores se marcan en el paso siguiente
+        </p>
+      </div>
+    </>
+  );
+}
+
+function WatchExtractionCard({
+  watch, index, onDelete, disabled,
+}: {
+  watch: ExtractedWatch;
+  index: number;
+  onDelete: () => void;
+  disabled: boolean;
+}) {
+  const c = watch.confidence ?? {};
+  const formatPrice = (v?: number) => v !== undefined ? `$${v.toLocaleString('es-MX')}` : '—';
+
+  return (
+    <section className="ui-card relative">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-xs text-muted">Reloj #{index + 1}</span>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={disabled}
+          className="inline-flex items-center gap-1 text-xs text-muted hover:text-rose-300 disabled:opacity-40"
+          title="Eliminar este reloj"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Eliminar
+        </button>
+      </div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+        <dt className="text-muted flex items-center">Marca<ConfidenceDot score={c.brand} /></dt>
+        <dd className="text-white font-medium">{watch.brand ?? '—'}</dd>
+        <dt className="text-muted flex items-center">Modelo<ConfidenceDot score={c.model} /></dt>
+        <dd className="text-white">{watch.model ?? '—'}</dd>
+        {watch.referenceNumber && (
+          <>
+            <dt className="text-muted flex items-center">Referencia<ConfidenceDot score={c.referenceNumber} /></dt>
+            <dd className="text-white">{watch.referenceNumber}</dd>
+          </>
+        )}
+        {watch.serialNumber && (
+          <>
+            <dt className="text-muted flex items-center">Serie<ConfidenceDot score={c.serialNumber} /></dt>
+            <dd className="text-white">{watch.serialNumber}</dd>
+          </>
+        )}
+        {watch.condition && (
+          <>
+            <dt className="text-muted">Condición</dt>
+            <dd className="text-white">{watch.condition}</dd>
+          </>
+        )}
+        <dt className="text-muted flex items-center">Costo<ConfidenceDot score={c.purchasePrice} /></dt>
+        <dd className="text-white">{watch.costCurrency ?? ''} {formatPrice(watch.purchasePrice)}</dd>
+        <dt className="text-muted flex items-center">Precio<ConfidenceDot score={c.askingPriceMin} /></dt>
+        <dd className="text-white">{formatPrice(watch.askingPriceMin)} – {formatPrice(watch.askingPriceMax)}</dd>
+      </dl>
+    </section>
   );
 }
 
@@ -626,7 +1111,7 @@ function CompletedStep({ result, session }: { result: CommitResult | null; sessi
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-type UIStep = 'upload' | 'mapping' | 'dryrun' | 'confirm' | 'importing' | 'completed';
+type UIStep = 'upload' | 'pdf-upload' | 'pdf-extracting' | 'pdf-review' | 'mapping' | 'dryrun' | 'confirm' | 'importing' | 'completed';
 
 export default function DataOnboardingSessionPage() {
   const params = useParams<{ sessionId: string }>();
@@ -635,9 +1120,11 @@ export default function DataOnboardingSessionPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [localStep, setLocalStep] = useState<'dryrun' | 'confirm' | null>(null);
   const [commitResult, setCommitResult] = useState<CommitResult | null>(null);
+  const [showReprocessConfirm, setShowReprocessConfirm] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -654,24 +1141,42 @@ export default function DataOnboardingSessionPage() {
     void load();
   }, [load]);
 
+  // Detect if this session is PDF-based
+  const isPdfSession = useMemo(() => {
+    if (!session) return false;
+    return session.files.some((f) => f.fileType === 'PDF');
+  }, [session]);
+
   const step: UIStep = useMemo(() => {
     if (!session) return 'upload';
     if (session.status === 'COMPLETED') return 'completed';
     if (session.status === 'IMPORTING') return 'importing';
+
+    if (isPdfSession) {
+      if (session.status === 'PROCESSING') return 'pdf-extracting';
+      if (session.status === 'READY_FOR_REVIEW') {
+        if (localStep === 'confirm') return 'confirm';
+        if (localStep === 'dryrun' || session.dryRunVersion) return 'dryrun';
+        return 'pdf-review';
+      }
+      return 'pdf-upload';
+    }
+
+    // CSV/XLSX workflow
     if (session.status === 'READY_FOR_REVIEW') {
       if (localStep === 'confirm') return 'confirm';
       if (localStep === 'dryrun' || session.dryRunVersion) return 'dryrun';
       return 'mapping';
     }
+    if (session.status === 'PROCESSING') return 'upload';
     return 'upload';
-  }, [session, localStep]);
+  }, [session, localStep, isPdfSession]);
 
   const onFilesSelected = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     setUploading(true);
     setError(null);
     try {
-      // V1: one file per session (backend enforces this too).
       await uploadDataImportFile(sessionId, fileList[0]);
       if (fileList.length > 1) {
         setError('Esta versión permite un solo archivo por sesión; se subió únicamente el primero.');
@@ -694,6 +1199,47 @@ export default function DataOnboardingSessionPage() {
       setError(e instanceof ApiError ? e.message : 'Error al procesar la sesión.');
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const onExtract = async () => {
+    setExtracting(true);
+    setError(null);
+    try {
+      await processDocument(sessionId);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Error al extraer el PDF.');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const onReprocessDocument = async () => {
+    try {
+      await reprocessDocument(sessionId);
+      await load();
+      setLocalStep(null);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        const payload = e.payload as { code?: string } | null;
+        if (payload && typeof payload === 'object' && (payload as { code?: string }).code === 'MANUAL_EDITS_WOULD_BE_DISCARDED') {
+          setShowReprocessConfirm(true);
+          return;
+        }
+      }
+      throw e;
+    }
+  };
+
+  const onConfirmReprocess = async () => {
+    setShowReprocessConfirm(false);
+    try {
+      await reprocessDocument(sessionId, { confirmDiscardEdits: true });
+      await load();
+      setLocalStep(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Error al re-extraer.');
     }
   };
 
@@ -728,6 +1274,9 @@ export default function DataOnboardingSessionPage() {
 
   const stepLabels: Record<UIStep, string> = {
     upload: 'Subir y procesar',
+    'pdf-upload': 'Subir factura PDF',
+    'pdf-extracting': 'Extrayendo con IA…',
+    'pdf-review': 'Revisión de extracción',
     mapping: 'Mapeo de columnas',
     dryrun: 'Validación',
     confirm: 'Confirmar importación',
@@ -769,6 +1318,32 @@ export default function DataOnboardingSessionPage() {
         />
       )}
 
+      {step === 'pdf-upload' && (
+        <PdfUploadStep
+          session={session}
+          onFilesSelected={onFilesSelected}
+          onExtract={onExtract}
+          uploading={uploading}
+          extracting={extracting}
+        />
+      )}
+
+      {step === 'pdf-extracting' && (
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <Loader2 className="h-10 w-10 animate-spin text-white/40" />
+          <p className="text-sm text-muted">Extrayendo datos con IA…</p>
+          <p className="text-xs text-muted/60">Esto puede tomar 20–60 segundos</p>
+        </div>
+      )}
+
+      {step === 'pdf-review' && (
+        <ExtractionReviewStep
+          session={session}
+          onValidate={onRunDryRun}
+          onReprocess={onReprocessDocument}
+        />
+      )}
+
       {step === 'mapping' && (
         <MappingStep session={session} onMappingDone={onMappingDone} />
       )}
@@ -799,6 +1374,13 @@ export default function DataOnboardingSessionPage() {
 
       {step === 'completed' && (
         <CompletedStep result={commitResult} session={session} />
+      )}
+
+      {showReprocessConfirm && (
+        <ConfirmReprocessModal
+          onConfirm={onConfirmReprocess}
+          onCancel={() => setShowReprocessConfirm(false)}
+        />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { IsArray, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DataImportEntityType } from '@prisma/client';
 
@@ -63,4 +63,15 @@ export class SaveMappingDto {
 export class CommitImportDto {
   @IsIn(['SKIP_DUPLICATES', 'IMPORT_AS_NEW'])
   duplicatePolicy!: DuplicatePolicy;
+}
+
+export class UpdateExtractionDto {
+  @IsObject()
+  extraction!: Record<string, unknown>;
+}
+
+export class ReprocessDocumentDto {
+  @IsOptional()
+  @IsBoolean()
+  confirmDiscardEdits?: boolean;
 }
