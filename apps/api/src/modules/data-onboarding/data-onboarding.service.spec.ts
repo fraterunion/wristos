@@ -1,5 +1,7 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { DataImportStatus } from '@prisma/client';
+import { DataImportStatus, Prisma } from '@prisma/client';
+
+import { buildRecordsWhere } from './data-onboarding.service';
 
 const UPLOADABLE: DataImportStatus[] = [
   DataImportStatus.CREATED,
@@ -133,5 +135,37 @@ describe('operational write protection contract', () => {
     for (const model of PHASE1_FORBIDDEN_WRITE_MODELS) {
       expect(PHASE1_ALLOWED_WRITE_MODELS).not.toContain(model as never);
     }
+  });
+});
+
+describe('listRecords rowStatus filter (buildRecordsWhere)', () => {
+  it('always scopes by tenant and session', () => {
+    const where = buildRecordsWhere('t1', 's1', {});
+    expect(where.tenantId).toBe('t1');
+    expect(where.sessionId).toBe('s1');
+  });
+
+  it('INVALID maps to isValid=false', () => {
+    const where = buildRecordsWhere('t1', 's1', { rowStatus: 'INVALID' });
+    expect(where.isValid).toBe(false);
+    expect(where.validationWarnings).toBeUndefined();
+  });
+
+  it('VALID maps to isValid=true with no warnings', () => {
+    const where = buildRecordsWhere('t1', 's1', { rowStatus: 'VALID' });
+    expect(where.isValid).toBe(true);
+    expect(where.validationWarnings).toEqual({ equals: Prisma.AnyNull });
+  });
+
+  it('WARNING maps to isValid=true with warnings present', () => {
+    const where = buildRecordsWhere('t1', 's1', { rowStatus: 'WARNING' });
+    expect(where.isValid).toBe(true);
+    expect(where.validationWarnings).toEqual({ not: Prisma.AnyNull });
+  });
+
+  it('no rowStatus leaves records unfiltered by validity', () => {
+    const where = buildRecordsWhere('t1', 's1', {});
+    expect(where.isValid).toBeUndefined();
+    expect(where.validationWarnings).toBeUndefined();
   });
 });

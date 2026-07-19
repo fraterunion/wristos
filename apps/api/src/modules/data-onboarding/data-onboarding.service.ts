@@ -26,7 +26,7 @@ import type { ImportFileStorage } from './storage/import-file-storage.interface'
 import { sha256Checksum } from './storage/local-import-file.storage';
 import type { MulterFile } from './types/multer-file.type';
 import { classifyEntityFromHeaders } from './utils/entity-classification.util';
-import { sniffJson, sniffXlsx, validateImportUpload } from './utils/file-validation.util';
+import { maxImportRows, sniffJson, sniffXlsx, validateImportUpload } from './utils/file-validation.util';
 import { CreateDataImportSessionDto, ListDataImportRecordsQueryDto } from './dto/data-onboarding.dto';
 
 const UPLOADABLE: DataImportStatus[] = [
@@ -50,6 +50,37 @@ const DELETABLE: DataImportStatus[] = [
   DataImportStatus.FAILED,
   DataImportStatus.CANCELLED,
 ];
+
+/**
+ * Server-side record filtering. `rowStatus` maps to:
+ * - INVALID: isValid = false
+ * - VALID:   isValid = true AND no validation warnings
+ * - WARNING: isValid = true AND at least one validation warning
+ * (AnyNull matches both DB NULL and JSON null representations.)
+ */
+export function buildRecordsWhere(
+  tenantId: string,
+  sessionId: string,
+  query: Pick<ListDataImportRecordsQueryDto, 'fileId' | 'entityType' | 'valid' | 'rowStatus'>,
+): Prisma.DataImportRecordWhereInput {
+  const where: Prisma.DataImportRecordWhereInput = { tenantId, sessionId };
+  if (query.fileId) where.fileId = query.fileId;
+  if (query.entityType) where.entityType = query.entityType;
+  if (query.valid === 'true') where.isValid = true;
+  if (query.valid === 'false') where.isValid = false;
+
+  if (query.rowStatus === 'INVALID') {
+    where.isValid = false;
+  } else if (query.rowStatus === 'VALID') {
+    where.isValid = true;
+    where.validationWarnings = { equals: Prisma.AnyNull };
+  } else if (query.rowStatus === 'WARNING') {
+    where.isValid = true;
+    where.validationWarnings = { not: Prisma.AnyNull };
+  }
+
+  return where;
+}
 
 @Injectable()
 export class DataOnboardingService {
@@ -109,6 +140,14 @@ export class DataOnboardingService {
     const session = await this.requireSession(tenantId, sessionId);
     if (!UPLOADABLE.includes(session.status)) {
       throw new ConflictException('La sesión no acepta archivos en su estado actual.');
+    }
+
+    // V1 rule: exactly one file per import session. Additional files are
+    // rejected explicitly instead of silently ignored downstream.
+    if (session.totalFiles >= 1) {
+      throw new ConflictException(
+        'Esta versión permite un solo archivo por sesión. Cree una nueva sesión para importar otro archivo.',
+      );
     }
 
     const fileType = validateImportUpload(file.originalname, file.mimetype, file.size);
@@ -179,11 +218,7 @@ export class DataOnboardingService {
     await this.requireSession(tenantId, sessionId);
     const page = Math.max(1, Number(query.page ?? 1) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit ?? 25) || 25));
-    const where: Prisma.DataImportRecordWhereInput = { tenantId, sessionId };
-    if (query.fileId) where.fileId = query.fileId;
-    if (query.entityType) where.entityType = query.entityType;
-    if (query.valid === 'true') where.isValid = true;
-    if (query.valid === 'false') where.isValid = false;
+    const where = buildRecordsWhere(tenantId, sessionId, query);
 
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.dataImportRecord.count({ where }),
@@ -228,6 +263,9 @@ export class DataOnboardingService {
         status: DataImportStatus.PROCESSING,
         startedAt: new Date(),
         errorMessage: null,
+        // Reprocessing the source invalidates any prior dry-run.
+        dryRunVersion: null,
+        warningRows: 0,
       },
     });
     if (claimed.count === 0) {
@@ -373,6 +411,13 @@ export class DataOnboardingService {
       throw new BadRequestException('El archivo no contiene filas de datos.');
     }
 
+    const rowLimit = maxImportRows();
+    if (parsedRows.length > rowLimit) {
+      throw new BadRequestException(
+        `El archivo contiene ${parsedRows.length} filas y excede el máximo permitido de ${rowLimit}. Divida el archivo en partes más pequeñas.`,
+      );
+    }
+
     const classification = classifyEntityFromHeaders(parsedRows[0]?.headers ?? []);
     const duplicateKeys = new Map<string, number>();
 
@@ -475,8 +520,10 @@ export class DataOnboardingService {
     processedFiles: number;
     totalRows: number;
     validRows: number;
+    warningRows: number;
     invalidRows: number;
     importedRows: number;
+    dryRunVersion: string | null;
     startedAt: Date | null;
     completedAt: Date | null;
     errorMessage: string | null;
@@ -493,8 +540,10 @@ export class DataOnboardingService {
       processedFiles: row.processedFiles,
       totalRows: row.totalRows,
       validRows: row.validRows,
+      warningRows: row.warningRows,
       invalidRows: row.invalidRows,
       importedRows: row.importedRows,
+      dryRunVersion: row.dryRunVersion,
       startedAt: row.startedAt?.toISOString() ?? null,
       completedAt: row.completedAt?.toISOString() ?? null,
       errorMessage: row.errorMessage,
@@ -516,6 +565,8 @@ export class DataOnboardingService {
     sheetNames: unknown;
     rowCount: number;
     classificationMeta: unknown;
+    fieldMapping: unknown;
+    mappingVersion: string | null;
     errorMessage: string | null;
     createdAt: Date;
     updatedAt: Date;
@@ -533,6 +584,8 @@ export class DataOnboardingService {
       sheetNames: row.sheetNames,
       rowCount: row.rowCount,
       classificationMeta: row.classificationMeta,
+      fieldMapping: row.fieldMapping ?? null,
+      mappingVersion: row.mappingVersion,
       errorMessage: row.errorMessage,
       pdfPhase1Message:
         row.fileType === DataImportFileType.PDF ? PDF_PHASE1_MESSAGE : null,

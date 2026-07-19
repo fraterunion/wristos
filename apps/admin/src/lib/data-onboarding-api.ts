@@ -1,10 +1,15 @@
-import { ApiError, apiDelete, apiGet, apiPost, getApiBaseUrl } from '@/lib/api-client';
+import { ApiError, apiDelete, apiGet, apiPost, apiPut, getApiBaseUrl } from '@/lib/api-client';
 import { readSession } from '@/lib/auth-storage';
 import type {
+  CommitResult,
   DataImportFile,
   DataImportRecordsPage,
   DataImportSession,
   DataImportSessionDetail,
+  DryRunSummary,
+  DuplicatePolicy,
+  MappingEntry,
+  MappingResponse,
 } from '@/types/data-onboarding';
 
 const AUTH = { authenticated: true } as const;
@@ -47,7 +52,14 @@ export function processDataImportSession(sessionId: string): Promise<DataImportS
 
 export function listDataImportRecords(
   sessionId: string,
-  query: { fileId?: string; entityType?: string; valid?: string; page?: number; limit?: number } = {},
+  query: {
+    fileId?: string;
+    entityType?: string;
+    valid?: string;
+    rowStatus?: 'VALID' | 'WARNING' | 'INVALID';
+    page?: number;
+    limit?: number;
+  } = {},
 ): Promise<DataImportRecordsPage> {
   return apiGet<DataImportRecordsPage>(`/data-onboarding/sessions/${sessionId}/records`, {
     ...AUTH,
@@ -57,4 +69,56 @@ export function listDataImportRecords(
 
 export function deleteDataImportSession(sessionId: string): Promise<void> {
   return apiDelete(`/data-onboarding/sessions/${sessionId}`, AUTH);
+}
+
+export function getImportMapping(sessionId: string, fileId: string): Promise<MappingResponse> {
+  return apiGet<MappingResponse>(`/data-onboarding/sessions/${sessionId}/files/${fileId}/mapping`, AUTH);
+}
+
+export function saveImportMapping(sessionId: string, fileId: string, mapping: MappingEntry[]): Promise<{ mappingVersion: string }> {
+  return apiPut<{ mappingVersion: string }>(`/data-onboarding/sessions/${sessionId}/files/${fileId}/mapping`, { mapping }, AUTH);
+}
+
+export function runDryRun(sessionId: string): Promise<DryRunSummary> {
+  return apiPost<DryRunSummary>(`/data-onboarding/sessions/${sessionId}/dry-run`, undefined, AUTH);
+}
+
+export function commitImport(sessionId: string, duplicatePolicy: DuplicatePolicy): Promise<CommitResult> {
+  return apiPost<CommitResult>(`/data-onboarding/sessions/${sessionId}/commit`, { duplicatePolicy }, AUTH);
+}
+
+/**
+ * Downloads the error report through an authenticated fetch (Authorization
+ * header only — the access token never appears in a URL) and returns a Blob
+ * ready for URL.createObjectURL.
+ */
+export async function fetchErrorReportBlob(sessionId: string): Promise<Blob> {
+  const session = readSession();
+  const response = await fetch(`${getApiBaseUrl()}/data-onboarding/sessions/${sessionId}/error-report.csv`, {
+    method: 'GET',
+    headers: session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {},
+  });
+  if (!response.ok) {
+    let message = `No se pudo descargar el reporte (${response.status})`;
+    if (response.status === 401) message = 'Sesión expirada. Inicie sesión de nuevo para descargar el reporte.';
+    if (response.status === 403) message = 'No tiene permiso para descargar este reporte.';
+    throw new ApiError(message, response.status);
+  }
+  return response.blob();
+}
+
+/** Triggers a browser download of the error report via a revoked object URL. */
+export async function downloadErrorReport(sessionId: string, filename = 'error-report.csv'): Promise<void> {
+  const blob = await fetchErrorReportBlob(sessionId);
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
