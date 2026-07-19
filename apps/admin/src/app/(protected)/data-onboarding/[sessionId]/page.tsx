@@ -22,6 +22,13 @@ import {
   updateDocumentExtraction,
   uploadDataImportFile,
 } from '@/lib/data-onboarding-api';
+import {
+  IMPORT_FILE_ACCEPT,
+  IMPORT_FILE_HELPER_TEXT,
+  IMPORT_FILE_REJECT_MESSAGE,
+  isAcceptedImportFile,
+  isPdfImportSession,
+} from '@/lib/import-file-validation';
 import type {
   CommitResult,
   DataImportFile,
@@ -603,7 +610,7 @@ function UploadStep({
       <section className="ui-card mb-8">
         <h2 className="text-sm font-medium text-white">1 · Subir archivo</h2>
         <p className="mt-1 text-xs text-muted">
-          XLSX, CSV · máx. 25 MB · máx. 5,000 filas · un archivo por sesión
+          {IMPORT_FILE_HELPER_TEXT}
         </p>
         <label className={`mt-4 flex flex-col items-center justify-center rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-6 py-10 transition ${uploadDisabled ? 'opacity-40' : 'cursor-pointer hover:border-white/30'}`}>
           <UploadCloud className="h-8 w-8 text-white/40" />
@@ -616,7 +623,7 @@ function UploadStep({
           </span>
           <input
             type="file"
-            accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+            accept={IMPORT_FILE_ACCEPT}
             className="hidden"
             disabled={uploadDisabled}
             onChange={(e) => void onFilesSelected(e.target.files)}
@@ -1141,10 +1148,10 @@ export default function DataOnboardingSessionPage() {
     void load();
   }, [load]);
 
-  // Detect if this session is PDF-based
+  // Detect if this session is PDF-based (Sprint 3 extraction / review)
   const isPdfSession = useMemo(() => {
     if (!session) return false;
-    return session.files.some((f) => f.fileType === 'PDF');
+    return isPdfImportSession(session.files);
   }, [session]);
 
   const step: UIStep = useMemo(() => {
@@ -1162,7 +1169,7 @@ export default function DataOnboardingSessionPage() {
       return 'pdf-upload';
     }
 
-    // CSV/XLSX workflow
+    // CSV/XLSX workflow (Sprint 2 sheet selection / mapping)
     if (session.status === 'READY_FOR_REVIEW') {
       if (localStep === 'confirm') return 'confirm';
       if (localStep === 'dryrun' || session.dryRunVersion) return 'dryrun';
@@ -1174,10 +1181,15 @@ export default function DataOnboardingSessionPage() {
 
   const onFilesSelected = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
+    const file = fileList[0];
+    if (!isAcceptedImportFile(file)) {
+      setError(IMPORT_FILE_REJECT_MESSAGE);
+      return;
+    }
     setUploading(true);
     setError(null);
     try {
-      await uploadDataImportFile(sessionId, fileList[0]);
+      await uploadDataImportFile(sessionId, file);
       if (fileList.length > 1) {
         setError('Esta versión permite un solo archivo por sesión; se subió únicamente el primero.');
       }
@@ -1190,6 +1202,11 @@ export default function DataOnboardingSessionPage() {
   };
 
   const onProcess = async () => {
+    // Never send PDFs into spreadsheet parsing / header detection.
+    if (isPdfSession) {
+      setError('Los archivos PDF se procesan con extracción de documentos, no con análisis de hojas de cálculo.');
+      return;
+    }
     setProcessing(true);
     setError(null);
     try {
