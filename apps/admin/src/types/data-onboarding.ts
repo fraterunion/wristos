@@ -34,8 +34,10 @@ export type DataImportSession = {
   processedFiles: number;
   totalRows: number;
   validRows: number;
+  warningRows: number;
   invalidRows: number;
   importedRows: number;
+  dryRunVersion: string | null;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
@@ -56,6 +58,8 @@ export type DataImportFile = {
   sheetNames: string[] | null;
   rowCount: number;
   classificationMeta: unknown;
+  fieldMapping: MappingEntry[] | null;
+  mappingVersion: string | null;
   errorMessage: string | null;
   pdfPhase1Message: string | null;
   createdAt: string;
@@ -88,4 +92,62 @@ export type DataImportRecordsPage = {
   limit: number;
   total: number;
   records: DataImportRecord[];
+};
+
+// ─── Inventory Import V1 types ───────────────────────────────────────────────
+
+export type WatchImportField =
+  | 'brand' | 'model' | 'reference' | 'serialNumber'
+  | 'condition' | 'ownershipType' | 'costCurrency' | 'cost'
+  | 'priceMin' | 'priceMax' | 'status'
+  | 'consignmentOwnerName' | 'consignmentSplitPercentage'
+  | 'imageUrl';
+
+export const SKIP_FIELD = '__skip__' as const;
+
+export type MappingEntry = {
+  sourceColumn: string;
+  targetField: WatchImportField | typeof SKIP_FIELD;
+};
+
+export type MappingProposal = {
+  sourceColumn: string;
+  sampleValues: string[];
+  suggested: WatchImportField | null;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+};
+
+export type MappingResponse = {
+  fileId: string;
+  mapping: MappingEntry[];
+  mappingVersion: string | null;
+  proposals: MappingProposal[];
+  isProposed: boolean;
+};
+
+export type DryRunSummary = {
+  sessionId: string;
+  dryRunVersion: string;
+  total: number;
+  valid: number;
+  warnings: number;
+  invalid: number;
+  duplicates: number;
+};
+
+export type CommitResult = {
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  warningCount: number;
+};
+
+export type DuplicatePolicy = 'SKIP_DUPLICATES' | 'IMPORT_AS_NEW';
+
+export type WatchRowState = 'VALID' | 'WARNING' | 'INVALID';
+
+export type ValidationIssue = {
+  code: string;
+  field: string;
+  message: string;
 };

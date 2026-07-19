@@ -36,6 +36,13 @@ export function maxImportFileSizeBytes(): number {
   return mb * 1024 * 1024;
 }
 
+/** Hard cap on staged rows per file (V1 default: 5,000). */
+export function maxImportRows(): number {
+  const rows = Number(process.env.IMPORT_MAX_ROWS ?? '5000');
+  if (!Number.isFinite(rows) || rows <= 0) return 5000;
+  return Math.floor(rows);
+}
+
 export function extensionOf(filename: string): string {
   const idx = filename.lastIndexOf('.');
   if (idx <= 0) return '';

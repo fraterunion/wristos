@@ -104,15 +104,18 @@ Sidebar: all authenticated admin users see **Importar datos** (matches current W
 
 ## Migration (manual — TYPE C)
 
-Migration exists at:
+Migrations:
 
-`prisma/migrations/20260717120000_data_onboarding_foundation/`
+- `prisma/migrations/20260717120000_data_onboarding_foundation/`
+- `prisma/migrations/20260718120000_inventory_import_v1/` (additive: `warning_rows`, `dry_run_version`, `import_started_at`, `field_mapping`, `mapping_version`, new `DataImportEventType` values)
 
-**Do not apply to production until ready.** Local/dev:
+Production workflow (after merge, run manually):
 
 ```bash
 npx prisma migrate deploy --schema=./prisma/schema.prisma
 ```
+
+Do **not** execute the SQL manually and do **not** use `migrate resolve --applied` unless recovering from an actually partially applied migration.
 
 ## API endpoints
 
@@ -122,10 +125,97 @@ GET    /data-onboarding/sessions
 GET    /data-onboarding/sessions/:sessionId
 POST   /data-onboarding/sessions/:sessionId/files   (multipart field: file)
 GET    /data-onboarding/sessions/:sessionId/files
-GET    /data-onboarding/sessions/:sessionId/records?page=&limit=&fileId=&entityType=&valid=
+GET    /data-onboarding/sessions/:sessionId/records?page=&limit=&fileId=&entityType=&valid=&rowStatus=
 POST   /data-onboarding/sessions/:sessionId/process
 DELETE /data-onboarding/sessions/:sessionId
+
+# Inventory Import V1
+GET    /data-onboarding/sessions/:sessionId/files/:fileId/mapping
+PUT    /data-onboarding/sessions/:sessionId/files/:fileId/mapping
+POST   /data-onboarding/sessions/:sessionId/dry-run
+POST   /data-onboarding/sessions/:sessionId/commit          { duplicatePolicy }
+GET    /data-onboarding/sessions/:sessionId/error-report.csv
 ```
+
+`rowStatus` (`VALID` | `WARNING` | `INVALID`) is filtered **server-side**; pagination and totals reflect the filter.
+
+---
+
+# Inventory Import V1 (Sprint 2)
+
+Imports staged INVENTORY rows into the `watches` table after mapping, dry-run validation, and explicit confirmation.
+
+## Limits
+
+| Limit | Default | Env var |
+|-------|---------|---------|
+| Max file size | 25 MB | `IMPORT_MAX_FILE_SIZE_MB` |
+| Max rows per file | 5,000 | `IMPORT_MAX_ROWS` |
+| Error report rows | 1,000 (then truncation notice) | `IMPORT_ERROR_REPORT_MAX_ROWS` |
+| Stale import timeout | 15 min | `IMPORT_STALE_TIMEOUT_MINUTES` |
+| Files per session | 1 (enforced at upload) | — |
+
+- **CSV** is parsed fully in memory (bounded by file size + row cap), then rejected before staging if it exceeds the row cap.
+- **XLSX** is loaded fully in memory by `exceljs` (no streaming); memory is bounded by the 25 MB file cap and the row cap. Hidden sheets are skipped.
+- Dry-run record updates are written in bounded batches (200 per transaction); commit creates watches in chunks of 50, one transaction per row (watch + record marker are atomic).
+
+## Duplicate semantics (V1, authoritative in backend)
+
+Serial number is a strong unique business identifier. Serials are normalized by trimming before comparison (exact, case-sensitive).
+
+| Case | Dry-run result | Commit behavior |
+|------|----------------|-----------------|
+| Serial duplicated **inside the file** (2nd+ occurrence) | `INVALID` / `SERIAL_DUPLICATE_IN_FILE` | Never eligible |
+| First occurrence of an in-file duplicated serial | `WARNING` / `POSSIBLE_DUPLICATE` | `SKIP_DUPLICATES`: skipped · `IMPORT_AS_NEW`: imported |
+| Serial already exists **in the tenant's inventory** | `WARNING` / `CONFIRMED_DUPLICATE` | **Always skipped, under both policies** |
+| No conflict | `VALID` | Imported |
+
+- `IMPORT_AS_NEW` can never create a second watch with the same non-empty serial. The UI copy states this explicitly.
+- **Commit-time serial recheck:** immediately before creating watches, all candidate serials are re-queried against live inventory (tenant-scoped, `deletedAt: null`) and serials created earlier in the same run are tracked, so serials added between dry-run and commit are also skipped.
+- **Remaining limitation:** there is **no DB unique constraint** on `(tenantId, serialNumber)`. Adding one requires auditing existing production data for duplicates first; deliberately deferred. A race between two commits in *different sessions* inside the recheck window could theoretically still duplicate a serial. The recheck is covered by tests.
+
+## Dry-run versioning (exact match)
+
+- `dryRunVersion = sha256(sessionId + fileIds + mappingVersions + rowCounts)[:16] + ':' + timestamp`.
+- Commit recomputes the base from current file state and requires **exact equality** (no `startsWith`); empty/malformed versions are rejected.
+- Remapping (`PUT …/mapping`) and reprocessing (`POST …/process`) both clear `dryRunVersion`, and either also changes the recomputed base.
+- The commit claim is an atomic compare-and-set on `(status, dryRunVersion)`.
+
+## Stale import recovery
+
+- Commit sets `importStartedAt` when it claims the session (`READY_FOR_REVIEW`/`FAILED` → `IMPORTING`).
+- If a session is found `IMPORTING` for longer than `IMPORT_STALE_TIMEOUT_MINUTES` (default 15), the next commit attempt atomically transitions it to `FAILED`, writes an `IMPORT_FAILED` audit event with `reason: STALE_IMPORT_TIMEOUT`, and proceeds with a fresh claim.
+- `FAILED` is a retryable state. Retries only process records **without `targetRecordId`** — rows already imported are never recreated, so repeated commits after partial success are idempotent. `importedRows` is cumulative across retries.
+- A session with any failed rows ends `FAILED` (retryable) with a clear `errorMessage`; it only reaches `COMPLETED` when no row fails.
+
+## Monetary parsing (V1: US format only)
+
+Accepted: `15000`, `1234.56`, `1,234,567`, `$1,234.56`, `MXN 1,234.56`, `USD 1,234`, and negative variants (negatives are then rejected by validation).
+
+Rejected with structured error codes (never silently reinterpreted):
+
+- `AMBIGUOUS_NUMBER_FORMAT` — European format (`1.234,56`, `1,23`) and EU-thousands lookalikes (`1.234`, `15.000`)
+- `CONFLICTING_CURRENCY` — more than one currency code in a cell (`MXN 100 USD`) or non-MXN/USD symbols (`€`, `£`, `¥`)
+- `INVALID_NUMBER_FORMAT` — non-numeric content
+
+USD rows are converted to MXN with the FX rate fetched once per dry-run; the applied rate is persisted per watch (`costOriginalAmount`, `costExchangeRate`) and disclosed as a row warning.
+
+## Error report
+
+- `GET …/error-report.csv` requires the standard `Authorization: Bearer` header. The frontend downloads it via authenticated `fetch` → `Blob` → `URL.createObjectURL` (revoked after use). **Access tokens never appear in URLs.**
+- Every user-controlled cell is CSV-quoted and formula-injection-neutralized (`=`, `+`, `-`, `@` prefixes get a leading `'`).
+- Bounded to `IMPORT_ERROR_REPORT_MAX_ROWS`; a truncation notice row is appended when more invalid rows exist.
+
+## Business-invariant note (bypass of `InventoryService.create`)
+
+Commit writes `tx.watch.create` directly (bulk, transactional per row) instead of calling `InventoryService.create`, which is DTO-coupled, serializes responses, and runs interactive-creation side effects (publish/slug resolution, slug-conflict mapping) that are unsafe/unneeded for bulk import. The invariants it enforces are explicitly reproduced and tested:
+
+- consignment fields are `null` unless `ownershipType = CONSIGNMENT`
+- `costCurrency` defaults to MXN; USD costs store original amount + exchange rate, `cost` is canonical MXN
+- `status` defaults to `AVAILABLE`
+- imported watches are **never published** (`isPublished: false`, no public slug)
+
+If a third writer of `Watch` ever appears, extract a shared watch-creation domain function.
 
 ## Future phases
 

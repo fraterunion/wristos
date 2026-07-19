@@ -230,6 +230,11 @@ enum DataImportEventType {
   PROCESSING_COMPLETED
   SESSION_FAILED
   SESSION_CANCELLED
+  MAPPING_SAVED
+  DRY_RUN_COMPLETED
+  IMPORT_STARTED
+  IMPORT_COMPLETED
+  IMPORT_FAILED
 }
 
 // --- AI Market Radar ---
@@ -1113,8 +1118,11 @@ model DataImportSession {
   processedFiles  Int              @default(0) @map("processed_files")
   totalRows       Int              @default(0) @map("total_rows")
   validRows       Int              @default(0) @map("valid_rows")
+  warningRows     Int              @default(0) @map("warning_rows")
   invalidRows     Int              @default(0) @map("invalid_rows")
   importedRows    Int              @default(0) @map("imported_rows")
+  dryRunVersion   String?          @map("dry_run_version")
+  importStartedAt DateTime?        @map("import_started_at")
   startedAt       DateTime?        @map("started_at")
   completedAt     DateTime?        @map("completed_at")
   errorMessage    String?          @map("error_message")
@@ -1148,6 +1156,8 @@ model DataImportFile {
   sheetNames         Json?                @map("sheet_names")
   rowCount           Int                  @default(0) @map("row_count")
   classificationMeta Json?                @map("classification_meta")
+  fieldMapping       Json?                @map("field_mapping")
+  mappingVersion     String?              @map("mapping_version")
   errorMessage       String?              @map("error_message")
   createdAt          DateTime             @default(now()) @map("created_at")
   updatedAt          DateTime             @updatedAt @map("updated_at")
