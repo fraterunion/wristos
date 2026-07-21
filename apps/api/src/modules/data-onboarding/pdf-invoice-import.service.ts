@@ -242,7 +242,27 @@ export class PdfInvoiceImportService {
       const safeRecord = buildSafeExtractionRecord(err, providerName, modelId);
       const durationMs = Date.now() - startedAt;
 
-      // Log technical details for developer debugging (paths only, no AI content)
+      // Extract safe Anthropic API metadata — never log err.error (raw body) or err.headers.
+      const anthropicMeta: Record<string, unknown> = {};
+      if (err instanceof Error && 'status' in err) {
+        const apiErr = err as { status?: unknown; type?: unknown; requestID?: unknown };
+        if (typeof apiErr.status === 'number') anthropicMeta.httpStatus = apiErr.status;
+        if (typeof apiErr.type === 'string') anthropicMeta.errorType = apiErr.type;
+        if (typeof apiErr.requestID === 'string') anthropicMeta.requestId = apiErr.requestID;
+      }
+
+      this.logger.error('PDF extraction failed', {
+        errorCode: safeRecord.code,
+        errorCategory: safeRecord.category,
+        provider: providerName,
+        model: modelId,
+        sessionId,
+        tenantId,
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        durationMs,
+        ...anthropicMeta,
+      });
+
       if (isExtractionError(err) && err.debugInfo) {
         this.logger.debug(`Extraction schema error [${sessionId}]: ${JSON.stringify(err.debugInfo)}`);
       }
