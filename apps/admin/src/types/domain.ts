@@ -177,11 +177,13 @@ export type Deal = {
   id: string;
   tenantId: string;
   clientId: string;
-  watchId: string;
+  watchId: string | null;
   stage: DealStage;
   expectedCloseAt?: string | null;
   agreedPrice: string;
   notes?: string | null;
+  sourceTag?: string | null;
+  importSessionId?: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;

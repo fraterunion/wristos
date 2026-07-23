@@ -68,15 +68,15 @@ export function createQuickWatch(payload: {
 export type SoldItem = {
   dealId: string;
   watch: {
-    id: string;
+    id: string | null;
     brand: string;
     model: string;
     reference?: string | null;
     serialNumber: string | null;
-    condition: string;
-    cost: string;
+    condition: string | null;
+    cost: string | null;
     effectiveCost: string;
-    ownershipType: string;
+    ownershipType: string | null;
     consignmentOwnerName: string | null;
     consignmentSplitPercentage: string | null;
   };
@@ -92,11 +92,14 @@ export type SoldItem = {
   // Payment accounting — computed by /history/sold
   paidTotal: string;
   pendingAmount: string;
-  computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE';
+  computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE' | 'HISTORICO';
   paymentMethods: string[];
   notes: string | null;
   soldAt: string;
   createdAt: string;
+  isHistoricalImport?: boolean;
+  sourceTag?: string | null;
+  paymentCount?: number | null;
   payments: {
     id: string;
     amount: string;

@@ -5,7 +5,7 @@
  * and the FakeExtractionProvider so no real DB or AI calls are made.
  */
 import { ConflictException, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
-import { DataImportEntityType, DataImportEventType, DataImportFileStatus, DataImportFileType, DataImportStatus } from '@prisma/client';
+import { DataImportEntityType, DataImportEventType, DataImportFileStatus, DataImportFileType, DataImportStatus, DataImportTarget } from '@prisma/client';
 
 import { FakeExtractionProvider } from './providers/fake-extraction.provider';
 import { PdfInvoiceImportService } from './pdf-invoice-import.service';
@@ -50,6 +50,7 @@ function makeSession(overrides: Partial<Record<string, unknown>> = {}) {
     id: nextId(),
     tenantId: 'tenant-1',
     status: DataImportStatus.UPLOADING,
+    importTarget: DataImportTarget.INVENTORY,
     totalFiles: 1,
     processedFiles: 0,
     totalRows: 0,

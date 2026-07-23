@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 import type { SoldItem } from '@/lib/ventas-api';
 
 type SaleDetailDrawerProps = {
@@ -22,6 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
   PAGADO: 'Pagado',
   PARCIAL: 'Parcial',
   PENDIENTE: 'Pendiente',
+  HISTORICO: 'Histórica',
   PAID: 'Pagado',
   PENDING: 'Pendiente',
   OVERDUE: 'Vencido',
@@ -119,9 +122,16 @@ function SummaryRow({
 }
 
 export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDetailDrawerProps) {
+  const [showAdvancedPayment, setShowAdvancedPayment] = useState(false);
+
+  useEffect(() => {
+    setShowAdvancedPayment(false);
+  }, [sale?.dealId, open]);
+
   if (!open || !sale) return null;
 
   const status = sale.computedStatus;
+  const isHistorical = Boolean(sale.isHistoricalImport) || status === 'HISTORICO';
   const pendingNum = Number(sale.pendingAmount);
   const hasBankFee = !!sale.bankFee && Number(sale.bankFee) > 0;
   const sortedPayments = [...sale.payments].sort((a, b) => {
@@ -175,10 +185,19 @@ export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDeta
             </button>
           </div>
 
-          <div className="mt-4 flex items-center gap-2">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {isHistorical ? (
+              <span className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-sky-200">
+                Venta histórica
+              </span>
+            ) : null}
             {status === 'PAGADO' ? (
               <span className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white/70">
                 Liquidada
+              </span>
+            ) : isHistorical ? (
+              <span className="inline-flex items-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white/70">
+                Histórica
               </span>
             ) : (
               <button
@@ -190,6 +209,37 @@ export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDeta
               </button>
             )}
           </div>
+
+          {isHistorical ? (
+            <div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+              <p className="text-[11px] leading-relaxed text-white/40">
+                El historial de pagos no se migró con esta importación
+                {sale.paymentCount != null ? ` (referencia: ${sale.paymentCount} pago${sale.paymentCount === 1 ? '' : 's'} históricos)` : ''}.
+              </p>
+              {!showAdvancedPayment ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedPayment(true)}
+                  className="mt-2 text-[11px] text-white/45 underline underline-offset-2 hover:text-white/70"
+                >
+                  Registrar pago actual (avanzado)
+                </button>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  <p className="text-[11px] text-amber-200/80">
+                    Solo usa esto si necesitas registrar un pago real hoy. No reescribe el historial importado.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onAddPayment(sale)}
+                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-100 transition hover:border-amber-500/45"
+                  >
+                    Continuar y registrar pago
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
 
         {/* Scrollable body */}
@@ -237,7 +287,9 @@ export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDeta
           <section className="mb-6">
             <SectionTitle>Historial de pagos</SectionTitle>
             {sortedPayments.length === 0 ? (
-              <p className="mt-3 text-sm text-white/35">Sin pagos registrados.</p>
+              <p className="mt-3 text-sm text-white/35">
+                {isHistorical ? 'Sin pagos migrados.' : 'Sin pagos registrados.'}
+              </p>
             ) : (
               <ol className="mt-3 space-y-3">
                 {sortedPayments.map((payment) => (

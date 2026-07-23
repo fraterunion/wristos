@@ -1,5 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CapitalAccount, DealStage, OperatingExpenseCategory, Prisma } from '@prisma/client';
+import {
+  dealEffectiveSaleDateRangeWhere,
+  effectiveSaleDate,
+} from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateContributionDto } from './dto/create-contribution.dto';
 import { CreateDistributionDto } from './dto/create-distribution.dto';
@@ -60,6 +64,7 @@ export class CapitalService {
         where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
         select: {
           agreedPrice: true,
+          historicalCost: true,
           watch: { select: { cost: true, expenses: { select: { amount: true } } } },
         },
       }),
@@ -82,6 +87,9 @@ export class CapitalService {
       new Prisma.Decimal(0),
     );
     const totalCostOfSold = soldDeals.reduce((sum, d) => {
+      if (!d.watch) {
+        return sum.plus(d.historicalCost ?? 0);
+      }
       const expSum = d.watch.expenses.reduce(
         (s, e) => s.plus(e.amount),
         new Prisma.Decimal(0),
@@ -149,11 +157,14 @@ export class CapitalService {
           tenantId,
           deletedAt: null,
           stage: DealStage.CLOSED_WON,
-          updatedAt: { gte: yearStart, lt: yearEnd },
+          AND: [dealEffectiveSaleDateRangeWhere(yearStart, yearEnd)],
         },
         select: {
           agreedPrice: true,
+          soldAt: true,
           updatedAt: true,
+          createdAt: true,
+          historicalCost: true,
           watch: { select: { cost: true, expenses: { select: { amount: true } } } },
         },
       }),
@@ -197,15 +208,21 @@ export class CapitalService {
     }));
 
     for (const deal of soldDeals) {
-      const monthIdx = deal.updatedAt.getUTCMonth();
+      const monthIdx = effectiveSaleDate(deal).getUTCMonth();
       buckets[monthIdx].revenue = buckets[monthIdx].revenue.plus(deal.agreedPrice);
-      const expSum = deal.watch.expenses.reduce(
-        (s, e) => s.plus(e.amount),
-        new Prisma.Decimal(0),
-      );
-      buckets[monthIdx].costOfSold = buckets[monthIdx].costOfSold
-        .plus(deal.watch.cost ?? 0)
-        .plus(expSum);
+      if (!deal.watch) {
+        buckets[monthIdx].costOfSold = buckets[monthIdx].costOfSold.plus(
+          deal.historicalCost ?? 0,
+        );
+      } else {
+        const expSum = deal.watch.expenses.reduce(
+          (s, e) => s.plus(e.amount),
+          new Prisma.Decimal(0),
+        );
+        buckets[monthIdx].costOfSold = buckets[monthIdx].costOfSold
+          .plus(deal.watch.cost ?? 0)
+          .plus(expSum);
+      }
     }
 
     for (const fee of bankFees) {
@@ -476,6 +493,7 @@ export class CapitalService {
         where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
         select: {
           agreedPrice: true,
+          historicalCost: true,
           watch: { select: { cost: true, expenses: { select: { amount: true } } } },
         },
       }),
@@ -489,6 +507,9 @@ export class CapitalService {
       new Prisma.Decimal(0),
     );
     const totalCostOfSold = soldDeals.reduce((sum, d) => {
+      if (!d.watch) {
+        return sum.plus(d.historicalCost ?? 0);
+      }
       const expSum = d.watch.expenses.reduce(
         (s, e) => s.plus(e.amount),
         new Prisma.Decimal(0),

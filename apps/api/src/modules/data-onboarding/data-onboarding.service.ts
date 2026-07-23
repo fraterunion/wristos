@@ -14,6 +14,7 @@ import {
   DataImportFileType,
   DataImportRecordStatus,
   DataImportStatus,
+  DataImportTarget,
   Prisma,
 } from '@prisma/client';
 
@@ -51,6 +52,25 @@ const DELETABLE: DataImportStatus[] = [
   DataImportStatus.FAILED,
   DataImportStatus.CANCELLED,
 ];
+
+const SALES_SHEET_HINTS = ['VENTAS', 'SALES', 'HISTORICO', 'HISTÓRICO'] as const;
+
+/**
+ * When a workbook has a VENTAS/SALES/HISTORICO sheet, prefer those rows for sales imports.
+ */
+export function preferSalesSheets<T extends { sourceSheet?: string }>(
+  sheetNames: string[],
+  rows: T[],
+): T[] {
+  const preferredNames = sheetNames.filter((name) => {
+    const upper = name.toUpperCase();
+    return SALES_SHEET_HINTS.some((hint) => upper.includes(hint));
+  });
+  if (preferredNames.length === 0) return rows;
+  const preferred = new Set(preferredNames);
+  const filtered = rows.filter((row) => row.sourceSheet && preferred.has(row.sourceSheet));
+  return filtered.length > 0 ? filtered : rows;
+}
 
 /**
  * Server-side record filtering. `rowStatus` maps to:
@@ -93,15 +113,20 @@ export class DataOnboardingService {
   ) {}
 
   async createSession(tenantId: string, userId: string, dto: CreateDataImportSessionDto) {
+    const importTarget =
+      dto.importTarget === 'SALES' ? DataImportTarget.SALES : DataImportTarget.INVENTORY;
     const session = await this.prisma.dataImportSession.create({
       data: {
         tenantId,
         createdByUserId: userId,
         title: dto.title?.trim() || null,
+        importTarget,
         status: DataImportStatus.CREATED,
       },
     });
-    await this.logEvent(tenantId, session.id, DataImportEventType.SESSION_CREATED, 'Import session created');
+    await this.logEvent(tenantId, session.id, DataImportEventType.SESSION_CREATED, 'Import session created', {
+      importTarget,
+    });
     return this.serializeSession(session);
   }
 
@@ -289,7 +314,7 @@ export class DataOnboardingService {
 
     for (const file of files) {
       try {
-        const result = await this.processFile(tenantId, sessionId, file);
+        const result = await this.processFile(tenantId, sessionId, file, session.importTarget);
         totalRows += result.totalRows;
         validRows += result.validRows;
         invalidRows += result.invalidRows;
@@ -368,6 +393,7 @@ export class DataOnboardingService {
     tenantId: string,
     sessionId: string,
     file: { id: string; storageKey: string; fileType: DataImportFileType; originalFilename: string },
+    importTarget: DataImportTarget = DataImportTarget.INVENTORY,
   ) {
     await this.prisma.dataImportFile.update({
       where: { id: file.id },
@@ -386,7 +412,10 @@ export class DataOnboardingService {
         data: {
           status: DataImportFileStatus.PARSED,
           rowCount: 0,
-          detectedEntityType: DataImportEntityType.UNKNOWN,
+          detectedEntityType:
+            importTarget === DataImportTarget.SALES
+              ? DataImportEntityType.SALES
+              : DataImportEntityType.UNKNOWN,
           classificationMeta: pdf,
           // Expected Phase 1 limitation — not a failure.
           errorMessage: null,
@@ -421,6 +450,10 @@ export class DataOnboardingService {
       parsedRows = parsed.rows;
     }
 
+    if (importTarget === DataImportTarget.SALES) {
+      parsedRows = preferSalesSheets(sheetNames, parsedRows);
+    }
+
     if (parsedRows.length === 0) {
       throw new BadRequestException('El archivo no contiene filas de datos.');
     }
@@ -433,10 +466,14 @@ export class DataOnboardingService {
     }
 
     const classification = classifyEntityFromHeaders(parsedRows[0]?.headers ?? []);
+    const entityType =
+      importTarget === DataImportTarget.SALES
+        ? DataImportEntityType.SALES
+        : classification.entityType;
     const duplicateKeys = new Map<string, number>();
 
     const recordRows = parsedRows.map((row) => {
-      const duplicateKey = `${classification.entityType}:${JSON.stringify(row.rawData)}`;
+      const duplicateKey = `${entityType}:${JSON.stringify(row.rawData)}`;
       const seen = duplicateKeys.get(duplicateKey) ?? 0;
       duplicateKeys.set(duplicateKey, seen + 1);
       const isDuplicate = seen > 0;
@@ -448,7 +485,7 @@ export class DataOnboardingService {
         tenantId,
         sessionId,
         fileId: file.id,
-        entityType: classification.entityType,
+        entityType,
         sourceSheet: row.sourceSheet ?? null,
         sourceRowNumber: row.sourceRowNumber,
         rawData: row.rawData as Prisma.InputJsonValue,
@@ -473,10 +510,13 @@ export class DataOnboardingService {
           status: DataImportFileStatus.PARSED,
           rowCount: recordRows.length,
           sheetNames,
-          detectedEntityType: classification.entityType,
+          detectedEntityType: entityType,
           classificationMeta: {
             score: classification.score,
             evidence: classification.evidence,
+            ...(importTarget === DataImportTarget.SALES
+              ? { forcedByImportTarget: 'SALES' }
+              : {}),
           },
           errorMessage: null,
         },
@@ -486,7 +526,7 @@ export class DataOnboardingService {
     await this.logEvent(tenantId, sessionId, DataImportEventType.FILE_PARSED, `Parsed ${file.originalFilename}`, {
       fileId: file.id,
       rowCount: recordRows.length,
-      entityType: classification.entityType,
+      entityType,
     });
 
     return {
@@ -530,6 +570,7 @@ export class DataOnboardingService {
     createdByUserId: string;
     status: DataImportStatus;
     title: string | null;
+    importTarget: DataImportTarget;
     totalFiles: number;
     processedFiles: number;
     totalRows: number;
@@ -550,6 +591,7 @@ export class DataOnboardingService {
       createdByUserId: row.createdByUserId,
       status: row.status,
       title: row.title,
+      importTarget: row.importTarget,
       totalFiles: row.totalFiles,
       processedFiles: row.processedFiles,
       totalRows: row.totalRows,

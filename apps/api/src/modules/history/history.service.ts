@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DealStage, OperatingExpenseCategory, PaymentStatus, Prisma, Watch, WatchExpense, WatchStatus } from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
+import { effectiveSaleDate } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
@@ -19,6 +20,7 @@ export class HistoryService {
         where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
         select: {
           agreedPrice: true,
+          historicalCost: true,
           watch: {
             select: {
               cost: true,
@@ -36,6 +38,9 @@ export class HistoryService {
 
     const totalRevenue = soldDeals.reduce((sum, d) => sum + Number(d.agreedPrice), 0);
     const totalCostOfSold = soldDeals.reduce((sum, d) => {
+      if (!d.watch) {
+        return sum + Number(d.historicalCost ?? 0);
+      }
       const expenseSum = d.watch.expenses.reduce((es, e) => es + Number(e.amount), 0);
       return sum + Number(d.watch.cost) + expenseSum;
     }, 0);
@@ -61,7 +66,7 @@ export class HistoryService {
         payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
         operatingExpenses: { where: { category: OperatingExpenseCategory.BANK_FEES } },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ soldAt: 'desc' }, { updatedAt: 'desc' }],
     });
 
     return deals.map((deal) => {
@@ -84,10 +89,12 @@ export class HistoryService {
         paidTotal.greaterThan(0) ? 'PARCIAL' :
         'PENDIENTE';
       const paymentMethods = [...new Set(deal.payments.map((p) => p.method as string))];
+      const saleDate = effectiveSaleDate(deal);
+      const isHistoricalImport = deal.sourceTag === 'HISTORICAL_SALES_IMPORT' || deal.importSessionId != null;
 
       return {
         dealId: deal.id,
-        watch: this.serializeWatch(deal.watch),
+        watch: this.serializeWatch(deal.watch, deal.historicalCost, isHistoricalImport),
         buyer: {
           id: deal.client.id,
           name: deal.client.name,
@@ -102,11 +109,14 @@ export class HistoryService {
         netReceived: netReceivedDecimal.toString(),
         paidTotal: paidTotal.toString(),
         pendingAmount: pendingAmount.toString(),
-        computedStatus,
+        computedStatus: isHistoricalImport && deal.payments.length === 0 ? 'HISTORICO' as const : computedStatus,
         paymentMethods,
         notes: deal.notes,
-        soldAt: deal.updatedAt.toISOString(),
+        soldAt: saleDate.toISOString(),
         createdAt: deal.createdAt.toISOString(),
+        isHistoricalImport,
+        sourceTag: deal.sourceTag ?? null,
+        paymentCount: deal.paymentCount ?? null,
         payments: deal.payments.map((p) => ({
           id: p.id,
           amount: p.amount.toString(),
@@ -144,16 +154,26 @@ export class HistoryService {
       orderBy: { updatedAt: 'desc' },
     });
 
-    return deals.map((deal) => ({
+    return deals.map((deal) => {
+      const isHistoricalImport = deal.sourceTag === 'HISTORICAL_SALES_IMPORT' || deal.importSessionId != null;
+      return {
       dealId: deal.id,
       stage: deal.stage,
-      watch: {
-        id: deal.watch.id,
-        brand: deal.watch.brand,
-        model: deal.watch.model,
-        serialNumber: deal.watch.serialNumber,
-        status: deal.watch.status,
-      },
+      watch: deal.watch
+        ? {
+            id: deal.watch.id,
+            brand: deal.watch.brand,
+            model: deal.watch.model,
+            serialNumber: deal.watch.serialNumber,
+            status: deal.watch.status,
+          }
+        : {
+            id: null,
+            brand: isHistoricalImport ? 'Venta histórica' : 'Histórico',
+            model: '—',
+            serialNumber: null,
+            status: null,
+          },
       client: {
         id: deal.client.id,
         name: deal.client.name,
@@ -165,10 +185,40 @@ export class HistoryService {
       expectedCloseAt: deal.expectedCloseAt?.toISOString() ?? null,
       createdAt: deal.createdAt.toISOString(),
       updatedAt: deal.updatedAt.toISOString(),
-    }));
+      soldAt: effectiveSaleDate(deal).toISOString(),
+      isHistoricalImport,
+    };
+    });
   }
 
-  private serializeWatch(watch: WatchWithExpenses) {
+  private serializeWatch(
+    watch: WatchWithExpenses | null,
+    historicalCost?: Prisma.Decimal | null,
+    isHistoricalImport = false,
+  ) {
+    if (!watch) {
+      const cost = historicalCost?.toString() ?? null;
+      return {
+        id: null,
+        brand: isHistoricalImport ? 'Venta histórica' : 'Histórico',
+        model: '—',
+        reference: null,
+        serialNumber: null,
+        condition: null,
+        cost,
+        priceMin: null,
+        priceMax: null,
+        effectiveCost: cost ?? '0',
+        status: null,
+        ownershipType: null,
+        consignmentOwnerName: null,
+        consignmentSplitPercentage: null,
+        createdAt: null,
+        updatedAt: null,
+        deletedAt: null,
+      };
+    }
+
     return {
       id: watch.id,
       brand: watch.brand,

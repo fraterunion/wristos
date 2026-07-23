@@ -173,9 +173,14 @@ const DEAL_STAGE_NEXT_STEP: Record<DealStage, string> = {
   CLOSED_LOST: 'Archivada',
 };
 
-function watchTitle(watch: Watch | undefined) {
-  if (!watch) return 'Reloj sin identificar';
-  return `${watch.brand} ${watch.model}`.trim();
+function watchTitle(watch: Watch | undefined, watchId?: string | null) {
+  if (watch) return `${watch.brand} ${watch.model}`.trim();
+  if (!watchId) return 'Venta histórica';
+  return 'Reloj sin identificar';
+}
+
+function watchFromMap(map: Map<string, Watch>, watchId: string | null | undefined) {
+  return watchId ? map.get(watchId) : undefined;
 }
 
 function formatRelativeDays(value: string) {
@@ -200,7 +205,9 @@ function OpportunityCard({
 
   return (
     <article className="rounded-xl border border-white/[0.08] bg-surface/40 p-4">
-      <h4 className="text-base font-semibold tracking-tight text-white">{watchTitle(watch)}</h4>
+      <h4 className="text-base font-semibold tracking-tight text-white">
+        {watchTitle(watch, deal.watchId)}
+      </h4>
       <dl className="mt-3 space-y-2 text-sm">
         <div className="flex flex-wrap gap-x-2">
           <dt className="text-white/40">Probabilidad:</dt>
@@ -501,7 +508,7 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
       lastInteraction,
       nextAction: nextOpenDeal
         ? {
-            action: `${DEAL_STAGE_NEXT_STEP[nextOpenDeal.stage]} ${watchTitle(watchesById.get(nextOpenDeal.watchId))}`,
+            action: `${DEAL_STAGE_NEXT_STEP[nextOpenDeal.stage]} ${watchTitle(watchFromMap(watchesById, nextOpenDeal.watchId), nextOpenDeal.watchId)}`,
             due: nextOpenDeal.expectedCloseAt,
           }
         : null,
@@ -860,7 +867,10 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
                       <p className="text-white/40">Última compra:</p>
                       <p className="mt-0.5 font-medium text-white">
                         {clientInsights.lastPurchase
-                          ? watchTitle(watchesById.get(clientInsights.lastPurchase.watchId))
+                          ? watchTitle(
+                              watchFromMap(watchesById, clientInsights.lastPurchase.watchId),
+                              clientInsights.lastPurchase.watchId,
+                            )
                           : 'Sin compras'}
                       </p>
                     </div>
@@ -923,7 +933,7 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
                       <OpportunityCard
                         key={deal.id}
                         deal={deal}
-                        watch={watchesById.get(deal.watchId)}
+                        watch={watchFromMap(watchesById, deal.watchId)}
                       />
                     ))}
                   </div>

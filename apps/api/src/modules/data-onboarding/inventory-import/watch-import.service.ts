@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { DataImportDuplicateStatus, DataImportEntityType, DataImportEventType, DataImportRecordStatus, DataImportStatus, Prisma, WatchOwnershipType, WatchStatus } from '@prisma/client';
+import { DataImportDuplicateStatus, DataImportEntityType, DataImportEventType, DataImportRecordStatus, DataImportStatus, DataImportTarget, Prisma, WatchOwnershipType, WatchStatus } from '@prisma/client';
 
 import { FxService } from '../../fx/fx.service';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -631,6 +631,11 @@ export class WatchImportService {
   private async requireSession(tenantId: string, sessionId: string) {
     const session = await this.prisma.dataImportSession.findFirst({ where: { id: sessionId, tenantId } });
     if (!session) throw new NotFoundException('Import session not found');
+    if (session.importTarget !== DataImportTarget.INVENTORY) {
+      throw new UnprocessableEntityException(
+        'Esta sesión no está configurada para importación de inventario (importTarget=INVENTORY).',
+      );
+    }
     return session;
   }
 

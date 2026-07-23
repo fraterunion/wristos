@@ -9,6 +9,7 @@ import type {
   DocumentExtractionResponse,
   DryRunSummary,
   DuplicatePolicy,
+  HistoricalSalesExtraction,
   InventoryInvoiceExtraction,
   MappingEntry,
   MappingResponse,
@@ -16,8 +17,13 @@ import type {
 
 const AUTH = { authenticated: true } as const;
 
-export function createDataImportSession(title?: string): Promise<DataImportSession> {
-  return apiPost<DataImportSession>('/data-onboarding/sessions', title ? { title } : {}, AUTH);
+export function createDataImportSession(
+  options?: { title?: string; importTarget?: 'INVENTORY' | 'SALES' },
+): Promise<DataImportSession> {
+  const body: Record<string, string> = {};
+  if (options?.title) body.title = options.title;
+  if (options?.importTarget) body.importTarget = options.importTarget;
+  return apiPost<DataImportSession>('/data-onboarding/sessions', body, AUTH);
 }
 
 export function listDataImportSessions(): Promise<DataImportSession[]> {
@@ -85,8 +91,15 @@ export function runDryRun(sessionId: string): Promise<DryRunSummary> {
   return apiPost<DryRunSummary>(`/data-onboarding/sessions/${sessionId}/dry-run`, undefined, AUTH);
 }
 
-export function commitImport(sessionId: string, duplicatePolicy: DuplicatePolicy): Promise<CommitResult> {
-  return apiPost<CommitResult>(`/data-onboarding/sessions/${sessionId}/commit`, { duplicatePolicy }, AUTH);
+export function commitImport(
+  sessionId: string,
+  duplicatePolicy?: DuplicatePolicy,
+): Promise<CommitResult> {
+  return apiPost<CommitResult>(
+    `/data-onboarding/sessions/${sessionId}/commit`,
+    duplicatePolicy ? { duplicatePolicy } : {},
+    AUTH,
+  );
 }
 
 /**
@@ -127,14 +140,16 @@ export async function downloadErrorReport(sessionId: string, filename = 'error-r
 
 // ─── PDF Invoice Import (Sprint 3) ───────────────────────────────────────────
 
-export function processDocument(sessionId: string): Promise<{ fileId: string; watchCount: number }> {
+export function processDocument(
+  sessionId: string,
+): Promise<{ fileId: string; watchCount?: number; saleCount?: number }> {
   return apiPost(`/data-onboarding/sessions/${sessionId}/process-document`, undefined, AUTH);
 }
 
 export function reprocessDocument(
   sessionId: string,
   opts?: { confirmDiscardEdits?: boolean },
-): Promise<{ fileId: string; watchCount: number }> {
+): Promise<{ fileId: string; watchCount?: number; saleCount?: number }> {
   return apiPost(`/data-onboarding/sessions/${sessionId}/reprocess-document`, opts ?? {}, AUTH);
 }
 
@@ -144,8 +159,8 @@ export function getDocumentExtraction(sessionId: string): Promise<DocumentExtrac
 
 export function updateDocumentExtraction(
   sessionId: string,
-  extraction: InventoryInvoiceExtraction,
-): Promise<{ watchCount: number }> {
+  extraction: InventoryInvoiceExtraction | HistoricalSalesExtraction,
+): Promise<{ watchCount?: number; saleCount?: number }> {
   return apiPatch(`/data-onboarding/sessions/${sessionId}/document-extraction`, { extraction }, AUTH);
 }
 

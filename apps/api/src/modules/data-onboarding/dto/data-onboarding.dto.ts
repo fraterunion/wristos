@@ -3,12 +3,17 @@ import { Type } from 'class-transformer';
 import { DataImportEntityType } from '@prisma/client';
 
 import { DuplicatePolicy, SKIP_FIELD, WATCH_IMPORT_FIELDS } from '../inventory-import/watch-import.types';
+import { SALES_IMPORT_FIELDS, SKIP_FIELD as SALES_SKIP_FIELD } from '../sales-import/historical-sale.types';
 
 export class CreateDataImportSessionDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
   title?: string;
+
+  @IsOptional()
+  @IsIn(['INVENTORY', 'SALES'])
+  importTarget?: 'INVENTORY' | 'SALES';
 }
 
 export class ListDataImportRecordsQueryDto {
@@ -60,9 +65,27 @@ export class SaveMappingDto {
   mapping!: MappingEntryDto[];
 }
 
+export class SalesMappingEntryDto {
+  @IsString()
+  @MaxLength(255)
+  sourceColumn!: string;
+
+  @IsString()
+  @IsIn([...SALES_IMPORT_FIELDS, SALES_SKIP_FIELD])
+  targetField!: string;
+}
+
+export class SaveSalesMappingDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SalesMappingEntryDto)
+  mapping!: SalesMappingEntryDto[];
+}
+
 export class CommitImportDto {
+  @IsOptional()
   @IsIn(['SKIP_DUPLICATES', 'IMPORT_AS_NEW'])
-  duplicatePolicy!: DuplicatePolicy;
+  duplicatePolicy?: DuplicatePolicy;
 }
 
 export class UpdateExtractionDto {

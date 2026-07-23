@@ -106,7 +106,6 @@ export class DealsService {
     }
 
     const nextClientId = dto.clientId ?? existing.clientId;
-    const nextWatchId = dto.watchId ?? existing.watchId;
 
     if (dto.clientId !== undefined) {
       await this.ensureClientInTenant(dto.clientId, tenantId);
@@ -118,7 +117,7 @@ export class DealsService {
     const data: Prisma.DealUpdateInput = {};
 
     if (dto.clientId !== undefined) data.client = { connect: { id: nextClientId } };
-    if (dto.watchId !== undefined) data.watch = { connect: { id: nextWatchId } };
+    if (dto.watchId !== undefined) data.watch = { connect: { id: dto.watchId } };
     if (dto.expectedCloseAt !== undefined) {
       data.expectedCloseAt =
         dto.expectedCloseAt === null ? null : new Date(dto.expectedCloseAt);
@@ -160,7 +159,7 @@ export class DealsService {
       throw new NotFoundException('Deal not found');
     }
 
-    if (dto.stage === DealStage.CLOSED_WON) {
+    if (dto.stage === DealStage.CLOSED_WON && existing.watchId) {
       await this.ensureNoOtherWonDealForWatch(
         existing.watchId,
         tenantId,
@@ -173,12 +172,14 @@ export class DealsService {
       data: { stage: dto.stage },
     });
 
-    await this.syncWatchStatusFromDealStage({
-      tenantId,
-      dealId: deal.id,
-      watchId: deal.watchId,
-      nextStage: dto.stage,
-    });
+    if (deal.watchId) {
+      await this.syncWatchStatusFromDealStage({
+        tenantId,
+        dealId: deal.id,
+        watchId: deal.watchId,
+        nextStage: dto.stage,
+      });
+    }
 
     await this.syncReceivableSafe(deal.id, tenantId);
 
@@ -278,6 +279,7 @@ export class DealsService {
           client: { connect: { id: dto.clientId } },
           watch: { connect: { id: dto.watchId } },
           stage: DealStage.CLOSED_WON,
+          soldAt,
           agreedPrice: canonicalMxn,
           originalCurrency: currency,
           originalAmount: new Prisma.Decimal(dto.salePrice),
@@ -583,6 +585,8 @@ export class DealsService {
       expectedCloseAt: deal.expectedCloseAt?.toISOString() ?? null,
       agreedPrice: deal.agreedPrice.toString(),
       notes: deal.notes,
+      sourceTag: deal.sourceTag ?? null,
+      importSessionId: deal.importSessionId ?? null,
       createdAt: deal.createdAt.toISOString(),
       updatedAt: deal.updatedAt.toISOString(),
     };

@@ -7,8 +7,18 @@ import {
   type InventoryInvoiceExtraction,
   resolveMaxTokens,
 } from '../inventory-import/inventory-invoice-extraction.types';
+import {
+  EXTRACT_HISTORICAL_SALES_TOOL_INPUT_SCHEMA,
+  HistoricalSalesExtractionSchema,
+  type HistoricalSalesExtractionDocument,
+  resolveSalesMaxTokens,
+} from '../sales-import/historical-sale-extraction.types';
 import type { DocumentExtractionProvider } from './document-extraction.provider.interface';
 import { ExtractionError, ExtractionErrorCode, isExtractionError } from './extraction-errors';
+import {
+  HISTORICAL_SALES_EXTRACTION_SYSTEM_PROMPT,
+  HISTORICAL_SALES_EXTRACTION_VERSION,
+} from './prompts/historical-sales-extraction-v1';
 import { INVOICE_EXTRACTION_SYSTEM_PROMPT, INVOICE_EXTRACTION_VERSION } from './prompts/invoice-extraction-v1';
 
 // ─── Configuration helpers ────────────────────────────────────────────────────
@@ -56,6 +66,12 @@ const EXTRACT_INVOICE_TOOL: Anthropic.Tool = {
   input_schema: EXTRACT_INVOICE_TOOL_INPUT_SCHEMA,
 };
 
+const EXTRACT_HISTORICAL_SALES_TOOL: Anthropic.Tool = {
+  name: 'extract_historical_sales',
+  description: 'Extracts structured historical watch sale rows from a dealer sales PDF or workbook export.',
+  input_schema: EXTRACT_HISTORICAL_SALES_TOOL_INPUT_SCHEMA,
+};
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class ClaudeExtractionProvider implements DocumentExtractionProvider {
@@ -66,12 +82,14 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly maxTokens: number;
+  private readonly salesMaxTokens: number;
 
   constructor(apiKey: string, model: string) {
     this.client = new Anthropic({ apiKey });
     this.model = model;
     this.timeoutMs = resolveTimeoutMs();
     this.maxTokens = resolveMaxTokens();
+    this.salesMaxTokens = resolveSalesMaxTokens();
   }
 
   get modelId(): string {
@@ -216,5 +234,127 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
 
     // M-03: server always owns extractionVersion; ignore any value the model returned
     return { ...validated.data, extractionVersion: INVOICE_EXTRACTION_VERSION };
+  }
+
+  async extractHistoricalSales(pdfBuffer: Buffer): Promise<HistoricalSalesExtractionDocument> {
+    this.logger.debug(`[stage:buffer_received] model=${this.model} byteLength=${pdfBuffer.byteLength} kind=historical_sales`);
+
+    const base64 = pdfBuffer.toString('base64');
+
+    this.logger.debug(`[stage:base64_complete] base64Length=${base64.length}`);
+
+    this.logger.debug(
+      `[stage:payload_constructed] model=${this.model} maxTokens=${this.salesMaxTokens} timeoutMs=${this.timeoutMs} ` +
+      `docType=document docSourceType=base64 docMediaType=application/pdf tool=extract_historical_sales`,
+    );
+
+    let response: Anthropic.Message;
+    try {
+      this.logger.debug(`[stage:create_started] model=${this.model} tool=extract_historical_sales`);
+
+      response = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: this.salesMaxTokens,
+          system: HISTORICAL_SALES_EXTRACTION_SYSTEM_PROMPT,
+          tools: [EXTRACT_HISTORICAL_SALES_TOOL],
+          tool_choice: { type: 'tool', name: 'extract_historical_sales' },
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+                } as Anthropic.DocumentBlockParam,
+                {
+                  type: 'text',
+                  text: 'Extract all historical watch sale rows from this document.',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          timeout: this.timeoutMs,
+          maxRetries: 0,
+        },
+      );
+
+      this.logger.debug(
+        `[stage:create_complete] stopReason=${response.stop_reason} contentBlocks=${response.content.length}`,
+      );
+    } catch (err) {
+      if (isExtractionError(err)) throw err;
+
+      const errMeta: Record<string, unknown> = {
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        errorName: err instanceof Error ? err.name : undefined,
+      };
+      if (err instanceof Error && 'status' in err) {
+        const apiErr = err as { status?: unknown; type?: unknown; requestID?: unknown };
+        if (typeof apiErr.status === 'number') errMeta.httpStatus = apiErr.status;
+        if (typeof apiErr.type === 'string') errMeta.errorType = apiErr.type;
+        if (typeof apiErr.requestID === 'string') errMeta.requestId = apiErr.requestID;
+      }
+      this.logger.error('[stage:create_failed] messages.create threw an error', errMeta);
+
+      const isTimeout =
+        (err instanceof Error && (
+          err.name === 'APIConnectionTimeoutError' ||
+          err.message.includes('timed out') ||
+          err.message.includes('timeout')
+        )) ||
+        (err as { status?: number }).status === 408;
+
+      if (isTimeout) {
+        throw new ExtractionError(
+          ExtractionErrorCode.TIMEOUT,
+          `La extracción tardó más de ${Math.round(this.timeoutMs / 1000)} segundos. Intente con un documento más pequeño.`,
+          undefined,
+          { cause: err },
+        );
+      }
+
+      throw new ExtractionError(
+        ExtractionErrorCode.PROVIDER_ERROR,
+        'El servicio de extracción respondió con un error inesperado. Intente de nuevo.',
+        undefined,
+        { cause: err },
+      );
+    }
+
+    if (response.stop_reason === 'max_tokens') {
+      throw new ExtractionError(
+        ExtractionErrorCode.OUTPUT_TRUNCATED,
+        'No se pudo completar la extracción porque el documento contiene demasiada información. ' +
+        'Divide el documento o reduce el número de ventas e inténtalo nuevamente.',
+      );
+    }
+
+    const toolBlock = response.content.find(
+      (c): c is Anthropic.ToolUseBlock => c.type === 'tool_use' && c.name === 'extract_historical_sales',
+    );
+    if (!toolBlock) {
+      throw new ExtractionError(
+        ExtractionErrorCode.NO_TOOL_RESPONSE,
+        'El proveedor de extracción no devolvió datos estructurados.',
+      );
+    }
+
+    const cleanedInput = stripNullsDeep(toolBlock.input);
+
+    const validated = HistoricalSalesExtractionSchema.safeParse(cleanedInput);
+    if (!validated.success) {
+      const issueCount = validated.error.issues.length;
+      const issuePaths = validated.error.issues.map((i) => i.path.join('.')).slice(0, 10);
+      throw new ExtractionError(
+        ExtractionErrorCode.SCHEMA_INVALID,
+        'La respuesta de extracción no cumple con el esquema esperado.',
+        { issueCount, issuePaths },
+      );
+    }
+
+    return { ...validated.data, extractionVersion: HISTORICAL_SALES_EXTRACTION_VERSION };
   }
 }

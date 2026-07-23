@@ -14,6 +14,7 @@ export type DataImportFileType = 'PDF' | 'XLSX' | 'CSV' | 'JSON';
 
 export type DataImportEntityType =
   | 'INVENTORY'
+  | 'SALES'
   | 'CLIENTS'
   | 'DEALS'
   | 'PAYMENTS'
@@ -24,12 +25,15 @@ export type DataImportEntityType =
   | 'RADAR'
   | 'UNKNOWN';
 
+export type DataImportTarget = 'INVENTORY' | 'SALES';
+
 export type DataImportSession = {
   id: string;
   tenantId: string;
   createdByUserId: string;
   status: DataImportStatus;
   title: string | null;
+  importTarget: DataImportTarget;
   totalFiles: number;
   processedFiles: number;
   totalRows: number;
@@ -106,17 +110,36 @@ export type WatchImportField =
   | 'consignmentOwnerName' | 'consignmentSplitPercentage'
   | 'imageUrl';
 
+export type SalesImportField =
+  | 'saleDate'
+  | 'customerName'
+  | 'brand'
+  | 'model'
+  | 'reference'
+  | 'serialNumber'
+  | 'cost'
+  | 'costCurrency'
+  | 'salePrice'
+  | 'saleCurrency'
+  | 'extras'
+  | 'extrasCurrency'
+  | 'reportedProfit'
+  | 'reportedProfitCurrency'
+  | 'paymentCount'
+  | 'notes'
+  | 'currency';
+
 export const SKIP_FIELD = '__skip__' as const;
 
 export type MappingEntry = {
   sourceColumn: string;
-  targetField: WatchImportField | typeof SKIP_FIELD;
+  targetField: WatchImportField | SalesImportField | typeof SKIP_FIELD;
 };
 
 export type MappingProposal = {
   sourceColumn: string;
   sampleValues: string[];
-  suggested: WatchImportField | null;
+  suggested: WatchImportField | SalesImportField | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 };
 
@@ -128,6 +151,13 @@ export type MappingResponse = {
   isProposed: boolean;
 };
 
+export type SalesMappingEntry = {
+  sourceColumn: string;
+  targetField: SalesImportField | typeof SKIP_FIELD;
+};
+
+export type SalesMappingResponse = MappingResponse;
+
 export type DryRunSummary = {
   sessionId: string;
   dryRunVersion: string;
@@ -136,6 +166,18 @@ export type DryRunSummary = {
   warnings: number;
   invalid: number;
   duplicates: number;
+  /** Sales dry-run extras (present when importTarget=SALES). */
+  clientsMatched?: number;
+  clientsProposed?: number;
+  salesProposed?: number;
+  exactSerialMatches?: number;
+  possibleWatchMatches?: number;
+  totalHistoricalRevenue?: number;
+  totalHistoricalCost?: number;
+  totalReportedProfit?: number;
+  totalCalculatedProfit?: number;
+  currenciesFound?: Array<'MXN' | 'USD'>;
+  fxConversions?: number;
 };
 
 export type CommitResult = {
@@ -192,12 +234,58 @@ export type InventoryInvoiceExtraction = {
 
 export type ExtractionState = 'not_processed' | 'processing' | 'failed' | 'corrupt' | 'ready';
 
+export type HistoricalSaleExtraction = {
+  sourceRow?: number | null;
+  saleDate?: string | null;
+  customerName?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  reference?: string | null;
+  serialNumber?: string | null;
+  cost?: number | null;
+  costCurrency?: 'MXN' | 'USD' | null;
+  salePrice?: number | null;
+  saleCurrency?: 'MXN' | 'USD' | null;
+  extras?: number | null;
+  extrasCurrency?: 'MXN' | 'USD' | null;
+  reportedProfit?: number | null;
+  reportedProfitCurrency?: 'MXN' | 'USD' | null;
+  paymentCount?: number | null;
+  notes?: string | null;
+  confidence?: { overall: number } | null;
+};
+
+export type HistoricalSalesExtraction = {
+  sales: HistoricalSaleExtraction[];
+  extractionVersion: string;
+  overallConfidence?: number;
+};
+
 export type DocumentExtractionResponse = {
   fileId: string;
   extractionState: ExtractionState;
-  extraction: InventoryInvoiceExtraction | null;
+  extraction: InventoryInvoiceExtraction | HistoricalSalesExtraction | null;
   extractionProvider: string | null;
   extractionModel: string | null;
   extractionError: string | null;
-  watchCount: number;
+  watchCount?: number;
+  saleCount?: number;
+};
+
+export type SalesDryRunSummary = DryRunSummary & {
+  clientsMatched?: number;
+  clientsToCreate?: number;
+  clientsProposed?: number;
+  serialMatches?: number;
+  exactSerialMatches?: number;
+  possibleWatchMatches?: number;
+  salesProposed?: number;
+  totalRevenue?: string;
+  totalCost?: string;
+  totalHistoricalRevenue?: number;
+  totalHistoricalCost?: number;
+  totalReportedProfit?: string | number;
+  totalCalculatedProfit?: string | number;
+  currenciesFound?: Array<'MXN' | 'USD'>;
+  fxConversions?: number;
 };

@@ -324,4 +324,66 @@ describe('ClaudeExtractionProvider', () => {
     expect((caught as ExtractionError).code).toBe(ExtractionErrorCode.TIMEOUT);
     expect((caught as ExtractionError).cause).toBe(timeoutErr);
   });
+
+  // ─── Historical sales extraction ──────────────────────────────────────────
+
+  it('extractHistoricalSales uses extract_historical_sales tool and schema', async () => {
+    const salesInput = {
+      sales: [
+        {
+          saleDate: '2026-03-15',
+          brand: 'Rolex',
+          model: 'Submariner',
+          salePrice: 150000,
+          saleCurrency: 'MXN',
+        },
+      ],
+      overallConfidence: 0.9,
+    };
+    mockCreate.mockResolvedValue({
+      id: 'msg-sales',
+      type: 'message',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [
+        { type: 'tool_use', id: 'call-sales', name: 'extract_historical_sales', input: salesInput },
+      ],
+    });
+
+    const result = await provider.extractHistoricalSales(Buffer.from('%PDF-test'));
+    expect(result.sales).toHaveLength(1);
+    expect(result.sales[0].brand).toBe('Rolex');
+    expect(result.extractionVersion).toBe('v1');
+
+    const requestBody = mockCreate.mock.calls[0][0] as {
+      tools: Array<{ name: string; input_schema: { type: string; required?: string[] } }>;
+      tool_choice: { type: string; name: string };
+    };
+    expect(requestBody.tool_choice).toEqual({ type: 'tool', name: 'extract_historical_sales' });
+    expect(requestBody.tools).toHaveLength(1);
+    expect(requestBody.tools[0].name).toBe('extract_historical_sales');
+    expect(requestBody.tools[0].input_schema.type).toBe('object');
+    expect(requestBody.tools[0].input_schema.required).toContain('sales');
+  });
+
+  it('extractHistoricalSales passes maxRetries: 0', async () => {
+    mockCreate.mockResolvedValue({
+      id: 'msg-sales',
+      type: 'message',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'call-sales',
+          name: 'extract_historical_sales',
+          input: { sales: [], overallConfidence: 1 },
+        },
+      ],
+    });
+
+    await provider.extractHistoricalSales(Buffer.from('%PDF-test'));
+    const callOptions = mockCreate.mock.calls[0][1] as { maxRetries: number };
+    expect(callOptions.maxRetries).toBe(0);
+  });
 });

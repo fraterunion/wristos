@@ -18,7 +18,7 @@ type HistorySummary = {
   totalProfit: string;
 };
 
-type ComputedStatus = 'PAGADO' | 'PARCIAL' | 'PENDIENTE';
+type ComputedStatus = 'PAGADO' | 'PARCIAL' | 'PENDIENTE' | 'HISTORICO';
 
 type SaleFilters = {
   dateFrom: string;
@@ -106,6 +106,7 @@ const STATUS_CONFIG: Record<ComputedStatus, { label: string; cls: string }> = {
   PAGADO:   { label: 'Pagado',   cls: 'bg-emerald-500/20 text-emerald-300' },
   PARCIAL:  { label: 'Parcial',  cls: 'bg-amber-500/20 text-amber-300' },
   PENDIENTE:{ label: 'Pendiente',cls: 'bg-rose-500/20 text-rose-300' },
+  HISTORICO:{ label: 'Histórica',cls: 'bg-sky-500/20 text-sky-200' },
 };
 
 function StatusBadge({ status }: { status: ComputedStatus }) {
@@ -333,6 +334,7 @@ export default function VentasPage() {
                 <option value="PAGADO">Pagado</option>
                 <option value="PARCIAL">Parcial</option>
                 <option value="PENDIENTE">Pendiente</option>
+                <option value="HISTORICO">Histórica</option>
               </select>
 
               <select value={filters.paymentMethod}
@@ -557,7 +559,7 @@ export default function VentasPage() {
                         {/* Acciones */}
                         <td className="px-3 py-3.5 text-right align-middle">
                           <div className="flex items-center justify-end gap-1">
-                            {status !== 'PAGADO' && (
+                            {status !== 'PAGADO' && status !== 'HISTORICO' && !sale.isHistoricalImport && (
                               <button
                                 type="button"
                                 onClick={(e) => {

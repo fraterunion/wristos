@@ -506,6 +506,9 @@ export class CuentasService {
     });
 
     if (!existing) {
+      const watchLabel = deal.watch
+        ? `${deal.watch.brand} ${deal.watch.model}`
+        : 'Histórico';
       await this.prisma.accountEntry.create({
         data: {
           tenant: { connect: { id: tenantId } },
@@ -515,14 +518,14 @@ export class CuentasService {
           source: AccountEntrySource.DEAL_AUTO,
           counterpartyName: deal.client.name,
           counterpartyType: CounterpartyType.CLIENT,
-          concept: `Saldo pendiente — ${deal.watch.brand} ${deal.watch.model}`,
+          concept: `Saldo pendiente — ${watchLabel}`,
           totalAmount: deal.agreedPrice,
           currency: Currency.MXN,
           exchangeRate: deal.exchangeRate ?? undefined,
           issuedAt: deal.updatedAt,
           client: { connect: { id: deal.clientId } },
           deal: { connect: { id: deal.id } },
-          watch: { connect: { id: deal.watchId } },
+          watch: deal.watchId ? { connect: { id: deal.watchId } } : undefined,
         },
       });
     } else if (!existing.totalAmount.equals(deal.agreedPrice)) {

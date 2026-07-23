@@ -19,26 +19,31 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import type { ExtractionState } from './inventory-import/inventory-invoice-extraction.types';
 import {
-  ExtractionState,
-  InventoryInvoiceExtraction,
-  InventoryInvoiceExtractionSchema,
-  PDF_IDENTITY_MAPPING,
-  bridgeExtractedWatch,
-} from './inventory-import/inventory-invoice-extraction.types';
-import { buildMappingVersion } from './inventory-import/watch-field-mapping';
-import type { MappingEntry } from './inventory-import/watch-import.types';
-import { IMPORT_FILE_STORAGE } from './tokens';
+  bridgeExtractedHistoricalSale,
+  HistoricalSalesExtractionSchema,
+  SALES_IDENTITY_MAPPING,
+  type HistoricalSalesExtractionDocument,
+} from './sales-import/historical-sale-extraction.types';
+import type { SalesMappingEntry } from './sales-import/historical-sale.types';
+import { buildSalesMappingVersion } from './sales-import/sales-field-mapping';
 import type { DocumentExtractionProvider } from './providers/document-extraction.provider.interface';
-import { ExtractionError, ExtractionErrorCode, buildSafeExtractionRecord, isExtractionError } from './providers/extraction-errors';
+import {
+  ExtractionError,
+  ExtractionErrorCode,
+  buildSafeExtractionRecord,
+  isExtractionError,
+} from './providers/extraction-errors';
 import { createExtractionProvider } from './providers/extraction.provider.factory';
+import { HISTORICAL_SALES_EXTRACTION_VERSION } from './providers/prompts/historical-sales-extraction-v1';
 import type { ImportFileStorage } from './storage/import-file-storage.interface';
+import { IMPORT_FILE_STORAGE } from './tokens';
 import {
   PDF_INSPECTION_MESSAGES,
   inspectPdf,
   maxPdfPages,
 } from './utils/file-validation.util';
-import { INVOICE_EXTRACTION_VERSION } from './providers/prompts/invoice-extraction-v1';
 
 const EXTRACTABLE_STATUSES: DataImportStatus[] = [
   DataImportStatus.UPLOADING,
@@ -46,20 +51,15 @@ const EXTRACTABLE_STATUSES: DataImportStatus[] = [
   DataImportStatus.FAILED,
 ];
 
-/** Sessions stuck in PROCESSING for this many minutes are considered stale and recovered. */
 function staleThresholdMs(): number {
   const minutes = parseInt(process.env.DOCUMENT_PROCESSING_STALE_TIMEOUT_MINUTES ?? '15', 10);
   return (Number.isFinite(minutes) && minutes > 0 ? minutes : 15) * 60_000;
 }
 
 @Injectable()
-export class PdfInvoiceImportService {
-  private readonly logger = new Logger(PdfInvoiceImportService.name);
+export class PdfSalesImportService {
+  private readonly logger = new Logger(PdfSalesImportService.name);
 
-  /**
-   * Loaded once at module init. Null means the feature is disabled
-   * (no DOCUMENT_EXTRACTION_PROVIDER env var). PDF import attempts return 503.
-   */
   private readonly provider: DocumentExtractionProvider | null;
 
   constructor(
@@ -68,25 +68,22 @@ export class PdfInvoiceImportService {
   ) {
     this.provider = createExtractionProvider();
     if (this.provider) {
-      this.logger.log(`Document extraction provider: ${this.provider.providerName} / ${this.provider.modelId}`);
+      this.logger.log(`Sales document extraction provider: ${this.provider.providerName} / ${this.provider.modelId}`);
     } else {
       this.logger.log('Document extraction is disabled (DOCUMENT_EXTRACTION_PROVIDER not set)');
     }
   }
 
-  // ─── processDocument ────────────────────────────────────────────────────────
-
-  async processDocument(tenantId: string, sessionId: string): Promise<{ fileId: string; watchCount: number }> {
+  async processDocument(tenantId: string, sessionId: string): Promise<{ fileId: string; saleCount: number }> {
     if (!this.provider) {
       throw new ServiceUnavailableException(
         'La extracción de documentos PDF no está habilitada en este servidor.',
       );
     }
 
-    // Atomically recover any session stuck in PROCESSING past the stale threshold.
     await this.recoverStaleProcessing(tenantId, sessionId);
 
-    const session = await this.requireSession(tenantId, sessionId);
+    const session = await this.requireSalesSession(tenantId, sessionId);
 
     if (!EXTRACTABLE_STATUSES.includes(session.status)) {
       throw new ConflictException(
@@ -103,7 +100,6 @@ export class PdfInvoiceImportService {
       );
     }
 
-    // Atomic claim: prevent concurrent extraction on the same session.
     const claimed = await this.prisma.dataImportSession.updateMany({
       where: { id: sessionId, tenantId, status: { in: EXTRACTABLE_STATUSES } },
       data: {
@@ -129,11 +125,11 @@ export class PdfInvoiceImportService {
     const providerName = this.provider.providerName;
     const modelId = this.provider.modelId;
 
-    await this.logEvent(tenantId, sessionId, DataImportEventType.DOCUMENT_EXTRACTION_STARTED, 'PDF extraction started', {
+    await this.logEvent(tenantId, sessionId, DataImportEventType.SALES_EXTRACTION_STARTED, 'Sales PDF extraction started', {
       fileId: file.id,
       provider: providerName,
       model: modelId,
-      promptVersion: INVOICE_EXTRACTION_VERSION,
+      promptVersion: HISTORICAL_SALES_EXTRACTION_VERSION,
     });
 
     const startedAt = Date.now();
@@ -141,7 +137,6 @@ export class PdfInvoiceImportService {
     try {
       const buffer = await this.storage.read(file.storageKey);
 
-      // L-02: robust PDF inspection before sending to AI provider.
       const inspection = await inspectPdf(buffer);
 
       if (inspection.parseStatus === 'ENCRYPTED') {
@@ -158,7 +153,6 @@ export class PdfInvoiceImportService {
         );
       }
 
-      // Page count check (UNKNOWN_PAGE_COUNT → allow through with a warning).
       const pageCount = inspection.pageCount ?? 0;
       const pageLimit = maxPdfPages();
       if (pageCount > 0 && pageCount > pageLimit) {
@@ -168,29 +162,28 @@ export class PdfInvoiceImportService {
         );
       }
       if (inspection.parseStatus === 'UNKNOWN_PAGE_COUNT') {
-        this.logger.warn(`Could not determine page count for session ${sessionId} (compressed PDF?) — allowing through`);
+        this.logger.warn(`Could not determine page count for sales session ${sessionId} — allowing through`);
       }
 
-      const extraction = await this.provider.extractInventoryInvoice(buffer);
+      const extraction = await this.provider.extractHistoricalSales(buffer);
 
-      const identityMapping = PDF_IDENTITY_MAPPING as unknown as MappingEntry[];
-      const mappingVersion = buildMappingVersion(identityMapping);
+      const identityMapping = SALES_IDENTITY_MAPPING as unknown as SalesMappingEntry[];
+      const mappingVersion = buildSalesMappingVersion(identityMapping);
 
-      const recordRows = extraction.watches.map((watch, i) => ({
+      const recordRows = extraction.sales.map((sale, i) => ({
         tenantId,
         sessionId,
         fileId: file.id,
-        entityType: DataImportEntityType.INVENTORY,
+        entityType: DataImportEntityType.SALES,
         sourceSheet: 'PDF',
-        sourceRowNumber: i + 1,
-        rawData: bridgeExtractedWatch(watch, extraction.invoice?.currency) as unknown as Prisma.InputJsonValue,
+        sourceRowNumber: sale.sourceRow ?? i + 1,
+        rawData: bridgeExtractedHistoricalSale(sale) as unknown as Prisma.InputJsonValue,
         isValid: true,
         importStatus: DataImportRecordStatus.STAGED,
         duplicateKey: null as string | null,
       }));
 
       await this.prisma.$transaction(async (tx) => {
-        // Delete any previously staged records (re-extraction case).
         await tx.dataImportRecord.deleteMany({ where: { tenantId, sessionId } });
         if (recordRows.length > 0) {
           await tx.dataImportRecord.createMany({ data: recordRows });
@@ -200,13 +193,12 @@ export class PdfInvoiceImportService {
           data: {
             status: DataImportFileStatus.PARSED,
             rowCount: recordRows.length,
-            detectedEntityType: DataImportEntityType.INVENTORY,
+            detectedEntityType: DataImportEntityType.SALES,
             fieldMapping: identityMapping as unknown as Prisma.InputJsonValue,
             mappingVersion,
-            // M-03: always store server-assigned extractionVersion
             extractedDocumentData: {
               ...extraction as unknown as Record<string, unknown>,
-              extractionVersion: INVOICE_EXTRACTION_VERSION,
+              extractionVersion: HISTORICAL_SALES_EXTRACTION_VERSION,
             } as Prisma.InputJsonValue,
             extractionProvider: providerName,
             extractionModel: modelId,
@@ -228,23 +220,19 @@ export class PdfInvoiceImportService {
       });
 
       const durationMs = Date.now() - startedAt;
-      await this.logEvent(tenantId, sessionId, DataImportEventType.DOCUMENT_EXTRACTION_COMPLETED, 'PDF extraction completed', {
+      await this.logEvent(tenantId, sessionId, DataImportEventType.SALES_EXTRACTION_COMPLETED, 'Sales PDF extraction completed', {
         fileId: file.id,
-        watchCount: recordRows.length,
+        saleCount: recordRows.length,
         overallConfidence: extraction.overallConfidence,
         durationMs,
         pageCount: pageCount > 0 ? pageCount : null,
       });
 
-      return { fileId: file.id, watchCount: recordRows.length };
-
+      return { fileId: file.id, saleCount: recordRows.length };
     } catch (err) {
-      // Build a sanitized error record — never persist raw AI content or Zod values.
       const safeRecord = buildSafeExtractionRecord(err, providerName, modelId);
       const durationMs = Date.now() - startedAt;
 
-      // Extract safe Anthropic API metadata from err or its cause (ExtractionError wraps SDK errors).
-      // Never log err.error (raw body) or err.headers.
       const anthropicMeta: Record<string, unknown> = {};
       const errCause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
       for (const candidate of [err, errCause]) {
@@ -257,7 +245,7 @@ export class PdfInvoiceImportService {
         }
       }
 
-      this.logger.error('PDF extraction failed', {
+      this.logger.error('Sales PDF extraction failed', {
         errorCode: safeRecord.code,
         errorCategory: safeRecord.category,
         provider: providerName,
@@ -270,7 +258,7 @@ export class PdfInvoiceImportService {
       });
 
       if (isExtractionError(err) && err.debugInfo) {
-        this.logger.debug(`Extraction schema error [${sessionId}]: ${JSON.stringify(err.debugInfo)}`);
+        this.logger.debug(`Sales extraction schema error [${sessionId}]: ${JSON.stringify(err.debugInfo)}`);
       }
 
       await this.prisma.dataImportFile.update({
@@ -285,7 +273,7 @@ export class PdfInvoiceImportService {
         data: { status: DataImportStatus.FAILED, errorMessage: safeRecord.safeMessage },
       });
 
-      await this.logEvent(tenantId, sessionId, DataImportEventType.DOCUMENT_EXTRACTION_FAILED, 'PDF extraction failed', {
+      await this.logEvent(tenantId, sessionId, DataImportEventType.SALES_EXTRACTION_FAILED, 'Sales PDF extraction failed', {
         fileId: file.id,
         errorCode: safeRecord.code,
         errorCategory: safeRecord.category,
@@ -296,20 +284,17 @@ export class PdfInvoiceImportService {
     }
   }
 
-  // ─── getExtraction ───────────────────────────────────────────────────────────
-
   async getExtraction(tenantId: string, sessionId: string): Promise<{
     fileId: string;
     extractionState: ExtractionState;
-    extraction: InventoryInvoiceExtraction | null;
+    extraction: HistoricalSalesExtractionDocument | null;
     extractionProvider: string | null;
     extractionModel: string | null;
     extractionError: string | null;
-    watchCount: number;
+    saleCount: number;
   }> {
-    const session = await this.requireSession(tenantId, sessionId);
+    const session = await this.requireSalesSession(tenantId, sessionId);
 
-    // Derive basic state from session status before touching the file
     if (session.status === DataImportStatus.PROCESSING) {
       return {
         fileId: '',
@@ -318,7 +303,7 @@ export class PdfInvoiceImportService {
         extractionProvider: null,
         extractionModel: null,
         extractionError: null,
-        watchCount: 0,
+        saleCount: 0,
       };
     }
 
@@ -337,7 +322,6 @@ export class PdfInvoiceImportService {
       throw new NotFoundException('No hay un archivo PDF en esta sesión.');
     }
 
-    // No data stored yet
     if (!file.extractedDocumentData) {
       const state: ExtractionState = file.extractionError ? 'failed' : 'not_processed';
       return {
@@ -347,18 +331,15 @@ export class PdfInvoiceImportService {
         extractionProvider: file.extractionProvider,
         extractionModel: file.extractionModel,
         extractionError: file.extractionError,
-        watchCount: file.rowCount,
+        saleCount: file.rowCount,
       };
     }
 
-    // Re-validate stored data against current schema (guard against schema drift)
-    const parsed = InventoryInvoiceExtractionSchema.safeParse(file.extractedDocumentData);
+    const parsed = HistoricalSalesExtractionSchema.safeParse(file.extractedDocumentData);
     if (!parsed.success) {
       this.logger.warn(
-        `Stored extraction for session ${sessionId} failed re-validation ` +
-        `(${parsed.error.issues.length} issue(s) on paths: ` +
-        `${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}). ` +
-        `Returning 'corrupt' state.`,
+        `Stored sales extraction for session ${sessionId} failed re-validation ` +
+        `(${parsed.error.issues.length} issue(s)). Returning 'corrupt' state.`,
       );
       return {
         fileId: file.id,
@@ -367,7 +348,7 @@ export class PdfInvoiceImportService {
         extractionProvider: file.extractionProvider,
         extractionModel: file.extractionModel,
         extractionError: 'Los datos de extracción almacenados no son compatibles con la versión actual del esquema.',
-        watchCount: file.rowCount,
+        saleCount: file.rowCount,
       };
     }
 
@@ -378,18 +359,16 @@ export class PdfInvoiceImportService {
       extractionProvider: file.extractionProvider,
       extractionModel: file.extractionModel,
       extractionError: file.extractionError,
-      watchCount: file.rowCount,
+      saleCount: file.rowCount,
     };
   }
-
-  // ─── updateExtraction ────────────────────────────────────────────────────────
 
   async updateExtraction(
     tenantId: string,
     sessionId: string,
-    extraction: InventoryInvoiceExtraction,
-  ): Promise<{ watchCount: number }> {
-    const session = await this.requireSession(tenantId, sessionId);
+    extraction: HistoricalSalesExtractionDocument,
+  ): Promise<{ saleCount: number }> {
+    const session = await this.requireSalesSession(tenantId, sessionId);
 
     if (session.status !== DataImportStatus.READY_FOR_REVIEW) {
       throw new ConflictException(
@@ -404,25 +383,24 @@ export class PdfInvoiceImportService {
       throw new NotFoundException('No hay un archivo PDF en esta sesión.');
     }
 
-    const identityMapping = PDF_IDENTITY_MAPPING as unknown as MappingEntry[];
-    const mappingVersion = buildMappingVersion(identityMapping);
+    const identityMapping = SALES_IDENTITY_MAPPING as unknown as SalesMappingEntry[];
+    const mappingVersion = buildSalesMappingVersion(identityMapping);
 
-    const recordRows = extraction.watches.map((watch, i) => ({
+    const recordRows = extraction.sales.map((sale, i) => ({
       tenantId,
       sessionId,
       fileId: file.id,
-      entityType: DataImportEntityType.INVENTORY,
+      entityType: DataImportEntityType.SALES,
       sourceSheet: 'PDF',
-      sourceRowNumber: i + 1,
-      rawData: bridgeExtractedWatch(watch, extraction.invoice?.currency) as unknown as Prisma.InputJsonValue,
+      sourceRowNumber: sale.sourceRow ?? i + 1,
+      rawData: bridgeExtractedHistoricalSale(sale) as unknown as Prisma.InputJsonValue,
       isValid: true,
       importStatus: DataImportRecordStatus.STAGED,
     }));
 
-    // M-03: always enforce server-assigned extractionVersion when persisting edits
     const sanitizedExtraction = {
       ...extraction,
-      extractionVersion: INVOICE_EXTRACTION_VERSION,
+      extractionVersion: HISTORICAL_SALES_EXTRACTION_VERSION,
     };
 
     await this.prisma.$transaction(async (tx) => {
@@ -451,28 +429,22 @@ export class PdfInvoiceImportService {
       });
     });
 
-    await this.logEvent(tenantId, sessionId, DataImportEventType.DOCUMENT_EXTRACTION_EDITED, 'Extraction edited by user', {
+    await this.logEvent(tenantId, sessionId, DataImportEventType.SALES_EXTRACTION_EDITED, 'Sales extraction edited by user', {
       fileId: file.id,
-      watchCount: recordRows.length,
+      saleCount: recordRows.length,
     });
 
-    return { watchCount: recordRows.length };
+    return { saleCount: recordRows.length };
   }
 
-  // ─── reprocessDocument ───────────────────────────────────────────────────────
-
-  /**
-   * Re-runs AI extraction. If the user has made manual edits (DOCUMENT_EXTRACTION_EDITED
-   * event exists), the caller must pass confirmDiscardEdits: true — otherwise returns 409.
-   */
   async reprocessDocument(
     tenantId: string,
     sessionId: string,
     opts: { confirmDiscardEdits?: boolean } = {},
-  ): Promise<{ fileId: string; watchCount: number }> {
+  ): Promise<{ fileId: string; saleCount: number }> {
     if (!opts.confirmDiscardEdits) {
       const editEvent = await this.prisma.dataImportEvent.findFirst({
-        where: { tenantId, sessionId, eventType: DataImportEventType.DOCUMENT_EXTRACTION_EDITED },
+        where: { tenantId, sessionId, eventType: DataImportEventType.SALES_EXTRACTION_EDITED },
       });
       if (editEvent) {
         throw new ConflictException({
@@ -483,33 +455,33 @@ export class PdfInvoiceImportService {
     }
 
     if (opts.confirmDiscardEdits) {
-      await this.logEvent(tenantId, sessionId, DataImportEventType.DOCUMENT_EXTRACTION_STARTED,
-        'Reprocess requested — manual edits discarded', { confirmDiscardEdits: true },
+      await this.logEvent(
+        tenantId,
+        sessionId,
+        DataImportEventType.SALES_EXTRACTION_STARTED,
+        'Sales reprocess requested — manual edits discarded',
+        { confirmDiscardEdits: true },
       );
     }
 
     return this.processDocument(tenantId, sessionId);
   }
 
-  // ─── Private helpers ─────────────────────────────────────────────────────────
-
-  private async requireSession(tenantId: string, sessionId: string) {
+  private async requireSalesSession(tenantId: string, sessionId: string) {
     const session = await this.prisma.dataImportSession.findFirst({
       where: { id: sessionId, tenantId },
     });
     if (!session) throw new NotFoundException('Import session not found');
-    if (session.importTarget !== DataImportTarget.INVENTORY) {
+
+    if (session.importTarget !== DataImportTarget.SALES) {
       throw new UnprocessableEntityException(
-        'Esta sesión no está configurada para importación de inventario (importTarget=INVENTORY).',
+        'Esta sesión no está configurada para importación de ventas (importTarget=SALES).',
       );
     }
+
     return session;
   }
 
-  /**
-   * Atomically reset any session that is stuck in PROCESSING past the stale threshold.
-   * Safe to call concurrently — Prisma updateMany is atomic; only one caller gets count > 0.
-   */
   private async recoverStaleProcessing(tenantId: string, sessionId: string): Promise<void> {
     const threshold = new Date(Date.now() - staleThresholdMs());
     const recovered = await this.prisma.dataImportSession.updateMany({
@@ -526,9 +498,12 @@ export class PdfInvoiceImportService {
     });
 
     if (recovered.count > 0) {
-      this.logger.warn(`stale-recovery: session ${sessionId} (tenant ${tenantId}) reset PROCESSING → FAILED`);
-      await this.logEvent(tenantId, sessionId, DataImportEventType.DOCUMENT_EXTRACTION_FAILED,
-        'Stale extraction session recovered automatically',
+      this.logger.warn(`stale-recovery: sales session ${sessionId} (tenant ${tenantId}) reset PROCESSING → FAILED`);
+      await this.logEvent(
+        tenantId,
+        sessionId,
+        DataImportEventType.SALES_EXTRACTION_FAILED,
+        'Stale sales extraction session recovered automatically',
         { reason: 'STALE_DOCUMENT_PROCESSING_TIMEOUT' },
       );
     }

@@ -195,6 +195,7 @@ enum DataImportFileType {
 
 enum DataImportEntityType {
   INVENTORY
+  SALES
   CLIENTS
   DEALS
   PAYMENTS
@@ -204,6 +205,11 @@ enum DataImportEntityType {
   INVESTORS
   RADAR
   UNKNOWN
+}
+
+enum DataImportTarget {
+  INVENTORY
+  SALES
 }
 
 enum DataImportRecordStatus {
@@ -239,6 +245,12 @@ enum DataImportEventType {
   DOCUMENT_EXTRACTION_COMPLETED
   DOCUMENT_EXTRACTION_FAILED
   DOCUMENT_EXTRACTION_EDITED
+  SALES_EXTRACTION_STARTED
+  SALES_EXTRACTION_COMPLETED
+  SALES_EXTRACTION_FAILED
+  SALES_EXTRACTION_EDITED
+  SALES_DRY_RUN_COMPLETED
+  SALES_IMPORT_COMMITTED
 }
 
 // --- AI Market Radar ---
@@ -550,31 +562,53 @@ model Deal {
   id              String    @id @default(cuid())
   tenantId        String
   clientId        String
-  watchId         String
+  // Historical sales may omit a linked Watch (nullable). Daily register-sale still requires one.
+  watchId         String?
   stage           DealStage @default(LEAD)
   expectedCloseAt DateTime?
+  /// Explicit sale/close date (preferred over updatedAt for historical imports).
+  soldAt          DateTime?
   agreedPrice      Decimal   @db.Decimal(12, 2)
   originalCurrency String?
   originalAmount   Decimal?  @db.Decimal(12, 2)
   exchangeRate     Decimal?  @db.Decimal(12, 6)
   notes            String?
+  /// Acquisition cost of the sold item when no Watch is linked (MXN canonical).
+  historicalCost               Decimal?  @db.Decimal(12, 2)
+  historicalCostCurrency       String?
+  historicalCostOriginalAmount Decimal?  @db.Decimal(12, 2)
+  historicalCostExchangeRate   Decimal?  @db.Decimal(12, 6)
+  extrasAmount                 Decimal?  @db.Decimal(12, 2)
+  extrasCurrency               String?
+  extrasOriginalAmount         Decimal?  @db.Decimal(12, 2)
+  extrasExchangeRate           Decimal?  @db.Decimal(12, 6)
+  reportedProfit               Decimal?  @db.Decimal(12, 2)
+  calculatedProfit             Decimal?  @db.Decimal(12, 2)
+  paymentCount                 Int?
+  importSessionId              String?
+  importFingerprint            String?
+  importSourceRow              Int?
+  sourceTag                    String?
   deletedAt        DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client                Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  watch                 Watch                  @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  watch                 Watch?                 @relation(fields: [watchId], references: [id], onDelete: Restrict)
   payments              Payment[]
   operatingExpenses     OperatingExpense[]
   accountEntries        AccountEntry[]
   storefrontReservation StorefrontReservation?
 
+  @@unique([tenantId, importFingerprint])
   @@index([tenantId])
   @@index([tenantId, stage])
   @@index([tenantId, clientId])
   @@index([tenantId, watchId])
   @@index([tenantId, deletedAt])
+  @@index([tenantId, soldAt])
+  @@index([tenantId, importSessionId])
   @@map("deals")
 }
 
@@ -1120,6 +1154,8 @@ model DataImportSession {
   createdByUserId String           @map("created_by_user_id")
   status          DataImportStatus @default(CREATED)
   title           String?
+  /// Import workflow target. Defaults to INVENTORY for backwards compatibility.
+  importTarget    DataImportTarget @default(INVENTORY) @map("import_target")
   totalFiles      Int              @default(0) @map("total_files")
   processedFiles  Int              @default(0) @map("processed_files")
   totalRows       Int              @default(0) @map("total_rows")
@@ -1144,6 +1180,7 @@ model DataImportSession {
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
+  @@index([tenantId, importTarget])
   @@map("data_import_sessions")
 }
 

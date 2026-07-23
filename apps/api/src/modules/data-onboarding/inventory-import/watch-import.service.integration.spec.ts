@@ -5,6 +5,7 @@ import {
   DataImportEventType,
   DataImportRecordStatus,
   DataImportStatus,
+  DataImportTarget,
   Prisma,
 } from '@prisma/client';
 
@@ -155,6 +156,7 @@ function seed(prisma: FakePrisma, rows: Record<string, string>[], options: { sta
     tenantId: TENANT,
     createdByUserId: 'user-1',
     status: options.status ?? DataImportStatus.READY_FOR_REVIEW,
+    importTarget: DataImportTarget.INVENTORY,
     title: null,
     totalFiles: 1,
     processedFiles: 1,

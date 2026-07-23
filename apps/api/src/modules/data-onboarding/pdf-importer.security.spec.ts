@@ -32,6 +32,8 @@ import { IMPORT_FILE_STORAGE } from './data-onboarding.module';
 import { DataOnboardingService } from './data-onboarding.service';
 import { WatchImportService } from './inventory-import/watch-import.service';
 import { PdfInvoiceImportService } from './pdf-invoice-import.service';
+import { PdfSalesImportService } from './pdf-sales-import.service';
+import { SalesImportService } from './sales-import/sales-import.service';
 import { FakeExtractionProvider } from './providers/fake-extraction.provider';
 import { createExtractionProvider } from './providers/extraction.provider.factory';
 
@@ -58,7 +60,7 @@ function makeMockDataOnboardingService() {
         const { NotFoundException } = await import('@nestjs/common');
         throw new NotFoundException('Session not found');
       }
-      return { id: sessionId, tenantId, status: 'UPLOADING', files: [], totalFiles: 0 };
+      return { id: sessionId, tenantId, status: 'UPLOADING', importTarget: 'INVENTORY', files: [], totalFiles: 0 };
     }),
     listFiles: jest.fn(async (tenantId: string, sessionId: string) => {
       if (!sessionId.includes(tenantId)) {
@@ -144,7 +146,15 @@ async function buildTestApp(): Promise<INestApplication> {
       JwtAuthGuard,
       { provide: DataOnboardingService, useValue: makeMockDataOnboardingService() },
       { provide: WatchImportService, useValue: makeMockWatchImportService() },
+      { provide: SalesImportService, useValue: {
+        getSalesMapping: jest.fn(),
+        saveSalesMapping: jest.fn(),
+        runSalesDryRun: jest.fn(),
+        commitSalesImport: jest.fn(),
+        getErrorReport: jest.fn(async () => ''),
+      } },
       { provide: PdfInvoiceImportService, useValue: makeMockPdfService() },
+      { provide: PdfSalesImportService, useValue: makeMockPdfService() },
       { provide: IMPORT_FILE_STORAGE, useValue: makeMockStorage() },
     ],
   }).compile();
@@ -482,12 +492,13 @@ describe('Workflow: PdfInvoiceImportService with fixture PDFs', () => {
   it('real 1-page PDF passes inspection and extraction returns watchCount >= 0', async () => {
     const { PdfInvoiceImportService } = await import('./pdf-invoice-import.service');
     const { FakeExtractionProvider: FP } = await import('./providers/fake-extraction.provider');
-    const { DataImportStatus, DataImportFileType, DataImportFileStatus, DataImportEntityType } = await import('@prisma/client');
+    const { DataImportStatus, DataImportFileType, DataImportFileStatus, DataImportEntityType, DataImportTarget } = await import('@prisma/client');
 
     let idSeq = 0;
     const nextId = () => `id-${++idSeq}`;
     const session = {
       id: 'session-1', tenantId: 'tenant-1', status: DataImportStatus.UPLOADING,
+      importTarget: DataImportTarget.INVENTORY,
       totalFiles: 1, processedFiles: 0, totalRows: 0, validRows: 0, warningRows: 0,
       invalidRows: 0, importedRows: 0, dryRunVersion: null, importStartedAt: null,
       startedAt: null, completedAt: null, errorMessage: null, createdAt: new Date(), updatedAt: new Date(),
@@ -559,12 +570,13 @@ describe('Workflow: PdfInvoiceImportService with fixture PDFs', () => {
     const { PdfInvoiceImportService } = await import('./pdf-invoice-import.service');
     const { FakeExtractionProvider: FP } = await import('./providers/fake-extraction.provider');
     const { UnprocessableEntityException } = await import('@nestjs/common');
-    const { DataImportStatus, DataImportFileType, DataImportFileStatus, DataImportEntityType } = await import('@prisma/client');
+    const { DataImportStatus, DataImportFileType, DataImportFileStatus, DataImportEntityType, DataImportTarget } = await import('@prisma/client');
 
     let idSeq = 0;
     const nextId = () => `id-${++idSeq}`;
     const session = {
       id: 'session-1', tenantId: 'tenant-1', status: DataImportStatus.UPLOADING,
+      importTarget: DataImportTarget.INVENTORY,
       totalFiles: 1, processedFiles: 0, totalRows: 0, validRows: 0, warningRows: 0,
       invalidRows: 0, importedRows: 0, dryRunVersion: null, importStartedAt: null,
       startedAt: null, completedAt: null, errorMessage: null, createdAt: new Date(), updatedAt: new Date(),

@@ -7,6 +7,11 @@ import {
   WatchOwnershipType,
   WatchStatus,
 } from '@prisma/client';
+import {
+  dealEffectiveSaleDateInclusiveRangeWhere,
+  dealEffectiveSaleDateRangeWhere,
+  effectiveSaleDate,
+} from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { AnalyticsPeriod } from './dto/analytics-period.dto';
@@ -58,19 +63,20 @@ export class AnalyticsService {
         tenantId,
         deletedAt: null,
         stage: DealStage.CLOSED_WON,
-        updatedAt: {
-          gte: start,
-          lte: end,
-        },
+        AND: [dealEffectiveSaleDateInclusiveRangeWhere(start, end)],
       },
       select: {
+        soldAt: true,
         updatedAt: true,
+        createdAt: true,
       },
     });
 
     const counts = new Map<string, number>();
     for (const row of rows) {
-      const key = this.getBucketLabel(row.updatedAt, bucket, weekBuckets);
+      const saleDate = effectiveSaleDate(row);
+      if (saleDate < start || saleDate > end) continue;
+      const key = this.getBucketLabel(saleDate, bucket, weekBuckets);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
@@ -83,8 +89,10 @@ export class AnalyticsService {
   async getSummary(tenantId: string) {
     const now = new Date();
     // First day of the current calendar month in UTC — used for all "this month" KPIs.
-    // Mirrors the soldAt field used by /history/sold, which is deal.updatedAt.
+    // Attribution uses effectiveSaleDate = soldAt ?? updatedAt ?? createdAt.
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const soldThisMonthWhere = dealEffectiveSaleDateRangeWhere(monthStart, nextMonthStart);
 
     const watchWhere: Prisma.WatchWhereInput = { tenantId, deletedAt: null };
     const dealWhere: Prisma.DealWhereInput = { tenantId, deletedAt: null };
@@ -159,20 +167,21 @@ export class AnalyticsService {
       }),
       this.treasuryService.getAccountBalances(tenantId),
       // ── Sales this month: count ───────────────────────────────────────────
-      // deal.updatedAt is used as soldAt by /history/sold, so we match that field.
       this.prisma.deal.count({
-        where: { ...wonDealWhere, updatedAt: { gte: monthStart } },
+        where: { ...wonDealWhere, AND: [soldThisMonthWhere] },
       }),
       // ── Sales this month: revenue ─────────────────────────────────────────
       this.prisma.deal.aggregate({
-        where: { ...wonDealWhere, updatedAt: { gte: monthStart } },
+        where: { ...wonDealWhere, AND: [soldThisMonthWhere] },
         _sum: { agreedPrice: true },
       }),
       // ── Cost of sold this month: need watch.cost + watch expenses ─────────
       // Same effective-cost pattern as history.service.ts getSummary().
+      // Historical sales without a watch use deal.historicalCost.
       this.prisma.deal.findMany({
-        where: { ...wonDealWhere, updatedAt: { gte: monthStart } },
+        where: { ...wonDealWhere, AND: [soldThisMonthWhere] },
         select: {
+          historicalCost: true,
           watch: {
             select: {
               cost: true,
@@ -222,6 +231,9 @@ export class AnalyticsService {
     );
 
     const costOfSoldThisMonth = dealsThisMonth.reduce((sum, deal) => {
+      if (!deal.watch) {
+        return sum + Number(deal.historicalCost ?? 0);
+      }
       const watchCost = Number(deal.watch.cost);
       const expenseSum = deal.watch.expenses.reduce(
         (es, e) => es + Number(e.amount),
@@ -323,7 +335,7 @@ export class AnalyticsService {
     const zero = new Prisma.Decimal(0);
 
     for (const deal of deals) {
-      const brand = deal.watch.brand ?? '—';
+      const brand = deal.watch?.brand ?? 'Histórico';
       const current = byBrand.get(brand) ?? { count: 0, revenue: zero };
       current.count += 1;
       current.revenue = current.revenue.plus(deal.agreedPrice);
@@ -353,7 +365,7 @@ export class AnalyticsService {
 
     const byModel = new Map<string, number>();
     for (const deal of deals) {
-      const model = deal.watch.model ?? '—';
+      const model = deal.watch?.model ?? '—';
       byModel.set(model, (byModel.get(model) ?? 0) + 1);
     }
 

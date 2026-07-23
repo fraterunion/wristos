@@ -511,7 +511,7 @@ export default function DealsPage() {
                 <div className="space-y-2">
                   {groupedDeals[stage].map((deal) => {
                     const client = clientsById.get(deal.clientId);
-                    const watch = watchesById.get(deal.watchId);
+                    const watch = deal.watchId ? watchesById.get(deal.watchId) : undefined;
                     const active = detailModalOpen && deal.id === selectedDealId;
                     return (
                       <button
@@ -529,7 +529,11 @@ export default function DealsPage() {
                       >
                         <p className="text-sm font-semibold">{client?.name ?? 'Cliente desconocido'}</p>
                         <p className="mt-1 text-xs text-muted">
-                          {watch ? `${watch.brand} ${watch.model}` : 'Reloj desconocido'}
+                          {watch
+                            ? `${watch.brand} ${watch.model}`
+                            : !deal.watchId
+                              ? 'Venta histórica'
+                              : 'Reloj desconocido'}
                         </p>
                         <div className="mt-2 flex items-center justify-between text-xs">
                           <span className="font-medium text-white">{currency(deal.agreedPrice)}</span>
@@ -564,8 +568,14 @@ export default function DealsPage() {
                     {clientsById.get(selectedDeal.clientId)?.name ?? 'Cliente desconocido'}
                     {' · '}
                     {(() => {
-                      const w = watchesById.get(selectedDeal.watchId);
-                      return w ? `${w.brand} ${w.model}` : 'Reloj desconocido';
+                      const w = selectedDeal.watchId
+                        ? watchesById.get(selectedDeal.watchId)
+                        : undefined;
+                      return w
+                        ? `${w.brand} ${w.model}`
+                        : !selectedDeal.watchId
+                          ? 'Venta histórica'
+                          : 'Reloj desconocido';
                     })()}
                   </p>
                 ) : null}

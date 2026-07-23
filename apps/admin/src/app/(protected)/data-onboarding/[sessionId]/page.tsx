@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Download, Loader2, RefreshCw, Trash2, UploadCloud, XCircle } from 'lucide-react';
 
+import { SalesExtractionReviewStep } from '@/components/data-onboarding/SalesExtractionReviewStep';
 import { ApiError } from '@/lib/api-client';
 import {
   commitImport,
@@ -29,19 +30,20 @@ import {
   isAcceptedImportFile,
   isPdfImportSession,
 } from '@/lib/import-file-validation';
+import { entityTypeForSession, SALES_IMPORT_FIELD_OPTIONS } from '@/lib/sales-onboarding-helpers';
 import type {
   CommitResult,
   DataImportFile,
   DataImportRecord,
   DataImportSessionDetail,
   DocumentExtractionResponse,
-  DryRunSummary,
   DuplicatePolicy,
   ExtractedWatch,
   InventoryInvoiceExtraction,
   MappingEntry,
   MappingProposal,
   MappingResponse,
+  SalesImportField,
   ValidationIssue,
   WatchImportField,
 } from '@/types/data-onboarding';
@@ -338,6 +340,12 @@ function ConfirmReprocessModal({ onConfirm, onCancel }: { onConfirm: () => Promi
 
 // ─── Step: Extraction Review ──────────────────────────────────────────────────
 
+function isInventoryExtraction(
+  extraction: DocumentExtractionResponse['extraction'] | undefined,
+): extraction is InventoryInvoiceExtraction {
+  return Boolean(extraction && 'watches' in extraction);
+}
+
 function ExtractionReviewStep({
   session,
   onValidate,
@@ -385,10 +393,10 @@ function ExtractionReviewStep({
   }, [session.id, pdfFile]);
 
   const handleDeleteWatch = async (index: number) => {
-    if (!extraction?.extraction) return;
+    if (!isInventoryExtraction(extraction?.extraction)) return;
     const updated: InventoryInvoiceExtraction = {
-      ...extraction.extraction,
-      watches: extraction.extraction.watches.filter((_, i) => i !== index),
+      ...extraction!.extraction,
+      watches: extraction!.extraction.watches.filter((_, i) => i !== index),
     };
     setSaving(true);
     setError(null);
@@ -428,8 +436,9 @@ function ExtractionReviewStep({
     return <div className="h-40 animate-pulse rounded-xl bg-white/10" />;
   }
 
-  const watches = extraction.extraction?.watches ?? [];
-  const invoice = extraction.extraction?.invoice;
+  const inv = isInventoryExtraction(extraction.extraction) ? extraction.extraction : null;
+  const watches = inv?.watches ?? [];
+  const invoice = inv?.invoice;
 
   return (
     <>
@@ -672,24 +681,30 @@ function MappingStep({
   session: DataImportSessionDetail;
   onMappingDone: () => Promise<void>;
 }) {
-  const inventoryFile = session.files.find((f) => f.detectedEntityType === 'INVENTORY') ?? session.files[0];
+  const isSales = session.importTarget === 'SALES';
+  const spreadsheetFile =
+    (isSales
+      ? session.files.find((f) => f.detectedEntityType === 'SALES')
+      : session.files.find((f) => f.detectedEntityType === 'INVENTORY')) ??
+    session.files.find((f) => f.fileType === 'XLSX' || f.fileType === 'CSV') ??
+    session.files[0];
   const [mappingResp, setMappingResp] = useState<MappingResponse | null>(null);
   const [localMapping, setLocalMapping] = useState<MappingEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!inventoryFile) return;
+    if (!spreadsheetFile) return;
     void (async () => {
       try {
-        const resp = await getImportMapping(session.id, inventoryFile.id);
+        const resp = await getImportMapping(session.id, spreadsheetFile.id);
         setMappingResp(resp);
         setLocalMapping(resp.mapping);
       } catch (e) {
         setError(e instanceof ApiError ? e.message : 'Error cargando el mapping.');
       }
     })();
-  }, [session.id, inventoryFile]);
+  }, [session.id, spreadsheetFile]);
 
   const proposalByColumn = useMemo(() => {
     const map = new Map<string, MappingProposal>();
@@ -699,18 +714,21 @@ function MappingStep({
     return map;
   }, [mappingResp]);
 
-  const updateEntry = (sourceColumn: string, targetField: WatchImportField | typeof SKIP_FIELD) => {
+  const updateEntry = (
+    sourceColumn: string,
+    targetField: WatchImportField | SalesImportField | typeof SKIP_FIELD,
+  ) => {
     setLocalMapping((prev) =>
-      prev.map((e) => e.sourceColumn === sourceColumn ? { ...e, targetField } : e),
+      prev.map((e) => (e.sourceColumn === sourceColumn ? { ...e, targetField } : e)),
     );
   };
 
   const handleSaveAndValidate = async () => {
-    if (!inventoryFile) return;
+    if (!spreadsheetFile) return;
     setSaving(true);
     setError(null);
     try {
-      await saveImportMapping(session.id, inventoryFile.id, localMapping);
+      await saveImportMapping(session.id, spreadsheetFile.id, localMapping);
       await runDryRun(session.id);
       await onMappingDone();
     } catch (e) {
@@ -720,21 +738,41 @@ function MappingStep({
     }
   };
 
-  if (!inventoryFile) {
-    return <p className="text-sm text-muted">No hay archivos de inventario en esta sesión.</p>;
+  if (!spreadsheetFile) {
+    return (
+      <p className="text-sm text-muted">
+        {isSales
+          ? 'No hay archivos de ventas en esta sesión.'
+          : 'No hay archivos de inventario en esta sesión.'}
+      </p>
+    );
   }
   if (!mappingResp) {
     return <div className="h-40 animate-pulse rounded-xl bg-white/10" />;
   }
+
+  const fieldOptions = isSales
+    ? SALES_IMPORT_FIELD_OPTIONS
+    : ALL_TARGET_FIELDS.map((f) => ({ value: f, label: WATCH_FIELD_LABELS[f] }));
 
   return (
     <>
       <div className="mb-6">
         <h2 className="text-lg font-semibold text-white">Mapeo de columnas</h2>
         <p className="mt-1 text-sm text-muted">
-          Asigna cada columna del archivo a un campo de inventario. Las columnas marcadas{' '}
-          <span className="rounded bg-emerald-500/20 px-1 text-emerald-300 text-xs">AUTO</span>{' '}
-          fueron detectadas automáticamente.
+          {isSales ? (
+            <>
+              Asigna cada columna del archivo a un campo de ventas históricas. Las columnas marcadas{' '}
+              <span className="rounded bg-emerald-500/20 px-1 text-emerald-300 text-xs">AUTO</span>{' '}
+              fueron detectadas automáticamente.
+            </>
+          ) : (
+            <>
+              Asigna cada columna del archivo a un campo de inventario. Las columnas marcadas{' '}
+              <span className="rounded bg-emerald-500/20 px-1 text-emerald-300 text-xs">AUTO</span>{' '}
+              fueron detectadas automáticamente.
+            </>
+          )}
         </p>
       </div>
 
@@ -767,11 +805,16 @@ function MappingStep({
                       <div className="relative">
                         <select
                           value={entry.targetField}
-                          onChange={(e) => updateEntry(entry.sourceColumn, e.target.value as WatchImportField | typeof SKIP_FIELD)}
+                          onChange={(e) =>
+                            updateEntry(
+                              entry.sourceColumn,
+                              e.target.value as WatchImportField | SalesImportField | typeof SKIP_FIELD,
+                            )
+                          }
                           className="w-full appearance-none rounded-lg border border-white/15 bg-surface px-3 py-1.5 pr-8 text-xs text-white focus:outline-none focus:border-white/30"
                         >
-                          {ALL_TARGET_FIELDS.map((f) => (
-                            <option key={f} value={f}>{WATCH_FIELD_LABELS[f]}</option>
+                          {fieldOptions.map((f) => (
+                            <option key={f.value} value={f.value}>{f.label}</option>
                           ))}
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted" />
@@ -808,6 +851,7 @@ function DryRunStep({
   onConfirm: () => void;
   onRunDryRun: () => Promise<void>;
 }) {
+  const isSales = session.importTarget === 'SALES';
   const [records, setRecords] = useState<DataImportRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -820,7 +864,11 @@ function DryRunStep({
   const loadRecords = useCallback(async (p: number, filter: typeof rowFilter) => {
     setLoading(true);
     try {
-      const q: Record<string, string | number> = { page: p, limit: 30, entityType: 'INVENTORY' };
+      const q: Record<string, string | number> = {
+        page: p,
+        limit: 30,
+        entityType: entityTypeForSession(session.importTarget),
+      };
       if (filter !== 'ALL') q.rowStatus = filter;
       const result = await listDataImportRecords(session.id, q);
       setRecords(result.records);
@@ -830,7 +878,7 @@ function DryRunStep({
     } finally {
       setLoading(false);
     }
-  }, [session.id]);
+  }, [session.id, session.importTarget]);
 
   useEffect(() => {
     void loadRecords(page, rowFilter);
@@ -866,9 +914,19 @@ function DryRunStep({
     const first = records[0];
     if (!first) return [];
     const norm = first.normalizedData as Record<string, unknown> | null;
-    if (norm) return Object.keys(norm).filter((k) => !['costOriginalAmount', 'costExchangeRate'].includes(k)).slice(0, 6);
+    if (norm) {
+      const preferSales = [
+        'saleDate', 'customerName', 'brand', 'model', 'reference', 'salePrice',
+        'cost', 'calculatedProfit', 'reportedProfit', 'matchedClientId', 'matchedWatchId',
+      ];
+      if (isSales) {
+        const cols = preferSales.filter((k) => k in norm);
+        if (cols.length > 0) return cols.slice(0, 7);
+      }
+      return Object.keys(norm).filter((k) => !['costOriginalAmount', 'costExchangeRate'].includes(k)).slice(0, 6);
+    }
     return Object.keys(first.rawData).slice(0, 6);
-  }, [records]);
+  }, [records, isSales]);
 
   const totalPages = Math.ceil(total / 30);
 
@@ -877,11 +935,15 @@ function DryRunStep({
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-semibold text-white">Resultados de validación</h2>
-          <p className="mt-1 text-sm text-muted">Revisa los errores antes de importar.</p>
+          <p className="mt-1 text-sm text-muted">
+            {isSales
+              ? 'Revisa coincidencias de cliente/reloj y errores antes de importar ventas históricas.'
+              : 'Revisa los errores antes de importar.'}
+          </p>
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={onEditMapping} className="ui-btn-secondary text-xs">
-            Editar mapeo
+            {isSales && session.files.every((f) => f.fileType === 'PDF') ? 'Volver a revisión' : 'Editar mapeo'}
           </button>
           <button type="button" onClick={() => void handleReRun()} disabled={reRunning} className="ui-btn-secondary text-xs inline-flex items-center gap-1 disabled:opacity-40">
             {reRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
@@ -947,6 +1009,18 @@ function DryRunStep({
                   const dataSource = (record.normalizedData as Record<string, unknown> | null) ?? record.rawData;
                   const errors = (record.validationErrors as ValidationIssue[] | null) ?? [];
                   const warnings = (record.validationWarnings as ValidationIssue[] | null) ?? [];
+                  const salesHints = isSales
+                    ? [
+                        dataSource.matchedClientId ? `Cliente: ${String(dataSource.matchedClientId)}` : null,
+                        dataSource.matchedWatchId ? `Reloj: ${String(dataSource.matchedWatchId)}` : null,
+                        dataSource.calculatedProfit != null
+                          ? `Util. calc: ${String(dataSource.calculatedProfit)}`
+                          : null,
+                        dataSource.reportedProfit != null
+                          ? `Util. rep: ${String(dataSource.reportedProfit)}`
+                          : null,
+                      ].filter(Boolean)
+                    : [];
                   return (
                     <tr key={record.id} className="border-b border-white/5 text-white/80 align-top">
                       <td className="px-3 py-2">{record.sourceRowNumber ?? '—'}</td>
@@ -960,17 +1034,26 @@ function DryRunStep({
                         {errors.length > 0 && (
                           <ul className="space-y-0.5">
                             {errors.slice(0, 3).map((e, i) => (
-                              <li key={i} className="text-rose-300">{e.message}</li>
+                              <li key={i} className="text-rose-300">
+                                {e.code ? <span className="opacity-70">{e.code}: </span> : null}
+                                {e.message}
+                              </li>
                             ))}
                           </ul>
                         )}
                         {warnings.length > 0 && (
                           <ul className="mt-1 space-y-0.5">
                             {warnings.slice(0, 2).map((w, i) => (
-                              <li key={i} className="text-amber-300/80">{w.message}</li>
+                              <li key={i} className="text-amber-300/80">
+                                {w.code ? <span className="opacity-70">{w.code}: </span> : null}
+                                {w.message}
+                              </li>
                             ))}
                           </ul>
                         )}
+                        {salesHints.length > 0 ? (
+                          <p className="mt-1 text-[10px] text-muted">{salesHints.join(' · ')}</p>
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -994,7 +1077,9 @@ function DryRunStep({
           <span className="text-white font-medium">{session.validRows + session.warningRows}</span>{' '}
           filas elegibles ({session.validRows} válidas + {session.warningRows} con advertencias).{' '}
           <span className="text-rose-300">{session.invalidRows} inválidas</span> serán omitidas.
-          Los números de serie que ya existen en el inventario siempre se omiten.
+          {isSales
+            ? ' Se crearán clientes mínimos cuando no haya coincidencia; no se inventan pagos ni se altera el inventario activo.'
+            : ' Los números de serie que ya existen en el inventario siempre se omiten.'}
         </p>
         <button
           type="button"
@@ -1012,11 +1097,12 @@ function DryRunStep({
 // ─── Step: Confirm ────────────────────────────────────────────────────────────
 
 function ConfirmStep({
-  session, onBack, onCommit,
+  session, onBack, onCommit, salesMode = false,
 }: {
   session: DataImportSessionDetail;
   onBack: () => void;
-  onCommit: (policy: DuplicatePolicy) => Promise<void>;
+  onCommit: (policy?: DuplicatePolicy) => Promise<void>;
+  salesMode?: boolean;
 }) {
   const [policy, setPolicy] = useState<DuplicatePolicy>('SKIP_DUPLICATES');
   const [committing, setCommitting] = useState(false);
@@ -1026,7 +1112,7 @@ function ConfirmStep({
     setCommitting(true);
     setError(null);
     try {
-      await onCommit(policy);
+      await onCommit(salesMode ? undefined : policy);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Error al importar.');
       setCommitting(false);
@@ -1045,6 +1131,15 @@ function ConfirmStep({
         <StatCard label="Inválidas (omitidas)" value={String(session.invalidRows)} accent="red" />
       </div>
 
+      {salesMode ? (
+        <section className="ui-card mb-6">
+          <h3 className="mb-2 text-sm font-medium text-white">Ventas históricas</h3>
+          <p className="text-xs text-muted">
+            Se crearán clientes mínimos cuando no haya coincidencia exacta de nombre, y deals
+            CLOSED_WON sin inventar pagos ni alterar el inventario activo.
+          </p>
+        </section>
+      ) : (
       <section className="ui-card mb-6">
         <h3 className="mb-4 text-sm font-medium text-white">Política de duplicados</h3>
         <p className="mb-4 text-xs text-muted">
@@ -1073,6 +1168,7 @@ function ConfirmStep({
           ))}
         </div>
       </section>
+      )}
 
       <div className="flex items-center gap-3">
         <button type="button" onClick={onBack} className="ui-btn-secondary">
@@ -1103,14 +1199,21 @@ function CompletedStep({ result, session }: { result: CommitResult | null; sessi
     <div className="text-center py-12">
       <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" />
       <h2 className="mt-4 text-xl font-semibold text-white">Importación completada</h2>
-      <p className="mt-2 text-sm text-muted">Los relojes han sido creados en el inventario.</p>
+      <p className="mt-2 text-sm text-muted">
+        {session.importTarget === 'SALES'
+          ? 'Las ventas históricas están en Ventas / Historial / Analytics.'
+          : 'Los relojes han sido creados en el inventario.'}
+      </p>
       <div className="mt-8 grid gap-4 sm:grid-cols-3 text-left max-w-sm mx-auto">
         <StatCard label="Importados" value={String(imported)} accent="green" />
         <StatCard label="Omitidos" value={String(skipped)} />
         <StatCard label="Fallidos" value={String(failed)} accent={failed > 0 ? 'red' : undefined} />
       </div>
-      <Link href="/inventory" className="mt-8 inline-block text-sm text-muted hover:text-white">
-        Ver inventario →
+      <Link
+        href={session.importTarget === 'SALES' ? '/ventas' : '/inventory'}
+        className="mt-8 inline-block text-sm text-muted hover:text-white"
+      >
+        {session.importTarget === 'SALES' ? 'Ver ventas →' : 'Ver inventario →'}
       </Link>
     </div>
   );
@@ -1154,6 +1257,8 @@ export default function DataOnboardingSessionPage() {
     return isPdfImportSession(session.files);
   }, [session]);
 
+  const isSalesSession = session?.importTarget === 'SALES';
+
   const step: UIStep = useMemo(() => {
     if (!session) return 'upload';
     if (session.status === 'COMPLETED') return 'completed';
@@ -1169,7 +1274,7 @@ export default function DataOnboardingSessionPage() {
       return 'pdf-upload';
     }
 
-    // CSV/XLSX workflow (Sprint 2 sheet selection / mapping)
+    // CSV/XLSX workflow (inventory mapping or sales mapping)
     if (session.status === 'READY_FOR_REVIEW') {
       if (localStep === 'confirm') return 'confirm';
       if (localStep === 'dryrun' || session.dryRunVersion) return 'dryrun';
@@ -1271,7 +1376,7 @@ export default function DataOnboardingSessionPage() {
     setLocalStep('dryrun');
   };
 
-  const onCommit = async (policy: DuplicatePolicy) => {
+  const onCommit = async (policy?: DuplicatePolicy) => {
     const result = await commitImport(sessionId, policy);
     setCommitResult(result);
     await load();
@@ -1291,9 +1396,9 @@ export default function DataOnboardingSessionPage() {
 
   const stepLabels: Record<UIStep, string> = {
     upload: 'Subir y procesar',
-    'pdf-upload': 'Subir factura PDF',
+    'pdf-upload': isSalesSession ? 'Subir PDF de ventas' : 'Subir factura PDF',
     'pdf-extracting': 'Extrayendo con IA…',
-    'pdf-review': 'Revisión de extracción',
+    'pdf-review': isSalesSession ? 'Revisión de ventas' : 'Revisión de extracción',
     mapping: 'Mapeo de columnas',
     dryrun: 'Validación',
     confirm: 'Confirmar importación',
@@ -1310,7 +1415,7 @@ export default function DataOnboardingSessionPage() {
 
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-white">
-          {session.title ?? 'Importación de inventario'}
+          {session.title ?? (isSalesSession ? 'Importación de ventas históricas' : 'Importación de inventario')}
         </h1>
         <p className="mt-1 text-sm text-muted">
           {stepLabels[step]}
@@ -1354,11 +1459,19 @@ export default function DataOnboardingSessionPage() {
       )}
 
       {step === 'pdf-review' && (
-        <ExtractionReviewStep
-          session={session}
-          onValidate={onRunDryRun}
-          onReprocess={onReprocessDocument}
-        />
+        isSalesSession ? (
+          <SalesExtractionReviewStep
+            session={session}
+            onValidate={onRunDryRun}
+            onReprocess={onReprocessDocument}
+          />
+        ) : (
+          <ExtractionReviewStep
+            session={session}
+            onValidate={onRunDryRun}
+            onReprocess={onReprocessDocument}
+          />
+        )
       )}
 
       {step === 'mapping' && (
@@ -1379,13 +1492,16 @@ export default function DataOnboardingSessionPage() {
           session={session}
           onBack={() => setLocalStep('dryrun')}
           onCommit={onCommit}
+          salesMode={isSalesSession}
         />
       )}
 
       {step === 'importing' && (
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <Loader2 className="h-10 w-10 animate-spin text-white/40" />
-          <p className="text-sm text-muted">Importando relojes…</p>
+          <p className="text-sm text-muted">
+            {session.importTarget === 'SALES' ? 'Importando ventas históricas…' : 'Importando relojes…'}
+          </p>
         </div>
       )}
 

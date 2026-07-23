@@ -1,6 +1,7 @@
 import { FakeExtractionProvider } from './fake-extraction.provider';
 import { ExtractionError, ExtractionErrorCode } from './extraction-errors';
 import { InventoryInvoiceExtractionSchema } from '../inventory-import/inventory-invoice-extraction.types';
+import { HistoricalSalesExtractionSchema } from '../sales-import/historical-sale-extraction.types';
 
 describe('FakeExtractionProvider (default)', () => {
   it('returns a valid InventoryInvoiceExtraction', async () => {
@@ -113,5 +114,46 @@ describe('FakeExtractionProvider (scenarios)', () => {
       const parsed = InventoryInvoiceExtractionSchema.safeParse(result);
       expect(parsed.success).toBe(true);
     }
+  });
+});
+
+describe('FakeExtractionProvider (historical sales)', () => {
+  it('defaults to a single-sale extraction', async () => {
+    const provider = new FakeExtractionProvider();
+    const result = await provider.extractHistoricalSales(Buffer.from(''));
+    const parsed = HistoricalSalesExtractionSchema.safeParse(result);
+    expect(parsed.success).toBe(true);
+    expect(result.sales).toHaveLength(1);
+    expect(result.sales[0].brand).toBe('Rolex');
+  });
+
+  it('multi-month returns three sales across months', async () => {
+    const provider = new FakeExtractionProvider(undefined, 'multi-month');
+    const result = await provider.extractHistoricalSales(Buffer.from(''));
+    expect(result.sales).toHaveLength(3);
+    expect(result.sales.map((s) => s.saleDate?.slice(0, 7))).toEqual(['2026-01', '2026-02', '2026-03']);
+  });
+
+  it('usd-sale uses USD currencies', async () => {
+    const provider = new FakeExtractionProvider(undefined, 'usd-sale');
+    const result = await provider.extractHistoricalSales(Buffer.from(''));
+    expect(result.sales).toHaveLength(1);
+    expect(result.sales[0].saleCurrency).toBe('USD');
+    expect(result.sales[0].costCurrency).toBe('USD');
+  });
+
+  it('empty returns zero sales', async () => {
+    const provider = new FakeExtractionProvider(undefined, 'empty');
+    const result = await provider.extractHistoricalSales(Buffer.from(''));
+    expect(result.sales).toHaveLength(0);
+  });
+
+  it('inventory scenarios still work when sales scenarios are configured separately', async () => {
+    const provider = new FakeExtractionProvider(undefined, 'multi-watch');
+    const inventory = await provider.extractInventoryInvoice(Buffer.from(''));
+    expect(inventory.watches).toHaveLength(3);
+    // Sales falls back to default when scenario is inventory-only
+    const sales = await provider.extractHistoricalSales(Buffer.from(''));
+    expect(sales.sales).toHaveLength(1);
   });
 });
