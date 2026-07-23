@@ -459,7 +459,7 @@ function BusinessSnapshot({
         <SnapshotCard
           label="Inventario"
           value={fmtMxn(summary.totalInventoryValue)}
-          sub="Valor de mercado (mín)"
+          sub="Capital en inventario"
         />
         <SnapshotCard
           label="Ventas del mes"

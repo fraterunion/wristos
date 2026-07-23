@@ -125,10 +125,10 @@ export class AnalyticsService {
       this.prisma.watch.count({
         where: { ...watchWhere, ownershipType: WatchOwnershipType.CONSIGNMENT },
       }),
-      // Active inventory value: sum priceMin for watches not yet SOLD.
+      // Active inventory value: SUM(acquisition cost) for watches not yet SOLD.
       this.prisma.watch.aggregate({
         where: activeInventoryWhere,
-        _sum: { priceMin: true, cost: true },
+        _sum: { cost: true },
       }),
       this.prisma.client.count({ where: { tenantId, deletedAt: null } }),
       this.prisma.deal.count({ where: dealWhere }),
@@ -243,9 +243,10 @@ export class AnalyticsService {
       reservedWatches,
       soldWatches,
       consignmentWatches,
-      // totalInventoryValue now reflects active (non-SOLD) inventory only
-      totalInventoryValue: (inventorySums._sum.priceMin ?? zero).toString(),
-      totalInventoryCost:  (inventorySums._sum.cost    ?? zero).toString(),
+      // Inventory value = SUM(watch.cost) for active (non-SOLD) inventory only.
+      // cost is already stored in MXN; null cost contributes 0 via Prisma _sum.
+      totalInventoryValue: (inventorySums._sum.cost ?? zero).toString(),
+      totalInventoryCost: (inventorySums._sum.cost ?? zero).toString(),
       activeClients,
       totalDeals,
       dealsByStage,
@@ -280,7 +281,7 @@ export class AnalyticsService {
       },
       select: {
         brand: true,
-        priceMin: true,
+        cost: true,
       },
     });
 
@@ -291,7 +292,8 @@ export class AnalyticsService {
       const brand = watch.brand ?? '—';
       const current = byBrand.get(brand) ?? { count: 0, value: zero };
       current.count += 1;
-      current.value = current.value.plus(watch.priceMin ?? 0);
+      // Inventory value = SUM(cost); null cost contributes 0.
+      current.value = current.value.plus(watch.cost ?? 0);
       byBrand.set(brand, current);
     }
 
