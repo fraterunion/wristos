@@ -44,6 +44,31 @@ describe('parseMonetary — accepted US formats', () => {
     expect(moneyValue('USD 1,234.56')).toBeCloseTo(1234.56);
   });
 
+  it('detects explicit currency labels (bare $ is not USD)', () => {
+    expect(parseMonetary('$1,625,641.75')).toEqual({ status: 'ok', value: 1625641.75 });
+    expect(parseMonetary('1,625,641.75 MXN')).toEqual({
+      status: 'ok',
+      value: 1625641.75,
+      detectedCurrency: 'MXN',
+    });
+    expect(parseMonetary('USD 93,000')).toEqual({
+      status: 'ok',
+      value: 93000,
+      detectedCurrency: 'USD',
+    });
+    expect(parseMonetary('US$93,000')).toEqual({
+      status: 'ok',
+      value: 93000,
+      detectedCurrency: 'USD',
+    });
+    expect(parseMonetary('$93,000 USD')).toEqual({
+      status: 'ok',
+      value: 93000,
+      detectedCurrency: 'USD',
+    });
+    expect(parseMonetary('$93,000')).toEqual({ status: 'ok', value: 93000 });
+  });
+
   it('parses negative numbers (validator rejects them later)', () => {
     expect(moneyValue('-100')).toBe(-100);
     expect(moneyValue('-1,234.56')).toBeCloseTo(-1234.56);
@@ -241,6 +266,7 @@ describe('normalizeWatchRow', () => {
     const result = normalizeWatchRow(raw, mapping, null);
     expect(result.model).toBeUndefined();
     expect(result.costCurrency).toBe('MXN');
+    expect(result.currencyAssumedMxn).toBe(true);
   });
 
   it('records a structured parse issue for ambiguous monetary values', () => {
@@ -253,7 +279,137 @@ describe('normalizeWatchRow', () => {
   it('records a parse issue for unrecognized currency', () => {
     const raw = { Marca: 'Rolex', Modelo: 'Sub', Costo: '15000', Moneda: 'EUR', PrecioMin: '18000', PrecioMax: '22000', Condicion: 'Buena', Tipo: 'owned', Notas: '' };
     const result = normalizeWatchRow(raw, mapping, null);
-    expect(result.costCurrency).toBeUndefined();
+    expect(result.costCurrency).toBe('MXN');
+    expect(result.currencyAssumedMxn).toBe(true);
     expect(result.parseIssues).toEqual([{ field: 'costCurrency', code: 'INVALID_CURRENCY' }]);
+  });
+
+  it('defaults bare $ amounts to MXN with no FX conversion', () => {
+    const raw = {
+      Marca: 'Rolex',
+      Modelo: 'Daytona',
+      Costo: '$1,625,641.75',
+      Moneda: '',
+      PrecioMin: '',
+      PrecioMax: '',
+      Condicion: '',
+      Tipo: '',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, 17.5);
+    expect(result.cost).toBeCloseTo(1625641.75);
+    expect(result.costCurrency).toBe('MXN');
+    expect(result.costOriginalAmount).toBeUndefined();
+    expect(result.costExchangeRate).toBeUndefined();
+    expect(result.currencyAssumedMxn).toBe(true);
+  });
+
+  it('treats explicit MXN label as MXN with no FX', () => {
+    const raw = {
+      Marca: 'Rolex',
+      Modelo: 'Daytona',
+      Costo: '1,625,641.75 MXN',
+      Moneda: '',
+      PrecioMin: '',
+      PrecioMax: '',
+      Condicion: '',
+      Tipo: '',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, 17.5);
+    expect(result.cost).toBeCloseTo(1625641.75);
+    expect(result.costCurrency).toBe('MXN');
+    expect(result.costExchangeRate).toBeUndefined();
+    expect(result.currencyAssumedMxn).toBeUndefined();
+  });
+
+  it('detects USD 93,000 and applies FX when rate provided', () => {
+    const raw = {
+      Marca: 'Patek',
+      Modelo: 'Nautilus',
+      Costo: 'USD 93,000',
+      Moneda: '',
+      PrecioMin: '',
+      PrecioMax: '',
+      Condicion: '',
+      Tipo: '',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, 17.5);
+    expect(result.costOriginalAmount).toBe(93000);
+    expect(result.costExchangeRate).toBe(17.5);
+    expect(result.cost).toBe(1627500);
+    expect(result.costCurrency).toBe('USD');
+  });
+
+  it('detects US$93,000 as explicit USD', () => {
+    const raw = {
+      Marca: 'Patek',
+      Modelo: 'Nautilus',
+      Costo: 'US$93,000',
+      Moneda: '',
+      PrecioMin: '',
+      PrecioMax: '',
+      Condicion: '',
+      Tipo: '',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, 17.5);
+    expect(result.costCurrency).toBe('USD');
+    expect(result.costOriginalAmount).toBe(93000);
+  });
+
+  it('detects $93,000 USD as explicit USD', () => {
+    const raw = {
+      Marca: 'Patek',
+      Modelo: 'Nautilus',
+      Costo: '$93,000 USD',
+      Moneda: '',
+      PrecioMin: '',
+      PrecioMax: '',
+      Condicion: '',
+      Tipo: '',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, null);
+    expect(result.cost).toBe(93000);
+    expect(result.costCurrency).toBe('USD');
+    expect(result.currencyAssumedMxn).toBeUndefined();
+  });
+
+  it('keeps CSV explicit USD column behavior (regression)', () => {
+    const raw = {
+      Marca: 'Patek',
+      Modelo: 'Nautilus',
+      Costo: '10000',
+      Moneda: 'USD',
+      PrecioMin: '600000',
+      PrecioMax: '700000',
+      Condicion: 'Mint',
+      Tipo: 'owned',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, 17.5);
+    expect(result.costCurrency).toBe('USD');
+    expect(result.cost).toBe(175000);
+    expect(result.currencyAssumedMxn).toBeUndefined();
+  });
+
+  it('keeps CSV explicit MXN column behavior without inventing USD (regression)', () => {
+    const raw = {
+      Marca: 'Rolex',
+      Modelo: 'Submariner',
+      Costo: '15000',
+      Moneda: 'MXN',
+      PrecioMin: '18000',
+      PrecioMax: '22000',
+      Condicion: 'Excelente',
+      Tipo: 'owned',
+      Notas: '',
+    };
+    const result = normalizeWatchRow(raw, mapping, 17.5);
+    expect(result.cost).toBe(15000);
+    expect(result.costCurrency).toBe('MXN');
+    expect(result.costExchangeRate).toBeUndefined();
   });
 });

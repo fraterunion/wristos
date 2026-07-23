@@ -3,12 +3,8 @@ import { WatchOwnershipType } from '@prisma/client';
 import { DryRunContext, NormalizedWatchRow, RowValidationResult, ValidationIssue, WatchRowState } from './watch-import.types';
 
 export const ERROR_CODES = {
-  REQUIRED_BRAND_MISSING: 'REQUIRED_BRAND_MISSING',
-  REQUIRED_MODEL_MISSING: 'REQUIRED_MODEL_MISSING',
-  REQUIRED_CONDITION_MISSING: 'REQUIRED_CONDITION_MISSING',
-  REQUIRED_COST_MISSING: 'REQUIRED_COST_MISSING',
-  REQUIRED_PRICE_MIN_MISSING: 'REQUIRED_PRICE_MIN_MISSING',
-  REQUIRED_PRICE_MAX_MISSING: 'REQUIRED_PRICE_MAX_MISSING',
+  /** No brand, model, or price — row lacks minimum identity for import. */
+  IDENTITY_FIELDS_MISSING: 'IDENTITY_FIELDS_MISSING',
   INVALID_OWNERSHIP_TYPE: 'INVALID_OWNERSHIP_TYPE',
   INVALID_CURRENCY: 'INVALID_CURRENCY',
   INVALID_STATUS: 'INVALID_STATUS',
@@ -28,6 +24,7 @@ export const WARNING_CODES = {
   PRICE_RANGE_IDENTICAL: 'PRICE_RANGE_IDENTICAL',
   STATUS_NOT_AVAILABLE: 'STATUS_NOT_AVAILABLE',
   USD_EXCHANGE_RATE_APPLIED: 'USD_EXCHANGE_RATE_APPLIED',
+  CURRENCY_ASSUMED_MXN: 'CURRENCY_ASSUMED_MXN',
   SERIAL_FIRST_DUPLICATE_IN_FILE: 'SERIAL_FIRST_DUPLICATE_IN_FILE',
   // Exact serial conflict against live inventory. A WARNING (not error) so the
   // row stays visible/eligible in review, but commit ALWAYS skips exact serial
@@ -58,6 +55,22 @@ function warn(code: string, field: string, message: string): ValidationIssue {
   return { code, field, message };
 }
 
+function hasMeaningfulPrice(normalized: NormalizedWatchRow): boolean {
+  return (
+    (normalized.cost !== undefined && normalized.cost !== null) ||
+    (normalized.priceMin !== undefined && normalized.priceMin !== null) ||
+    (normalized.priceMax !== undefined && normalized.priceMax !== null)
+  );
+}
+
+/**
+ * Minimum identity for an importable watch: at least one of brand, model, or price.
+ * Optional enrichment fields (condition, prices, year, serial, etc.) must not block import.
+ */
+export function hasMinimumWatchIdentity(normalized: NormalizedWatchRow): boolean {
+  return Boolean(normalized.brand) || Boolean(normalized.model) || hasMeaningfulPrice(normalized);
+}
+
 export function validateNormalizedWatch(
   normalized: NormalizedWatchRow,
   ctx: DryRunContext,
@@ -67,34 +80,22 @@ export function validateNormalizedWatch(
   const warnings: ValidationIssue[] = [];
 
   // Structured parse failures (e.g. ambiguous monetary formats) are hard errors.
-  const parseIssueFields = new Set<string>();
   for (const issue of normalized.parseIssues ?? []) {
-    parseIssueFields.add(issue.field);
     errors.push(err(issue.code, issue.field, PARSE_ISSUE_MESSAGES[issue.code] ?? `Valor inválido en ${issue.field}`));
   }
 
-  // Required fields (suppress "missing" when the field failed to parse — the
-  // parse error already explains why the value is absent)
-  if (!normalized.brand) {
-    errors.push(err(ERROR_CODES.REQUIRED_BRAND_MISSING, 'brand', 'brand es requerido'));
-  }
-  if (!normalized.model) {
-    errors.push(err(ERROR_CODES.REQUIRED_MODEL_MISSING, 'model', 'model es requerido'));
-  }
-  if (!normalized.condition) {
-    errors.push(err(ERROR_CODES.REQUIRED_CONDITION_MISSING, 'condition', 'condition es requerido'));
-  }
-  if ((normalized.cost === undefined || normalized.cost === null) && !parseIssueFields.has('cost')) {
-    errors.push(err(ERROR_CODES.REQUIRED_COST_MISSING, 'cost', 'cost es requerido'));
-  }
-  if ((normalized.priceMin === undefined || normalized.priceMin === null) && !parseIssueFields.has('priceMin')) {
-    errors.push(err(ERROR_CODES.REQUIRED_PRICE_MIN_MISSING, 'priceMin', 'priceMin es requerido'));
-  }
-  if ((normalized.priceMax === undefined || normalized.priceMax === null) && !parseIssueFields.has('priceMax')) {
-    errors.push(err(ERROR_CODES.REQUIRED_PRICE_MAX_MISSING, 'priceMax', 'priceMax es requerido'));
+  // Soft identity: brand OR model OR any price. Missing optional fields stay empty.
+  if (!hasMinimumWatchIdentity(normalized)) {
+    errors.push(
+      err(
+        ERROR_CODES.IDENTITY_FIELDS_MISSING,
+        'brand',
+        'Se requiere al menos marca, modelo o precio para importar el reloj',
+      ),
+    );
   }
 
-  // Numeric constraints
+  // Numeric constraints (only when values are present)
   if (normalized.cost !== undefined && normalized.cost !== null) {
     if (normalized.cost < 0) {
       errors.push(err(ERROR_CODES.NEGATIVE_COST, 'cost', 'cost no puede ser negativo'));
@@ -140,6 +141,17 @@ export function validateNormalizedWatch(
   // Status warning
   if (normalized.status && normalized.status !== 'AVAILABLE') {
     warnings.push(warn(WARNING_CODES.STATUS_NOT_AVAILABLE, 'status', `Importando con status "${normalized.status}"`));
+  }
+
+  // Currency assumed MXN when document did not label currency explicitly
+  if (normalized.currencyAssumedMxn) {
+    warnings.push(
+      warn(
+        WARNING_CODES.CURRENCY_ASSUMED_MXN,
+        'costCurrency',
+        'Moneda no indicada explícitamente; se interpretó como MXN.',
+      ),
+    );
   }
 
   // USD exchange rate disclosure

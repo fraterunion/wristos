@@ -5,7 +5,7 @@ import { FxService } from '../../fx/fx.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { escapeCsvCell } from './csv-report.util';
 import { buildDryRunBase, buildMappingVersion, isDryRunVersionCurrent, mappingToLookup, proposeMapping, validateMappingEntries } from './watch-field-mapping';
-import { normalizeWatchRow } from './watch-normalizer';
+import { detectExplicitCurrencyInText, normalizeWatchRow } from './watch-normalizer';
 import { WARNING_CODES, markFirstSerialWarnings, normalizeSerial, validateNormalizedWatch } from './watch-validator';
 import {
   CommitResult,
@@ -146,16 +146,23 @@ export class WatchImportService {
       fileMappings.set(file.id, file.fieldMapping as MappingEntry[]);
     }
 
-    // Pre-normalize to detect USD rows
+    // Pre-scan for explicit USD (column or embedded label). Bare "$" does not count.
     const needsFx = allRecords.some((record) => {
       const mapping = fileMappings.get(record.fileId);
       if (!mapping) return false;
       const row = record.rawData as Record<string, unknown>;
       const lookup = mappingToLookup(mapping);
       const currencyCol = [...lookup.entries()].find(([, v]) => v === 'costCurrency')?.[0];
-      if (!currencyCol) return false;
-      const raw = String(row[currencyCol] ?? '').trim().toUpperCase();
-      return ['USD', 'US', 'DOLLAR', 'DOLLARS', 'DOLARES'].includes(raw);
+      if (currencyCol) {
+        const raw = String(row[currencyCol] ?? '').trim().toUpperCase();
+        if (['USD', 'US', 'DOLLAR', 'DOLLARS', 'DOLARES', 'DÓLARES', 'US$'].includes(raw)) return true;
+      }
+      for (const field of ['cost', 'priceMin', 'priceMax'] as const) {
+        const col = [...lookup.entries()].find(([, v]) => v === field)?.[0];
+        if (!col) continue;
+        if (detectExplicitCurrencyInText(row[col]) === 'USD') return true;
+      }
+      return false;
     });
 
     if (needsFx) {
@@ -388,7 +395,14 @@ export class WatchImportService {
 
         for (const record of chunk) {
           const normalized = record.normalizedData as NormalizedWatchRow | null;
-          if (!normalized || !normalized.brand || !normalized.model) {
+          // Soft identity: brand OR model OR any price. Optional fields may be null.
+          const hasIdentity =
+            Boolean(normalized?.brand) ||
+            Boolean(normalized?.model) ||
+            normalized?.cost != null ||
+            normalized?.priceMin != null ||
+            normalized?.priceMax != null;
+          if (!normalized || !hasIdentity) {
             await this.prisma.dataImportRecord.update({
               where: { id: record.id },
               data: { importStatus: DataImportRecordStatus.FAILED },
@@ -430,17 +444,17 @@ export class WatchImportService {
               const watch = await tx.watch.create({
                 data: {
                   tenantId,
-                  brand: normalized.brand!,
-                  model: normalized.model!,
+                  brand: normalized.brand ?? null,
+                  model: normalized.model ?? null,
                   reference: normalized.reference ?? null,
                   serialNumber: serial,
-                  condition: normalized.condition!,
-                  cost: new Prisma.Decimal(normalized.cost!),
+                  condition: normalized.condition ?? null,
+                  cost: normalized.cost != null ? new Prisma.Decimal(normalized.cost) : null,
                   costCurrency: normalized.costCurrency ?? 'MXN',
                   costOriginalAmount: normalized.costOriginalAmount != null ? new Prisma.Decimal(normalized.costOriginalAmount) : null,
                   costExchangeRate: normalized.costExchangeRate != null ? new Prisma.Decimal(normalized.costExchangeRate) : null,
-                  priceMin: new Prisma.Decimal(normalized.priceMin!),
-                  priceMax: new Prisma.Decimal(normalized.priceMax!),
+                  priceMin: normalized.priceMin != null ? new Prisma.Decimal(normalized.priceMin) : null,
+                  priceMax: normalized.priceMax != null ? new Prisma.Decimal(normalized.priceMax) : null,
                   status: normalized.status ?? WatchStatus.AVAILABLE,
                   ownershipType: normalized.ownershipType ?? WatchOwnershipType.OWNED,
                   // Invariant (mirrors InventoryService.create): consignment

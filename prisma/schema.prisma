@@ -464,15 +464,17 @@ model ClientInteraction {
 model Watch {
   id                         String             @id @default(cuid())
   tenantId                   String
-  brand                      String
-  model                      String
+  // Partial inventory import may leave identity/commercial fields null when
+  // the source document does not provide them (PDF importer).
+  brand                      String?
+  model                      String?
   reference                  String?
   serialNumber               String?
   imageUrl                   String?
-  condition                  String
-  cost                       Decimal            @db.Decimal(12, 2)
-  priceMin                   Decimal            @db.Decimal(12, 2)
-  priceMax                   Decimal            @db.Decimal(12, 2)
+  condition                  String?
+  cost                       Decimal?           @db.Decimal(12, 2)
+  priceMin                   Decimal?           @db.Decimal(12, 2)
+  priceMax                   Decimal?           @db.Decimal(12, 2)
   ownershipType              WatchOwnershipType @default(OWNED)
   consignmentOwnerName       String?
   consignmentSplitPercentage Decimal?           @db.Decimal(5, 2)

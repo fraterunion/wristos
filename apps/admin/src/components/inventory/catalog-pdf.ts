@@ -182,13 +182,13 @@ function drawWatchCard(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
   t(doc, C.NAVY);
-  doc.text(watch.brand.toUpperCase(), tx, ty, { maxWidth: tw });
+  doc.text((watch.brand ?? '').toUpperCase() || '—', tx, ty, { maxWidth: tw });
 
   // Model (up to 2 lines)
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10.5);
   t(doc, C.DARK);
-  const modelLines = doc.splitTextToSize(watch.model, tw) as string[];
+  const modelLines = doc.splitTextToSize(watch.model ?? '—', tw) as string[];
   doc.text(modelLines.slice(0, 2), tx, ty + 9);
 
   // Gold separator
@@ -200,9 +200,13 @@ function drawWatchCard(
 
   // Price
   const priceStr =
-    watch.priceMin === watch.priceMax
-      ? formatPrice(watch.priceMin)
-      : `${formatPrice(watch.priceMin)} – ${formatPrice(watch.priceMax)}`;
+    watch.priceMin == null && watch.priceMax == null
+      ? '—'
+      : watch.priceMin === watch.priceMax || watch.priceMax == null
+        ? formatPrice(watch.priceMin ?? watch.priceMax ?? '0')
+        : watch.priceMin == null
+          ? formatPrice(watch.priceMax)
+          : `${formatPrice(watch.priceMin)} – ${formatPrice(watch.priceMax)}`;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   t(doc, C.GOLD);
@@ -210,7 +214,7 @@ function drawWatchCard(
 
   // Metadata rows
   let metaY = sepY + 22;
-  drawMetaRow(doc, tx, metaY, 'CONDITION', watch.condition, tw);
+  drawMetaRow(doc, tx, metaY, 'CONDITION', watch.condition ?? '—', tw);
 
   if (watch.serialNumber) {
     metaY += 13;

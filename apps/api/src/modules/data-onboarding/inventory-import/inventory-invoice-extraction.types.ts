@@ -161,7 +161,19 @@ export type BridgedWatchRow = {
 };
 
 /** Renames AI field names to WatchImportField names. */
-export function bridgeExtractedWatch(watch: ExtractedWatch): BridgedWatchRow {
+export function bridgeExtractedWatch(
+  watch: ExtractedWatch,
+  invoiceCurrency?: string | null,
+): BridgedWatchRow {
+  // Prefer per-watch currency; fall back to explicit invoice-level currency only.
+  let costCurrency = watch.costCurrency;
+  if (!costCurrency && invoiceCurrency) {
+    const normalized = invoiceCurrency.trim().toUpperCase();
+    if (normalized === 'MXN' || normalized === 'USD') {
+      costCurrency = normalized;
+    }
+  }
+
   return {
     brand:                      watch.brand,
     model:                      watch.model,
@@ -170,7 +182,7 @@ export function bridgeExtractedWatch(watch: ExtractedWatch): BridgedWatchRow {
     year:                       watch.year,
     condition:                  watch.condition,
     ownershipType:              watch.ownershipType,
-    costCurrency:               watch.costCurrency,
+    costCurrency,
     cost:                       watch.purchasePrice,
     priceMin:                   watch.askingPriceMin,
     priceMax:                   watch.askingPriceMax,

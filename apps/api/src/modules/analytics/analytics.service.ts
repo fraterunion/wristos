@@ -288,10 +288,11 @@ export class AnalyticsService {
     const zero = new Prisma.Decimal(0);
 
     for (const watch of watches) {
-      const current = byBrand.get(watch.brand) ?? { count: 0, value: zero };
+      const brand = watch.brand ?? '—';
+      const current = byBrand.get(brand) ?? { count: 0, value: zero };
       current.count += 1;
-      current.value = current.value.plus(watch.priceMin);
-      byBrand.set(watch.brand, current);
+      current.value = current.value.plus(watch.priceMin ?? 0);
+      byBrand.set(brand, current);
     }
 
     return Array.from(byBrand.entries())
@@ -320,7 +321,7 @@ export class AnalyticsService {
     const zero = new Prisma.Decimal(0);
 
     for (const deal of deals) {
-      const brand = deal.watch.brand;
+      const brand = deal.watch.brand ?? '—';
       const current = byBrand.get(brand) ?? { count: 0, revenue: zero };
       current.count += 1;
       current.revenue = current.revenue.plus(deal.agreedPrice);
@@ -350,7 +351,7 @@ export class AnalyticsService {
 
     const byModel = new Map<string, number>();
     for (const deal of deals) {
-      const model = deal.watch.model;
+      const model = deal.watch.model ?? '—';
       byModel.set(model, (byModel.get(model) ?? 0) + 1);
     }
 

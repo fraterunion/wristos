@@ -43,7 +43,7 @@ export type MappingResponse = {
 };
 
 export type MonetaryParseResult =
-  | { status: 'ok'; value: number }
+  | { status: 'ok'; value: number; detectedCurrency?: 'MXN' | 'USD' }
   | { status: 'empty' }
   | { status: 'error'; code: 'AMBIGUOUS_NUMBER_FORMAT' | 'CONFLICTING_CURRENCY' | 'INVALID_NUMBER_FORMAT' };
 
@@ -60,6 +60,8 @@ export type NormalizedWatchRow = {
   condition?: string;
   ownershipType?: WatchOwnershipType;
   costCurrency?: 'MXN' | 'USD';
+  /** True when MXN was applied because the source did not label currency explicitly. */
+  currencyAssumedMxn?: boolean;
   cost?: number;
   costOriginalAmount?: number;
   costExchangeRate?: number;

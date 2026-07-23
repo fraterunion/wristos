@@ -229,8 +229,8 @@ export default function VentasPage() {
       if (filters.watchSearch.trim()) {
         const q = filters.watchSearch.trim().toLowerCase();
         if (
-          !sale.watch.brand.toLowerCase().includes(q) &&
-          !sale.watch.model.toLowerCase().includes(q) &&
+          !sale.watch.brand?.toLowerCase().includes(q) &&
+          !sale.watch.model?.toLowerCase().includes(q) &&
           !(sale.watch.serialNumber?.toLowerCase().includes(q) ?? false)
         ) return false;
       }

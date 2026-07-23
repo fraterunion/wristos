@@ -254,4 +254,74 @@ describe('ClaudeExtractionProvider', () => {
     const callArgs = mockCreate.mock.calls[0][0] as { tool_choice: Anthropic.ToolChoiceTool };
     expect(callArgs.tool_choice).toEqual({ type: 'tool', name: 'extract_invoice' });
   });
+
+  // ─── PDF document block (production request construction) ─────────────────
+
+  it('sends exactly one messages.create call with the PDF as a base64 document block', async () => {
+    mockCreate.mockResolvedValue(makeToolUseResponse(VALID_EXTRACTION_INPUT));
+    const pdfBuffer = Buffer.from('%PDF-1.4 test invoice bytes');
+
+    await provider.extractInventoryInvoice(pdfBuffer);
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    const body = mockCreate.mock.calls[0][0] as Anthropic.MessageCreateParamsNonStreaming;
+
+    // First user message
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0].role).toBe('user');
+
+    const content = body.messages[0].content as Anthropic.ContentBlockParam[];
+    expect(content).toHaveLength(2);
+
+    // First content block must be the PDF document
+    const docBlock = content[0] as Anthropic.DocumentBlockParam;
+    expect(docBlock.type).toBe('document');
+    expect(docBlock.source.type).toBe('base64');
+    expect((docBlock.source as Anthropic.Base64PDFSource).media_type).toBe('application/pdf');
+    expect((docBlock.source as Anthropic.Base64PDFSource).data).toBe(pdfBuffer.toString('base64'));
+
+    // Second content block must be the extraction instruction text
+    const textBlock = content[1] as Anthropic.TextBlockParam;
+    expect(textBlock.type).toBe('text');
+    expect(typeof textBlock.text).toBe('string');
+    expect(textBlock.text.length).toBeGreaterThan(0);
+  });
+
+  it('sends the tool input_schema as a plain JSON Schema object (not a Zod schema)', async () => {
+    mockCreate.mockResolvedValue(makeToolUseResponse(VALID_EXTRACTION_INPUT));
+
+    await provider.extractInventoryInvoice(Buffer.from('%PDF-test'));
+
+    const body = mockCreate.mock.calls[0][0] as Anthropic.MessageCreateParamsNonStreaming;
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect(body.tools).toHaveLength(1);
+
+    const tool = body.tools![0] as Anthropic.Tool;
+    expect(tool.name).toBe('extract_invoice');
+    expect(tool.input_schema.type).toBe('object');
+    // Must be a plain object — not a Zod schema (which would have a .parse method)
+    expect(typeof (tool.input_schema as unknown as { parse?: unknown }).parse).not.toBe('function');
+  });
+
+  // ─── Error cause preservation ─────────────────────────────────────────────
+
+  it('preserves the original SDK error as ExtractionError.cause on PROVIDER_ERROR', async () => {
+    const originalErr = new Error('SDK internal error');
+    mockCreate.mockRejectedValue(originalErr);
+
+    const caught = await provider.extractInventoryInvoice(Buffer.from('%PDF-')).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ExtractionError);
+    expect((caught as ExtractionError).code).toBe(ExtractionErrorCode.PROVIDER_ERROR);
+    expect((caught as ExtractionError).cause).toBe(originalErr);
+  });
+
+  it('preserves the original SDK error as ExtractionError.cause on TIMEOUT', async () => {
+    const timeoutErr = Object.assign(new Error('Request timed out'), { name: 'APIConnectionTimeoutError' });
+    mockCreate.mockRejectedValue(timeoutErr);
+
+    const caught = await provider.extractInventoryInvoice(Buffer.from('%PDF-')).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ExtractionError);
+    expect((caught as ExtractionError).code).toBe(ExtractionErrorCode.TIMEOUT);
+    expect((caught as ExtractionError).cause).toBe(timeoutErr);
+  });
 });

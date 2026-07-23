@@ -16,12 +16,18 @@ Call the extract_invoice tool with all watch inventory items found in the suppli
 EXTRACTION RULES:
 - All numeric values for prices must be plain numbers (no currency symbols or commas).
 - ownershipType must be exactly "OWNED" or "CONSIGNMENT" if identifiable, otherwise omit.
-- costCurrency must be exactly "MXN" or "USD" if identifiable, otherwise omit.
 - watchStatus must be exactly one of: "AVAILABLE", "RESERVED", "SOLD", "IN_TRANSIT", "IN_SERVICE" if identifiable, otherwise omit.
 - For confidence scores: use 0.0–1.0, where 1.0 = certain, 0.5 = possible, 0.1 = guessed.
-- If a field is not present or not clearly readable, omit it entirely (do not include null values).
+- Missing optional watch fields must be returned as null / omitted and never invented (condition, asking prices, year, reference, serial, notes, imageUrl, etc.).
 - Do not hallucinate data. Only extract what is clearly present in the document.
 - Do not extract accessory or non-watch line items (straps, watch boxes sold separately, tools, loupes) as watches.
+
+CURRENCY RULES — CRITICAL:
+- costCurrency must be extracted ONLY when an explicit currency label is printed in the document (e.g. "MXN", "USD", "US$", "pesos", "dólares").
+- The "$" symbol alone must NOT be interpreted as USD.
+- When no explicit currency is shown, return costCurrency as "MXN".
+- Never infer currency from supplier name, geography, document language, watch brand, amount size, or market conventions.
+- invoice.currency follows the same rules as costCurrency.
 
 PRICE RULES — CRITICAL (M-01):
 purchasePrice represents the price paid for ONE individual watch unit.
@@ -37,9 +43,17 @@ Shipping costs, insurance, handling fees, import duties, taxes, and discounts ar
 
 EXAMPLES:
 
-Correct — per-watch line price:
+Correct — per-watch line price with explicit MXN:
   Invoice line: "1x Rolex Submariner 126610LN ... $185,000 MXN"
   → watches[0].purchasePrice = 185000, watches[0].costCurrency = "MXN"
+
+Correct — dollar amount with no currency label (default MXN):
+  Invoice line: "1x Rolex ... $1,500,000"
+  → watches[0].purchasePrice = 1500000, watches[0].costCurrency = "MXN"
+
+Correct — explicit USD:
+  Invoice line: "1x Patek ... USD 85,000" or "US$85,000" or "$85,000 USD"
+  → watches[0].purchasePrice = 85000, watches[0].costCurrency = "USD"
 
 Incorrect — do NOT use invoice total as purchasePrice:
   Invoice shows: Rolex Submariner + Omega Speedmaster, TOTAL $280,000 MXN
@@ -49,4 +63,8 @@ Incorrect — do NOT use invoice total as purchasePrice:
 Incorrect — do NOT divide invoice total:
   Invoice shows: 3 watches, TOTAL $450,000 MXN
   → watches[0].purchasePrice = 150000  ← WRONG (calculated, not stated)
-  → omit purchasePrice for all 3 watches`;
+  → omit purchasePrice for all 3 watches
+
+Incorrect — do NOT treat bare "$" as USD:
+  Invoice line: "$93,000" with no USD/MXN label
+  → costCurrency = "MXN"  (not "USD")`;

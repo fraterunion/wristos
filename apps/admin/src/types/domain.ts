@@ -99,17 +99,17 @@ export type WatchExpense = {
 export type Watch = {
   id: string;
   tenantId: string;
-  brand: string;
-  model: string;
+  brand: string | null;
+  model: string | null;
   serialNumber: string | null;
   imageUrl?: string | null;
-  condition: string;
-  cost: string;
+  condition: string | null;
+  cost: string | null;
   costCurrency?: string | null;
   costOriginalAmount?: string | null;
   costExchangeRate?: string | null;
-  priceMin: string;
-  priceMax: string;
+  priceMin: string | null;
+  priceMax: string | null;
   effectiveCost: string;
   expenses: WatchExpense[];
   status: WatchStatus;

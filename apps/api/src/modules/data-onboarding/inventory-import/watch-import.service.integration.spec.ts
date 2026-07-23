@@ -128,6 +128,7 @@ const MAPPING: MappingEntry[] = [
   { sourceColumn: 'Marca', targetField: 'brand' },
   { sourceColumn: 'Modelo', targetField: 'model' },
   { sourceColumn: 'Costo', targetField: 'cost' },
+  { sourceColumn: 'Moneda', targetField: 'costCurrency' },
   { sourceColumn: 'PrecioMin', targetField: 'priceMin' },
   { sourceColumn: 'PrecioMax', targetField: 'priceMax' },
   { sourceColumn: 'Condicion', targetField: 'condition' },
@@ -139,6 +140,7 @@ function rawRow(overrides: Record<string, string> = {}): Record<string, string> 
     Marca: 'Rolex',
     Modelo: 'Submariner',
     Costo: '15000',
+    Moneda: 'MXN',
     PrecioMin: '18000',
     PrecioMax: '22000',
     Condicion: 'Buena',
@@ -242,14 +244,18 @@ describe('WatchImportService (integration, in-memory prisma)', () => {
 
   describe('dry run', () => {
     it('validates rows, persists normalized data, and sets a dry-run version', async () => {
-      seed(prisma, [rawRow({ Serie: 'SN-1' }), rawRow({ Serie: 'SN-2', Costo: '0' }), rawRow({ Marca: '' })]);
+      seed(prisma, [
+        rawRow({ Serie: 'SN-1' }),
+        rawRow({ Serie: 'SN-2', Costo: '0' }),
+        rawRow({ Marca: '', Modelo: '', Costo: '', PrecioMin: '', PrecioMax: '' }),
+      ]);
 
       const summary = await service.runDryRun(TENANT, SESSION_ID);
 
       expect(summary.total).toBe(3);
       expect(summary.valid).toBe(1);
       expect(summary.warnings).toBe(1); // zero cost
-      expect(summary.invalid).toBe(1); // missing brand
+      expect(summary.invalid).toBe(1); // no brand/model/price
       expect(summary.dryRunVersion).toMatch(/^[0-9a-f]{16}:/);
 
       const session = prisma.dataImportSession.rows[0];
@@ -266,6 +272,58 @@ describe('WatchImportService (integration, in-memory prisma)', () => {
       expect(rec3.isValid).toBe(false);
 
       expect(eventsOfType(prisma, DataImportEventType.DRY_RUN_COMPLETED)).toHaveLength(1);
+    });
+
+    it('allows brand+model without condition/priceMin/priceMax (partial import)', async () => {
+      seed(prisma, [
+        rawRow({
+          Condicion: '',
+          PrecioMin: '',
+          PrecioMax: '',
+          Costo: '',
+          Moneda: '',
+          Serie: 'SN-PARTIAL',
+        }),
+      ]);
+
+      const summary = await service.runDryRun(TENANT, SESSION_ID);
+      expect(summary.valid).toBe(1);
+      expect(summary.invalid).toBe(0);
+
+      const result = await service.commitImport(TENANT, SESSION_ID, 'SKIP_DUPLICATES');
+      expect(result.importedCount).toBe(1);
+      expect(result.failedCount).toBe(0);
+      expect(prisma.watch.rows).toHaveLength(1);
+      expect(prisma.watch.rows[0].brand).toBe('Rolex');
+      expect(prisma.watch.rows[0].model).toBe('Submariner');
+      expect(prisma.watch.rows[0].condition).toBeNull();
+      expect(prisma.watch.rows[0].cost).toBeNull();
+      expect(prisma.watch.rows[0].priceMin).toBeNull();
+      expect(prisma.watch.rows[0].priceMax).toBeNull();
+    });
+
+    it('allows only-brand rows through dry-run and commit', async () => {
+      seed(prisma, [
+        {
+          Marca: 'Omega',
+          Modelo: '',
+          Costo: '',
+          Moneda: '',
+          PrecioMin: '',
+          PrecioMax: '',
+          Condicion: '',
+          Serie: '',
+        },
+      ]);
+
+      const summary = await service.runDryRun(TENANT, SESSION_ID);
+      expect(summary.valid + summary.warnings).toBe(1);
+      expect(summary.invalid).toBe(0);
+
+      const result = await service.commitImport(TENANT, SESSION_ID, 'SKIP_DUPLICATES');
+      expect(result.importedCount).toBe(1);
+      expect(prisma.watch.rows[0].brand).toBe('Omega');
+      expect(prisma.watch.rows[0].model).toBeNull();
     });
 
     it('marks DB serial conflicts as WARNING/CONFIRMED_DUPLICATE and in-file dups as INVALID', async () => {
@@ -295,7 +353,11 @@ describe('WatchImportService (integration, in-memory prisma)', () => {
 
   describe('commit — happy path and eligibility', () => {
     it('imports VALID and WARNING rows, excludes INVALID rows, persists targetRecordId', async () => {
-      seed(prisma, [rawRow({ Serie: 'SN-1' }), rawRow({ Serie: 'SN-2', Costo: '0' }), rawRow({ Marca: '' })]);
+      seed(prisma, [
+        rawRow({ Serie: 'SN-1' }),
+        rawRow({ Serie: 'SN-2', Costo: '0' }),
+        rawRow({ Marca: '', Modelo: '', Costo: '', PrecioMin: '', PrecioMax: '' }),
+      ]);
       await service.runDryRun(TENANT, SESSION_ID);
 
       const result = await service.commitImport(TENANT, SESSION_ID, 'SKIP_DUPLICATES');
@@ -532,13 +594,24 @@ describe('WatchImportService (integration, in-memory prisma)', () => {
 
   describe('error report', () => {
     it('only includes invalid rows, escapes cells, and is tenant-scoped', async () => {
-      seed(prisma, [rawRow({ Serie: 'SN-1' }), rawRow({ Marca: '=HYPERLINK("http://evil")', Modelo: '' })]);
+      seed(prisma, [
+        rawRow({ Serie: 'SN-1' }),
+        rawRow({
+          Marca: '',
+          Modelo: '',
+          Costo: '',
+          Moneda: '',
+          PrecioMin: '',
+          PrecioMax: '',
+          Serie: '=HYPERLINK("http://evil")',
+        }),
+      ]);
       await service.runDryRun(TENANT, SESSION_ID);
 
       const csv = await service.getErrorReport(TENANT, SESSION_ID);
       const lines = csv.split('\n');
       expect(lines[0]).toBe('Fila,Hoja,Marca,Modelo,Serie,Errores,Advertencias');
-      expect(lines).toHaveLength(2); // header + the one invalid row (missing model)
+      expect(lines).toHaveLength(2); // header + the one invalid row (no identity)
       expect(lines[1]).toContain("'=HYPERLINK");
 
       await expect(service.getErrorReport(OTHER_TENANT, SESSION_ID)).rejects.toThrow(NotFoundException);

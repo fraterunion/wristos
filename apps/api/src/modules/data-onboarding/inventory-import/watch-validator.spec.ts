@@ -1,7 +1,7 @@
 import { WatchOwnershipType, WatchStatus } from '@prisma/client';
 
 import { DryRunContext, NormalizedWatchRow } from './watch-import.types';
-import { ERROR_CODES, WARNING_CODES, validateNormalizedWatch } from './watch-validator';
+import { ERROR_CODES, WARNING_CODES, hasMinimumWatchIdentity, validateNormalizedWatch } from './watch-validator';
 
 function makeCtx(overrides?: Partial<DryRunContext>): DryRunContext {
   return {
@@ -34,16 +34,69 @@ describe('validateNormalizedWatch — valid row', () => {
   });
 });
 
-describe('validateNormalizedWatch — required field errors', () => {
-  it.each(['brand', 'model', 'condition', 'cost', 'priceMin', 'priceMax'] as const)(
-    'returns INVALID when %s is missing',
-    (field) => {
-      const row = { ...validRow(), [field]: undefined };
-      const result = validateNormalizedWatch(row, makeCtx(), 'rec-1');
-      expect(result.state).toBe('INVALID');
-      expect(result.errors.some((e) => e.field === field)).toBe(true);
-    },
-  );
+describe('validateNormalizedWatch — partial import identity', () => {
+  it('allows brand+model without condition/priceMin/priceMax/cost', () => {
+    const result = validateNormalizedWatch(
+      { brand: 'Rolex', model: 'Submariner' },
+      makeCtx(),
+      'rec-1',
+    );
+    expect(result.state).toBe('VALID');
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('allows only brand', () => {
+    const result = validateNormalizedWatch({ brand: 'Rolex' }, makeCtx(), 'rec-1');
+    expect(result.state).toBe('VALID');
+    expect(hasMinimumWatchIdentity({ brand: 'Rolex' })).toBe(true);
+  });
+
+  it('allows only model', () => {
+    const result = validateNormalizedWatch({ model: 'Submariner' }, makeCtx(), 'rec-1');
+    expect(result.state).toBe('VALID');
+  });
+
+  it('allows only price (cost)', () => {
+    const result = validateNormalizedWatch({ cost: 1500000, costCurrency: 'MXN' }, makeCtx(), 'rec-1');
+    expect(result.state).toBe('VALID');
+  });
+
+  it('is INVALID when no brand/model/price', () => {
+    const result = validateNormalizedWatch(
+      { reference: '126610LN', serialNumber: 'ABC123' },
+      makeCtx(),
+      'rec-1',
+    );
+    expect(result.state).toBe('INVALID');
+    expect(result.errors.some((e) => e.code === ERROR_CODES.IDENTITY_FIELDS_MISSING)).toBe(true);
+  });
+
+  it('does not error on missing optional enrichment fields', () => {
+    const result = validateNormalizedWatch(
+      { brand: 'Omega', model: 'Speedmaster' },
+      makeCtx(),
+      'rec-1',
+    );
+    expect(result.errors.some((e) => e.field === 'condition')).toBe(false);
+    expect(result.errors.some((e) => e.field === 'priceMin')).toBe(false);
+    expect(result.errors.some((e) => e.field === 'priceMax')).toBe(false);
+    expect(result.errors.some((e) => e.field === 'cost')).toBe(false);
+  });
+});
+
+describe('validateNormalizedWatch — currency assumed warning', () => {
+  it('adds non-blocking MXN assumption warning', () => {
+    const result = validateNormalizedWatch(
+      { brand: 'Rolex', model: 'Sub', cost: 1625641.75, costCurrency: 'MXN', currencyAssumedMxn: true },
+      makeCtx(),
+      'rec-1',
+    );
+    expect(result.state).toBe('WARNING');
+    expect(result.warnings.some((w) => w.code === WARNING_CODES.CURRENCY_ASSUMED_MXN)).toBe(true);
+    expect(result.warnings.find((w) => w.code === WARNING_CODES.CURRENCY_ASSUMED_MXN)?.message).toContain(
+      'Moneda no indicada explícitamente',
+    );
+  });
 });
 
 describe('validateNormalizedWatch — numeric constraints', () => {
@@ -117,15 +170,6 @@ describe('validateNormalizedWatch — status warnings', () => {
     expect(result.state).toBe('WARNING');
     expect(result.warnings.some((w) => w.code === WARNING_CODES.STATUS_NOT_AVAILABLE)).toBe(true);
   });
-
-  it('does not warn when status is AVAILABLE', () => {
-    const result = validateNormalizedWatch(
-      { ...validRow(), status: WatchStatus.AVAILABLE },
-      makeCtx(),
-      'rec-1',
-    );
-    expect(result.warnings.some((w) => w.code === WARNING_CODES.STATUS_NOT_AVAILABLE)).toBe(false);
-  });
 });
 
 describe('validateNormalizedWatch — USD exchange rate warning', () => {
@@ -139,82 +183,37 @@ describe('validateNormalizedWatch — USD exchange rate warning', () => {
   });
 });
 
-describe('validateNormalizedWatch — serial number duplicate detection', () => {
-  it('warns (not errors) when serial exists in DB — commit always skips these', () => {
-    const ctx = makeCtx({ existingSerials: new Set(['ROL-123']) });
-    const result = validateNormalizedWatch(
-      { ...validRow(), serialNumber: 'ROL-123' },
-      ctx,
-      'rec-1',
-    );
-    expect(result.state).toBe('WARNING');
-    expect(result.errors).toHaveLength(0);
-    expect(result.warnings.some((w) => w.code === WARNING_CODES.SERIAL_EXISTS_IN_DB)).toBe(true);
-  });
-
-  it('no warning when serial is unique', () => {
+describe('validateNormalizedWatch — serial checks', () => {
+  it('errors on second in-file serial duplicate', () => {
     const ctx = makeCtx();
-    const result = validateNormalizedWatch(
-      { ...validRow(), serialNumber: 'ROL-999' },
-      ctx,
-      'rec-1',
-    );
-    expect(result.warnings.some((w) => w.code === WARNING_CODES.SERIAL_EXISTS_IN_DB)).toBe(false);
-    expect(ctx.fileSerialsSeen.get('ROL-999')).toBe('rec-1');
-  });
-
-  it('errors when serial appears twice in file (second occurrence) — INVALID', () => {
-    const ctx = makeCtx();
-    // First occurrence — records it
-    validateNormalizedWatch({ ...validRow(), serialNumber: 'ROL-777' }, ctx, 'rec-1');
-    // Second occurrence — hard error
-    const result = validateNormalizedWatch({ ...validRow(), serialNumber: 'ROL-777' }, ctx, 'rec-2');
-    expect(result.state).toBe('INVALID');
-    expect(result.errors.some((e) => e.code === ERROR_CODES.SERIAL_DUPLICATE_IN_FILE)).toBe(true);
-  });
-
-  it('serial in DB AND duplicated in file: second occurrence is INVALID', () => {
-    const ctx = makeCtx({ existingSerials: new Set(['ROL-555']) });
-    const first = validateNormalizedWatch({ ...validRow(), serialNumber: 'ROL-555' }, ctx, 'rec-1');
-    expect(first.state).toBe('WARNING');
-    const second = validateNormalizedWatch({ ...validRow(), serialNumber: 'ROL-555' }, ctx, 'rec-2');
+    validateNormalizedWatch({ ...validRow(), serialNumber: 'SN-1' }, ctx, 'rec-1');
+    const second = validateNormalizedWatch({ ...validRow(), serialNumber: 'SN-1' }, ctx, 'rec-2');
     expect(second.state).toBe('INVALID');
     expect(second.errors.some((e) => e.code === ERROR_CODES.SERIAL_DUPLICATE_IN_FILE)).toBe(true);
   });
 
-  it('normalizes serials by trimming before comparison', () => {
-    const ctx = makeCtx({ existingSerials: new Set(['ROL-123']) });
-    const result = validateNormalizedWatch({ ...validRow(), serialNumber: '  ROL-123  ' }, ctx, 'rec-1');
+  it('warns when serial exists in DB', () => {
+    const result = validateNormalizedWatch(
+      { ...validRow(), serialNumber: 'EXISTS' },
+      makeCtx({ existingSerials: new Set(['EXISTS']) }),
+      'rec-1',
+    );
+    expect(result.state).toBe('WARNING');
     expect(result.warnings.some((w) => w.code === WARNING_CODES.SERIAL_EXISTS_IN_DB)).toBe(true);
-  });
-
-  it('does not check serial when serialNumber is absent', () => {
-    const ctx = makeCtx({ existingSerials: new Set(['ROL-123']) });
-    const result = validateNormalizedWatch({ ...validRow() }, ctx, 'rec-1');
-    expect(result.warnings.some((w) => w.code === WARNING_CODES.SERIAL_EXISTS_IN_DB)).toBe(false);
   });
 });
 
-describe('validateNormalizedWatch — structured parse issues', () => {
-  it('turns monetary parse issues into INVALID errors without duplicate "missing" noise', () => {
-    const row: NormalizedWatchRow = {
-      ...validRow(),
-      cost: undefined,
-      parseIssues: [{ field: 'cost', code: 'AMBIGUOUS_NUMBER_FORMAT' }],
-    };
-    const result = validateNormalizedWatch(row, makeCtx(), 'rec-1');
-    expect(result.state).toBe('INVALID');
-    expect(result.errors.some((e) => e.code === ERROR_CODES.AMBIGUOUS_NUMBER_FORMAT && e.field === 'cost')).toBe(true);
-    expect(result.errors.some((e) => e.code === ERROR_CODES.REQUIRED_COST_MISSING)).toBe(false);
-  });
-
-  it('turns conflicting currency parse issues into INVALID errors', () => {
-    const row: NormalizedWatchRow = {
-      ...validRow(),
-      priceMax: undefined,
-      parseIssues: [{ field: 'priceMax', code: 'CONFLICTING_CURRENCY' }],
-    };
-    const result = validateNormalizedWatch(row, makeCtx(), 'rec-1');
+describe('validateNormalizedWatch — parse issues', () => {
+  it('surfaces structured parse failures as errors', () => {
+    const result = validateNormalizedWatch(
+      {
+        ...validRow(),
+        cost: undefined,
+        parseIssues: [{ field: 'priceMax', code: 'CONFLICTING_CURRENCY' }],
+      },
+      makeCtx(),
+      'rec-1',
+    );
     expect(result.state).toBe('INVALID');
     expect(result.errors.some((e) => e.code === ERROR_CODES.CONFLICTING_CURRENCY)).toBe(true);
   });

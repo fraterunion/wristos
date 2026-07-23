@@ -25,11 +25,12 @@ const INVENTORY_STATUS_FILTER_OPTIONS = [
   { value: 'RESERVED', label: 'Reservado' },
 ] as const;
 
-function formatMoney(value: string) {
+function formatMoney(value: string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(n) ? n : 0);
 }
@@ -407,11 +408,15 @@ export default function InventoryPage() {
                       ) : null}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-muted">{dash(watch.serialNumber)}</td>
-                    <td className="px-4 py-3 text-muted">{watch.condition}</td>
+                    <td className="px-4 py-3 text-muted">{dash(watch.condition)}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-white">
-                      {watch.priceMin === watch.priceMax
-                        ? formatMoney(watch.priceMin)
-                        : `${formatMoney(watch.priceMin)} – ${formatMoney(watch.priceMax)}`}
+                      {watch.priceMin == null && watch.priceMax == null
+                        ? '—'
+                        : watch.priceMin === watch.priceMax || watch.priceMax == null
+                          ? formatMoney(watch.priceMin ?? watch.priceMax)
+                          : watch.priceMin == null
+                            ? formatMoney(watch.priceMax)
+                            : `${formatMoney(watch.priceMin)} – ${formatMoney(watch.priceMax)}`}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       <span className="font-medium text-white">{formatMoney(watch.effectiveCost)}</span>

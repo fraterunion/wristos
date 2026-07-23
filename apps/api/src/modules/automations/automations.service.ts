@@ -7,7 +7,7 @@ import { UpdateAutomationRuleDto } from './dto/update-automation-rule.dto';
 type AutomationRunOutput = {
   staleDeals: Array<{ id: string; stage: DealStage; updatedAt: string; daysSinceUpdate: number }>;
   overduePayments: Array<{ id: string; dealId: string; amount: string; dueDate: string }>;
-  agingInventory: Array<{ id: string; brand: string; model: string; status: WatchStatus; createdAt: string; ageDays: number }>;
+  agingInventory: Array<{ id: string; brand: string | null; model: string | null; status: WatchStatus; createdAt: string; ageDays: number }>;
   summary: {
     staleDealsCount: number;
     overduePaymentsCount: number;

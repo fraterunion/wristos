@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { Logger } from '@nestjs/common';
 
 import {
   EXTRACT_INVOICE_TOOL_INPUT_SCHEMA,
@@ -60,6 +61,7 @@ const EXTRACT_INVOICE_TOOL: Anthropic.Tool = {
 export class ClaudeExtractionProvider implements DocumentExtractionProvider {
   readonly providerName = 'claude';
 
+  private readonly logger = new Logger(ClaudeExtractionProvider.name);
   private readonly client: Anthropic;
   private readonly model: string;
   private readonly timeoutMs: number;
@@ -77,10 +79,25 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
   }
 
   async extractInventoryInvoice(pdfBuffer: Buffer): Promise<InventoryInvoiceExtraction> {
+    // Stage 1: buffer received
+    this.logger.debug(`[stage:buffer_received] model=${this.model} byteLength=${pdfBuffer.byteLength}`);
+
     const base64 = pdfBuffer.toString('base64');
+
+    // Stage 2: base64 conversion complete
+    this.logger.debug(`[stage:base64_complete] base64Length=${base64.length}`);
+
+    // Stage 3: request payload constructed
+    this.logger.debug(
+      `[stage:payload_constructed] model=${this.model} maxTokens=${this.maxTokens} timeoutMs=${this.timeoutMs} ` +
+      `docType=document docSourceType=base64 docMediaType=application/pdf`,
+    );
 
     let response: Anthropic.Message;
     try {
+      // Stage 4: messages.create invocation started
+      this.logger.debug(`[stage:create_started] model=${this.model}`);
+
       response = await this.client.messages.create(
         {
           model: this.model,
@@ -111,8 +128,26 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
           maxRetries: 0,
         },
       );
+
+      // Stage 5: messages.create response received
+      this.logger.debug(
+        `[stage:create_complete] stopReason=${response.stop_reason} contentBlocks=${response.content.length}`,
+      );
     } catch (err) {
       if (isExtractionError(err)) throw err;
+
+      // Extract safe metadata for logging — never log err.error (raw body) or err.headers.
+      const errMeta: Record<string, unknown> = {
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        errorName: err instanceof Error ? err.name : undefined,
+      };
+      if (err instanceof Error && 'status' in err) {
+        const apiErr = err as { status?: unknown; type?: unknown; requestID?: unknown };
+        if (typeof apiErr.status === 'number') errMeta.httpStatus = apiErr.status;
+        if (typeof apiErr.type === 'string') errMeta.errorType = apiErr.type;
+        if (typeof apiErr.requestID === 'string') errMeta.requestId = apiErr.requestID;
+      }
+      this.logger.error('[stage:create_failed] messages.create threw an error', errMeta);
 
       // Classify timeout vs general API failures — never expose err.message to callers
       const isTimeout =
@@ -127,12 +162,16 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
         throw new ExtractionError(
           ExtractionErrorCode.TIMEOUT,
           `La extracción tardó más de ${Math.round(this.timeoutMs / 1000)} segundos. Intente con un documento más pequeño.`,
+          undefined,
+          { cause: err },
         );
       }
 
       throw new ExtractionError(
         ExtractionErrorCode.PROVIDER_ERROR,
         'El servicio de extracción respondió con un error inesperado. Intente de nuevo.',
+        undefined,
+        { cause: err },
       );
     }
 

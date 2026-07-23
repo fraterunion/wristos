@@ -17,9 +17,9 @@ export type CostCurrency = (typeof COST_CURRENCY_VALUES)[number];
 
 export const PUBLIC_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** NULL/unknown costCurrency is treated as legacy USD for display. */
+/** NULL/unknown costCurrency defaults to MXN (canonical ledger currency). */
 export function inferWatchCostCurrency(costCurrency?: string | null): CostCurrency {
-  return costCurrency === 'MXN' ? 'MXN' : 'USD';
+  return costCurrency === 'USD' ? 'USD' : 'MXN';
 }
 
 const numericField = (label: string) =>
@@ -137,16 +137,15 @@ export const defaultWatchFormValues: WatchFormValues = {
 
 export function watchToFormValues(watch: Watch): WatchFormValues {
   return {
-    brand: watch.brand,
-    model: watch.model,
+    brand: watch.brand ?? '',
+    model: watch.model ?? '',
     serialNumber: watch.serialNumber ?? '',
     imageUrl: watch.imageUrl ?? '',
-    condition: watch.condition,
+    condition: watch.condition ?? '',
     costCurrency: inferWatchCostCurrency(watch.costCurrency),
-    // Legacy NULL rows store USD amounts in cost/price fields (not converted to MXN).
-    cost: Number(watch.cost),
-    priceMin: Number(watch.priceMin),
-    priceMax: Number(watch.priceMax),
+    cost: Number(watch.cost ?? 0),
+    priceMin: Number(watch.priceMin ?? 0),
+    priceMax: Number(watch.priceMax ?? 0),
     status: watch.status,
     ownershipType: watch.ownershipType,
     consignmentOwnerName: watch.consignmentOwnerName ?? '',

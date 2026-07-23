@@ -182,7 +182,7 @@ export class PdfInvoiceImportService {
         entityType: DataImportEntityType.INVENTORY,
         sourceSheet: 'PDF',
         sourceRowNumber: i + 1,
-        rawData: bridgeExtractedWatch(watch) as unknown as Prisma.InputJsonValue,
+        rawData: bridgeExtractedWatch(watch, extraction.invoice?.currency) as unknown as Prisma.InputJsonValue,
         isValid: true,
         importStatus: DataImportRecordStatus.STAGED,
         duplicateKey: null as string | null,
@@ -242,13 +242,18 @@ export class PdfInvoiceImportService {
       const safeRecord = buildSafeExtractionRecord(err, providerName, modelId);
       const durationMs = Date.now() - startedAt;
 
-      // Extract safe Anthropic API metadata — never log err.error (raw body) or err.headers.
+      // Extract safe Anthropic API metadata from err or its cause (ExtractionError wraps SDK errors).
+      // Never log err.error (raw body) or err.headers.
       const anthropicMeta: Record<string, unknown> = {};
-      if (err instanceof Error && 'status' in err) {
-        const apiErr = err as { status?: unknown; type?: unknown; requestID?: unknown };
-        if (typeof apiErr.status === 'number') anthropicMeta.httpStatus = apiErr.status;
-        if (typeof apiErr.type === 'string') anthropicMeta.errorType = apiErr.type;
-        if (typeof apiErr.requestID === 'string') anthropicMeta.requestId = apiErr.requestID;
+      const errCause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+      for (const candidate of [err, errCause]) {
+        if (candidate instanceof Error && 'status' in candidate) {
+          const apiErr = candidate as { status?: unknown; type?: unknown; requestID?: unknown };
+          if (typeof apiErr.status === 'number') anthropicMeta.httpStatus = apiErr.status;
+          if (typeof apiErr.type === 'string') anthropicMeta.errorType = apiErr.type;
+          if (typeof apiErr.requestID === 'string') anthropicMeta.requestId = apiErr.requestID;
+          break;
+        }
       }
 
       this.logger.error('PDF extraction failed', {
@@ -408,7 +413,7 @@ export class PdfInvoiceImportService {
       entityType: DataImportEntityType.INVENTORY,
       sourceSheet: 'PDF',
       sourceRowNumber: i + 1,
-      rawData: bridgeExtractedWatch(watch) as unknown as Prisma.InputJsonValue,
+      rawData: bridgeExtractedWatch(watch, extraction.invoice?.currency) as unknown as Prisma.InputJsonValue,
       isValid: true,
       importStatus: DataImportRecordStatus.STAGED,
     }));

@@ -221,8 +221,8 @@ export default function HistoryPage() {
       if (soldFilters.watchSearch.trim()) {
         const q = soldFilters.watchSearch.trim().toLowerCase();
         if (
-          !item.watch.brand.toLowerCase().includes(q) &&
-          !item.watch.model.toLowerCase().includes(q) &&
+          !item.watch.brand?.toLowerCase().includes(q) &&
+          !item.watch.model?.toLowerCase().includes(q) &&
           !(item.watch.serialNumber?.toLowerCase().includes(q) ?? false)
         ) return false;
       }
@@ -255,8 +255,8 @@ export default function HistoryPage() {
     const q = movementsSearch.trim().toLowerCase();
     return movements.filter(
       (m) =>
-        m.watch.brand.toLowerCase().includes(q) ||
-        m.watch.model.toLowerCase().includes(q) ||
+        m.watch.brand?.toLowerCase().includes(q) ||
+        m.watch.model?.toLowerCase().includes(q) ||
         m.client.name.toLowerCase().includes(q),
     );
   }, [movements, movementsSearch]);

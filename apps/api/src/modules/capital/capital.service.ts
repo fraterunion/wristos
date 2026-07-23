@@ -86,7 +86,7 @@ export class CapitalService {
         (s, e) => s.plus(e.amount),
         new Prisma.Decimal(0),
       );
-      return sum.plus(d.watch.cost).plus(expSum);
+      return sum.plus(d.watch.cost ?? 0).plus(expSum);
     }, new Prisma.Decimal(0));
     const totalBankFees = bankFeeAgg._sum.amount ?? new Prisma.Decimal(0);
     const totalBusinessProfit = totalRevenue.minus(totalCostOfSold).minus(totalBankFees);
@@ -204,7 +204,7 @@ export class CapitalService {
         new Prisma.Decimal(0),
       );
       buckets[monthIdx].costOfSold = buckets[monthIdx].costOfSold
-        .plus(deal.watch.cost)
+        .plus(deal.watch.cost ?? 0)
         .plus(expSum);
     }
 
@@ -493,7 +493,7 @@ export class CapitalService {
         (s, e) => s.plus(e.amount),
         new Prisma.Decimal(0),
       );
-      return sum.plus(d.watch.cost).plus(expSum);
+      return sum.plus(d.watch.cost ?? 0).plus(expSum);
     }, new Prisma.Decimal(0));
     const totalBankFees = bankFeeAgg._sum.amount ?? new Prisma.Decimal(0);
     return totalRevenue.minus(totalCostOfSold).minus(totalBankFees);

@@ -171,8 +171,8 @@ export class MatchingService {
     let score = 0;
     const reasons: string[] = [];
 
-    const brand = watch.brand.trim();
-    const model = watch.model.trim();
+    const brand = (watch.brand ?? '').trim();
+    const model = (watch.model ?? '').trim();
     const reference = (watch.reference ?? '').trim();
 
     const preferredBrands = (preference?.preferredBrands ?? []).map((b) =>
@@ -182,7 +182,7 @@ export class MatchingService {
       m.toLowerCase(),
     );
 
-    if (preferredBrands.includes(brand.toLowerCase())) {
+    if (brand && preferredBrands.includes(brand.toLowerCase())) {
       score += 40;
       reasons.push(`Brand match: ${brand}`);
     }
@@ -196,19 +196,21 @@ export class MatchingService {
       reasons.push(`Model/reference match: ${modelHit}`);
     }
 
-    const watchPriceMin = Number(watch.priceMin);
-    const watchPriceMax = Number(watch.priceMax);
+    const watchPriceMin = watch.priceMin != null ? Number(watch.priceMin) : NaN;
+    const watchPriceMax = watch.priceMax != null ? Number(watch.priceMax) : NaN;
     const budgetMin = preference?.budgetMin ? Number(preference.budgetMin) : null;
     const budgetMax = preference?.budgetMax ? Number(preference.budgetMax) : null;
     const rangesOverlap =
       budgetMin !== null &&
       budgetMax !== null &&
+      Number.isFinite(watchPriceMin) &&
+      Number.isFinite(watchPriceMax) &&
       watchPriceMin <= budgetMax &&
       watchPriceMax >= budgetMin;
     if (rangesOverlap) {
       score += 25;
       reasons.push(`Budget match: ${budgetMin}-${budgetMax}`);
-    } else if (budgetMax !== null && watchPriceMin <= budgetMax) {
+    } else if (budgetMax !== null && Number.isFinite(watchPriceMin) && watchPriceMin <= budgetMax) {
       score += 10;
       reasons.push(`Within max budget: <= ${budgetMax}`);
     }

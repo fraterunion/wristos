@@ -30,8 +30,13 @@ export class ExtractionError extends Error {
   readonly safeMessage: string;
   readonly debugInfo?: Record<string, unknown>;
 
-  constructor(code: ExtractionErrorCode, safeMessage: string, debugInfo?: Record<string, unknown>) {
-    super(safeMessage);
+  constructor(
+    code: ExtractionErrorCode,
+    safeMessage: string,
+    debugInfo?: Record<string, unknown>,
+    options?: { cause?: unknown },
+  ) {
+    super(safeMessage, options);
     this.name = 'ExtractionError';
     this.code = code;
     this.safeMessage = safeMessage;

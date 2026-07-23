@@ -9,11 +9,12 @@ type Props = {
   onClose: () => void;
 };
 
-function formatMoney(value: string) {
+function formatMoney(value: string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(n) ? n : 0);
 }
@@ -39,16 +40,20 @@ export function WatchImageLightbox({ watch, onClose }: Props) {
   if (!watch) return null;
 
   const priceStr =
-    watch.priceMin === watch.priceMax
-      ? formatMoney(watch.priceMin)
-      : `${formatMoney(watch.priceMin)} – ${formatMoney(watch.priceMax)}`;
+    watch.priceMin == null && watch.priceMax == null
+      ? '—'
+      : watch.priceMin === watch.priceMax || watch.priceMax == null
+        ? formatMoney(watch.priceMin ?? watch.priceMax)
+        : watch.priceMin == null
+          ? formatMoney(watch.priceMax)
+          : `${formatMoney(watch.priceMin)} – ${formatMoney(watch.priceMax)}`;
 
   return (
     // Backdrop — click anywhere outside the card to close
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`${watch.brand} ${watch.model}`}
+      aria-label={`${watch.brand ?? ''} ${watch.model ?? ''}`.trim() || 'Watch'}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
@@ -75,7 +80,7 @@ export function WatchImageLightbox({ watch, onClose }: Props) {
         ) : (
           <img
             src={watch.imageUrl ?? ''}
-            alt={`${watch.brand} ${watch.model}`}
+            alt={`${watch.brand ?? ''} ${watch.model ?? ''}`.trim() || 'Watch'}
             className="max-h-[70vh] max-w-full rounded-2xl object-contain shadow-2xl ring-1 ring-white/15"
             onError={() => setImgError(true)}
           />
