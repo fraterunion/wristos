@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 
 import { FxService } from '../../fx/fx.service';
+import { ReceivablesService } from '../../receivables/receivables.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { escapeCsvCell } from '../inventory-import/csv-report.util';
 import { errorReportMaxRows, staleImportTimeoutMs } from '../inventory-import/watch-import.service';
@@ -64,6 +65,7 @@ export class SalesImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fxService: FxService,
+    private readonly receivablesService: ReceivablesService,
   ) {}
 
   async getSalesMapping(tenantId: string, sessionId: string, fileId: string): Promise<SalesMappingResponse> {
@@ -514,6 +516,7 @@ export class SalesImportService {
           const salePrice = normalized.salePrice;
 
           try {
+            let createdDealId: string | null = null;
             await this.prisma.$transaction(async (tx) => {
               const clientId = await this.resolveOrCreateClient(
                 tx,
@@ -582,6 +585,7 @@ export class SalesImportService {
               });
 
               // Intentionally NO Payment create and NO watch.status update.
+              // paymentCount is metadata only — never invent fake receivable payments.
 
               await tx.dataImportRecord.update({
                 where: { id: record.id },
@@ -592,7 +596,23 @@ export class SalesImportService {
               });
 
               if (fp) fingerprintToDealId.set(fp, deal.id);
+              createdDealId = deal.id;
             });
+
+            if (createdDealId) {
+              try {
+                await this.receivablesService.ensureForDeal(tenantId, createdDealId, {
+                  sourceTag: HISTORICAL_SOURCE_TAG,
+                });
+              } catch (arErr) {
+                this.logger.warn(
+                  `Failed ensuring receivable for imported deal ${createdDealId}: ${
+                    arErr instanceof Error ? arErr.message : String(arErr)
+                  }`,
+                );
+              }
+            }
+
             importedCount++;
           } catch (err) {
             this.logger.warn(

@@ -212,7 +212,11 @@ describe('SalesImportService — dry-run / commit happy paths', () => {
   beforeEach(() => {
     idSeq = 0;
     db = new FakePrisma();
-    service = new SalesImportService(db as unknown as never, fxServiceFake as never);
+    service = new SalesImportService(
+      db as unknown as never,
+      fxServiceFake as never,
+      { ensureForDeal: jest.fn(async () => null) } as never,
+    );
     seedSession(db);
     seedFile(db);
   });

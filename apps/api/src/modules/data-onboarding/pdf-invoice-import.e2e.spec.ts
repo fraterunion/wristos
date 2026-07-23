@@ -59,6 +59,7 @@ import { PdfInvoiceImportService } from './pdf-invoice-import.service';
 import { PdfSalesImportService } from './pdf-sales-import.service';
 import { SalesImportService } from './sales-import/sales-import.service';
 import { FxService } from '../fx/fx.service';
+import { ReceivablesService } from '../receivables/receivables.service';
 import { IMPORT_FILE_STORAGE } from './tokens';
 import { LocalImportFileStorage } from './storage/local-import-file.storage';
 
@@ -481,6 +482,10 @@ beforeAll(async () => {
       SalesImportService,
       PdfInvoiceImportService,
       PdfSalesImportService,
+      {
+        provide: ReceivablesService,
+        useValue: { ensureForDeal: jest.fn(async () => null) },
+      },
       { provide: IMPORT_FILE_STORAGE, useValue: storage },
       // Provide PrismaService class as the DI token for the stateful in-memory mock.
       // All three services inject PrismaService by class type, so this correctly

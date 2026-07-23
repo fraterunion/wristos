@@ -16,6 +16,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CuentasService } from '../cuentas/cuentas.service';
 import { FxService } from '../fx/fx.service';
+import {
+  mapDealPaymentMethodToReceivable,
+} from '../receivables/receivable-balance';
+import { ReceivablesService } from '../receivables/receivables.service';
 import { AddPaymentDto } from './dto/add-payment.dto';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
@@ -31,6 +35,7 @@ export class DealsService {
     private readonly prisma: PrismaService,
     private readonly fxService: FxService,
     private readonly cuentasService: CuentasService,
+    private readonly receivablesService: ReceivablesService,
   ) {}
 
   async create(tenantId: string, dto: CreateDealDto) {
@@ -337,6 +342,16 @@ export class DealsService {
 
     await this.syncReceivableSafe(deal.id, tenantId);
 
+    // Mirror initial sale payment into AR ledger (skip deal payment — already created).
+    if (paymentAmountDecimal !== null && paymentMethod !== null) {
+      await this.syncReceivablePaymentSafe(tenantId, deal.id, {
+        amount: Number(paymentAmountDecimal.toString()),
+        method: paymentMethod,
+        paymentDate: paymentDate.toISOString(),
+        notes: dto.notes,
+      });
+    }
+
     const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
     const paidTotal = paymentAmountDecimal ?? new Prisma.Decimal(0);
     const rawPending = canonicalMxn.minus(paidTotal);
@@ -434,6 +449,14 @@ export class DealsService {
     const { payment, bankFeeExpense } = result;
     const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
 
+    await this.syncReceivableSafe(dealId, tenantId);
+    await this.syncReceivablePaymentSafe(tenantId, dealId, {
+      amount: Number(paymentAmount.toString()),
+      method: dto.method,
+      paymentDate: paidAt.toISOString(),
+      notes: dto.notes,
+    });
+
     return {
       payment: {
         id: payment.id,
@@ -456,6 +479,49 @@ export class DealsService {
     } catch (error: unknown) {
       this.logger.error(
         `Failed syncing receivable for deal ${dealId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+
+    try {
+      await this.receivablesService.ensureForDeal(tenantId, dealId);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed ensuring AR receivable for deal ${dealId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  private async syncReceivablePaymentSafe(
+    tenantId: string,
+    dealId: string,
+    opts: {
+      amount: number;
+      method: PaymentMethod | string;
+      paymentDate: string;
+      notes?: string;
+    },
+  ): Promise<void> {
+    try {
+      const receivable = await this.receivablesService.ensureForDeal(tenantId, dealId);
+      if (!receivable) return;
+
+      await this.receivablesService.addPayment(
+        tenantId,
+        receivable.id,
+        {
+          amount: opts.amount,
+          method: mapDealPaymentMethodToReceivable(opts.method),
+          paymentDate: opts.paymentDate,
+          notes: opts.notes,
+          syncDealPayment: false,
+        },
+        undefined,
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed syncing AR payment for deal ${dealId}`,
         error instanceof Error ? error.stack : undefined,
       );
     }

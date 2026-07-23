@@ -23,6 +23,7 @@ import { TreasuryModule } from './modules/treasury/treasury.module';
 import { StripeModule } from './modules/stripe/stripe.module';
 import { StorefrontModule } from './modules/storefront/storefront.module';
 import { DataOnboardingModule } from './modules/data-onboarding/data-onboarding.module';
+import { ReceivablesModule } from './modules/receivables/receivables.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { DataOnboardingModule } from './modules/data-onboarding/data-onboarding.
     StripeModule,
     StorefrontModule,
     DataOnboardingModule,
+    ReceivablesModule,
   ],
   controllers: [AppController],
 })

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { FxModule } from '../fx/fx.module';
+import { ReceivablesModule } from '../receivables/receivables.module';
 import { DataOnboardingController } from './data-onboarding.controller';
 import { DataOnboardingService } from './data-onboarding.service';
 import { WatchImportService } from './inventory-import/watch-import.service';
@@ -12,7 +13,7 @@ import { IMPORT_FILE_STORAGE } from './tokens';
 export { IMPORT_FILE_STORAGE } from './tokens';
 
 @Module({
-  imports: [FxModule],
+  imports: [FxModule, ReceivablesModule],
   controllers: [DataOnboardingController],
   providers: [
     { provide: IMPORT_FILE_STORAGE, useValue: createImportFileStorage() },

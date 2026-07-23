@@ -160,6 +160,34 @@ enum AccountEntrySource {
   DEAL_AUTO
 }
 
+// --- Accounts Receivable ledger (Sprint 2) ---
+
+enum ReceivableStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  WRITTEN_OFF
+}
+
+enum ReceivablePaymentMethod {
+  WIRE
+  BANK_TRANSFER
+  CASH
+  CHECK
+  CRYPTO
+  CARD
+  OTHER
+}
+
+enum FinancialAuditEventType {
+  RECEIVABLE_CREATED
+  PAYMENT_CREATED
+  PAYMENT_DELETED
+  PAYMENT_REVERSED
+  RECEIVABLE_WRITTEN_OFF
+}
+
 enum StorefrontReservationStatus {
   PENDING    // Stripe session created, awaiting payment
   PAID       // checkout.session.completed webhook received
@@ -350,6 +378,9 @@ model Tenant {
   dataImportFiles          DataImportFile[]
   dataImportRecords        DataImportRecord[]
   dataImportEvents         DataImportEvent[]
+  receivables              Receivable[]
+  receivablePayments       ReceivablePayment[]
+  financialAuditEvents     FinancialAuditEvent[]
 
   @@index([slug])
   @@map("tenants")
@@ -364,8 +395,10 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  tenantUsers        TenantUser[]
-  dataImportSessions DataImportSession[] @relation("DataImportCreatedBy")
+  tenantUsers              TenantUser[]
+  dataImportSessions       DataImportSession[] @relation("DataImportCreatedBy")
+  receivablePaymentsCreated ReceivablePayment[] @relation("ReceivablePaymentCreatedBy")
+  financialAuditEvents     FinancialAuditEvent[] @relation("FinancialAuditActor")
 
   @@map("users")
 }
@@ -427,6 +460,7 @@ model Client {
   radarContacts          Contact[]
   accountEntries         AccountEntry[]
   storefrontReservations StorefrontReservation[]
+  receivables            Receivable[]
 
   @@index([tenantId])
   @@index([tenantId, email])
@@ -600,6 +634,7 @@ model Deal {
   operatingExpenses     OperatingExpense[]
   accountEntries        AccountEntry[]
   storefrontReservation StorefrontReservation?
+  receivable            Receivable?
 
   @@unique([tenantId, importFingerprint])
   @@index([tenantId])
@@ -636,6 +671,101 @@ model Payment {
   @@index([tenantId, dealId])
   @@index([tenantId, deletedAt])
   @@map("payments")
+}
+
+/// Deal-originated accounts receivable (1:1 with Deal). Balance is never stored.
+model Receivable {
+  id               String           @id @default(cuid())
+  tenantId         String
+  dealId           String           @unique
+  customerId       String
+  originalAmount   Decimal          @db.Decimal(12, 2)
+  currency         Currency         @default(MXN)
+  fxRate           Decimal?         @db.Decimal(12, 6)
+  /// Canonical MXN amount (originalAmount * fxRate when USD, else originalAmount).
+  normalizedAmount Decimal          @db.Decimal(12, 2)
+  issueDate        DateTime
+  dueDate          DateTime?
+  /// Derived status refreshed on payment mutations / reads — not a manual paid flag.
+  status           ReceivableStatus @default(PENDING)
+  notes            String?
+  sourceTag        String?
+  writtenOffAt     DateTime?
+  writtenOffReason String?
+  deletedAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deal     Deal                @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  customer Client              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  payments ReceivablePayment[]
+
+  @@unique([tenantId, dealId])
+  @@index([tenantId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+  @@index([tenantId, issueDate])
+  @@index([tenantId, dueDate])
+  @@index([tenantId, deletedAt])
+  @@map("receivables")
+}
+
+/// Immutable receivable payment events. Amount is never updated after create.
+model ReceivablePayment {
+  id                 String                  @id @default(cuid())
+  tenantId           String
+  receivableId       String
+  amount             Decimal                 @db.Decimal(12, 2)
+  currency           Currency                @default(MXN)
+  fxRate             Decimal?                @db.Decimal(12, 6)
+  normalizedAmount   Decimal                 @db.Decimal(12, 2)
+  paymentDate        DateTime
+  method             ReceivablePaymentMethod
+  reference          String?
+  notes              String?
+  createdByUserId    String?
+  /// Soft-delete only when no reconciliation exists yet (pre-settlement correction).
+  deletedAt          DateTime?
+  /// When set, this row is a reversal of another payment.
+  reversesPaymentId  String?
+  createdAt          DateTime                @default(now())
+
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  receivable      Receivable         @relation(fields: [receivableId], references: [id], onDelete: Restrict)
+  createdBy       User?              @relation("ReceivablePaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reversesPayment ReceivablePayment? @relation("ReceivablePaymentReversal", fields: [reversesPaymentId], references: [id], onDelete: Restrict)
+  reversedBy      ReceivablePayment[] @relation("ReceivablePaymentReversal")
+
+  @@index([tenantId])
+  @@index([tenantId, receivableId])
+  @@index([tenantId, paymentDate])
+  @@index([tenantId, deletedAt])
+  @@map("receivable_payments")
+}
+
+model FinancialAuditEvent {
+  id           String                   @id @default(cuid())
+  tenantId     String
+  eventType    FinancialAuditEventType
+  entityType   String
+  entityId     String
+  dealId       String?
+  receivableId String?
+  actorUserId  String?
+  message      String
+  metadata     Json?
+  createdAt    DateTime                 @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor  User?  @relation("FinancialAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, eventType])
+  @@index([tenantId, receivableId])
+  @@index([tenantId, entityId])
+  @@index([tenantId, createdAt])
+  @@map("financial_audit_events")
 }
 
 model MatchSuggestion {
