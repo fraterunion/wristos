@@ -33,19 +33,25 @@ export function resolveSalesPdfChunkConcurrency(): number {
 }
 
 export function resolveSalesPdfChunkMaxTokens(): number {
-  // Dense historical-sales pages routinely exceed 8k structured output tokens.
-  // Chunking bounds pages; the per-chunk budget defaults to the allowed maximum.
-  return clampInt(process.env.SALES_PDF_CHUNK_MAX_TOKENS, 16384, 2048, 16384);
+  // Prefer a completion-friendly budget; dense pages escalate via row batches,
+  // not by forcing the model to fill a huge max_tokens window under a short timeout.
+  return clampInt(process.env.SALES_PDF_CHUNK_MAX_TOKENS, 8192, 2048, 16384);
 }
 
 /** Absolute ceiling for a single Claude chunk call (matches env clamp max). */
 export const SALES_PDF_CHUNK_MAX_TOKENS_CEILING = 16384;
+
+/** Preferred token budget for dense single-page row batches (faster than ceiling). */
+export const SALES_PDF_DENSE_BATCH_MAX_TOKENS = 8192;
 
 /** Row caps tried when a single page still truncates at the token ceiling. */
 export const DENSE_PAGE_BATCH_SIZES = [25, 15, 10, 6] as const;
 
 /** Hard stop for within-page continuation passes (prevents unbounded cost). */
 export const MAX_DENSE_PAGE_PASSES = 12;
+
+/** Max provider attempts per leaf chunk range before leaving it FAILED. */
+export const MAX_ATTEMPTS_PER_RANGE = 3;
 
 export function resolveSalesPdfMaxChunks(): number {
   return clampInt(process.env.SALES_PDF_MAX_CHUNKS, 100, 1, 1000);

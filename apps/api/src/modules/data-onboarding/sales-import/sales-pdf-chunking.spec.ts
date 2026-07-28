@@ -40,12 +40,12 @@ describe('sales-pdf-chunking', () => {
     else process.env.SALES_PDF_PAGES_PER_CHUNK = prev;
   });
 
-  it('defaults chunk max tokens to 16384 and clamps invalid env', () => {
+  it('defaults chunk max tokens to 8192 and clamps invalid env', () => {
     const prev = process.env.SALES_PDF_CHUNK_MAX_TOKENS;
     delete process.env.SALES_PDF_CHUNK_MAX_TOKENS;
-    expect(resolveSalesPdfChunkMaxTokens()).toBe(16384);
+    expect(resolveSalesPdfChunkMaxTokens()).toBe(8192);
     process.env.SALES_PDF_CHUNK_MAX_TOKENS = '99999';
-    expect(resolveSalesPdfChunkMaxTokens()).toBe(16384);
+    expect(resolveSalesPdfChunkMaxTokens()).toBe(8192);
     process.env.SALES_PDF_CHUNK_MAX_TOKENS = '4096';
     expect(resolveSalesPdfChunkMaxTokens()).toBe(4096);
     if (prev === undefined) delete process.env.SALES_PDF_CHUNK_MAX_TOKENS;
