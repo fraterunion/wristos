@@ -13,6 +13,7 @@ import {
   DataImportStatus,
   DataImportTarget,
   DealStage,
+  DocumentExtractionChunkStatus,
   Prisma,
 } from '@prisma/client';
 
@@ -150,6 +151,8 @@ export class SalesImportService {
         `La sesión debe estar en READY_FOR_REVIEW para ejecutar dry-run (actual: ${session.status})`,
       );
     }
+
+    await this.assertNoUnresolvedSalesChunks(tenantId, sessionId);
 
     const files = await this.prisma.dataImportFile.findMany({
       where: { tenantId, sessionId, detectedEntityType: DataImportEntityType.SALES },
@@ -356,6 +359,7 @@ export class SalesImportService {
 
   async commitSalesImport(tenantId: string, sessionId: string): Promise<SalesCommitResult> {
     let session = await this.requireSession(tenantId, sessionId);
+    await this.assertNoUnresolvedSalesChunks(tenantId, sessionId);
 
     // ── Stale IMPORTING recovery ─────────────────────────────────────────────
     if (session.status === DataImportStatus.IMPORTING) {
@@ -924,6 +928,27 @@ export class SalesImportService {
       );
     }
     return session;
+  }
+
+  private async assertNoUnresolvedSalesChunks(tenantId: string, sessionId: string): Promise<void> {
+    const unresolved = await this.prisma.documentExtractionChunk.count({
+      where: {
+        tenantId,
+        sessionId,
+        status: {
+          in: [
+            DocumentExtractionChunkStatus.PENDING,
+            DocumentExtractionChunkStatus.PROCESSING,
+            DocumentExtractionChunkStatus.FAILED,
+          ],
+        },
+      },
+    });
+    if (unresolved > 0) {
+      throw new UnprocessableEntityException(
+        'Hay bloques de extracción pendientes o fallidos. Reintenta los bloques fallidos antes de continuar.',
+      );
+    }
   }
 
   private async requireFile(tenantId: string, sessionId: string, fileId: string) {

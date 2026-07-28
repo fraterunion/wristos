@@ -120,6 +120,7 @@ class FakePrisma {
   dataImportFile = new FakeModel();
   dataImportRecord = new FakeModel();
   dataImportEvent = new FakeModel();
+  documentExtractionChunk = new FakeModel();
   client = new FakeModel();
   watch = new FakeModel();
   deal = new FakeModel();

@@ -132,7 +132,8 @@ export type ExtractionState =
   | 'processing'
   | 'failed'
   | 'corrupt'
-  | 'ready';
+  | 'ready'
+  | 'partially_completed';
 
 // ─── Bridge ──────────────────────────────────────────────────────────────────
 

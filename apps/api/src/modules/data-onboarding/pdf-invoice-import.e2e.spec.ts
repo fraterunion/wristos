@@ -57,6 +57,7 @@ import { DataOnboardingService } from './data-onboarding.service';
 import { WatchImportService } from './inventory-import/watch-import.service';
 import { PdfInvoiceImportService } from './pdf-invoice-import.service';
 import { PdfSalesImportService } from './pdf-sales-import.service';
+import { SalesChunkedExtractionService } from './sales-import/sales-chunked-extraction.service';
 import { SalesImportService } from './sales-import/sales-import.service';
 import { FxService } from '../fx/fx.service';
 import { ReceivablesService } from '../receivables/receivables.service';
@@ -414,6 +415,17 @@ function buildMockPrisma() {
         events.find((e) => matchesWhere(e as unknown as Record<string, unknown>, where)) ?? null,
     },
 
+    documentExtractionChunk: {
+      count: async () => 0,
+      findMany: async () => [],
+      createMany: async () => ({ count: 0 }),
+      updateMany: async () => ({ count: 0 }),
+      update: async () => ({}),
+      create: async () => ({}),
+      deleteMany: async () => ({ count: 0 }),
+      aggregate: async () => ({ _max: { chunkIndex: null } }),
+    },
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     $transaction: async (fnOrOps: unknown): Promise<any> => {
       if (typeof fnOrOps === 'function') {
@@ -482,6 +494,7 @@ beforeAll(async () => {
       SalesImportService,
       PdfInvoiceImportService,
       PdfSalesImportService,
+      SalesChunkedExtractionService,
       {
         provide: ReceivablesService,
         useValue: { ensureForDeal: jest.fn(async () => null) },

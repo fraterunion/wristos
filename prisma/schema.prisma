@@ -189,12 +189,11 @@ enum FinancialAuditEventType {
 }
 
 enum StorefrontReservationStatus {
-  PENDING    // Stripe session created, awaiting payment
-  PAID       // checkout.session.completed webhook received
-  CANCELLED  // session expired or explicitly cancelled
-  PROCESSED  // admin reviewed and converted to deal
+  PENDING // Stripe session created, awaiting payment
+  PAID // checkout.session.completed webhook received
+  CANCELLED // session expired or explicitly cancelled
+  PROCESSED // admin reviewed and converted to deal
 }
-
 
 enum DataImportStatus {
   CREATED
@@ -238,6 +237,14 @@ enum DataImportEntityType {
 enum DataImportTarget {
   INVENTORY
   SALES
+}
+
+enum DocumentExtractionChunkStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  SUPERSEDED
 }
 
 enum DataImportRecordStatus {
@@ -348,23 +355,23 @@ model Tenant {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  roles              Role[]
-  tenantUsers        TenantUser[]
-  clients            Client[]
-  clientPreferences  ClientPreference[]
-  clientInteractions ClientInteraction[]
-  watches            Watch[]
-  watchImages        WatchImage[]
-  watchExpenses      WatchExpense[]
-  operatingExpenses  OperatingExpense[]
-  deals              Deal[]
-  payments           Payment[]
-  automationRules    AutomationRule[]
-  automationRuns     AutomationRun[]
-  matchSuggestions   MatchSuggestion[]
-  channels           Channel[]
-  radarImports       RadarImport[]
-  channelMessages    ChannelMessage[]
+  roles                    Role[]
+  tenantUsers              TenantUser[]
+  clients                  Client[]
+  clientPreferences        ClientPreference[]
+  clientInteractions       ClientInteraction[]
+  watches                  Watch[]
+  watchImages              WatchImage[]
+  watchExpenses            WatchExpense[]
+  operatingExpenses        OperatingExpense[]
+  deals                    Deal[]
+  payments                 Payment[]
+  automationRules          AutomationRule[]
+  automationRuns           AutomationRun[]
+  matchSuggestions         MatchSuggestion[]
+  channels                 Channel[]
+  radarImports             RadarImport[]
+  channelMessages          ChannelMessage[]
   contacts                 Contact[]
   marketListings           MarketListing[]
   investors                Investor[]
@@ -378,6 +385,7 @@ model Tenant {
   dataImportFiles          DataImportFile[]
   dataImportRecords        DataImportRecord[]
   dataImportEvents         DataImportEvent[]
+  documentExtractionChunks DocumentExtractionChunk[]
   receivables              Receivable[]
   receivablePayments       ReceivablePayment[]
   financialAuditEvents     FinancialAuditEvent[]
@@ -395,10 +403,10 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  tenantUsers              TenantUser[]
-  dataImportSessions       DataImportSession[] @relation("DataImportCreatedBy")
-  receivablePaymentsCreated ReceivablePayment[] @relation("ReceivablePaymentCreatedBy")
-  financialAuditEvents     FinancialAuditEvent[] @relation("FinancialAuditActor")
+  tenantUsers               TenantUser[]
+  dataImportSessions        DataImportSession[]   @relation("DataImportCreatedBy")
+  receivablePaymentsCreated ReceivablePayment[]   @relation("ReceivablePaymentCreatedBy")
+  financialAuditEvents      FinancialAuditEvent[] @relation("FinancialAuditActor")
 
   @@map("users")
 }
@@ -593,20 +601,20 @@ model WatchExpense {
 }
 
 model Deal {
-  id              String    @id @default(cuid())
-  tenantId        String
-  clientId        String
+  id                           String    @id @default(cuid())
+  tenantId                     String
+  clientId                     String
   // Historical sales may omit a linked Watch (nullable). Daily register-sale still requires one.
-  watchId         String?
-  stage           DealStage @default(LEAD)
-  expectedCloseAt DateTime?
+  watchId                      String?
+  stage                        DealStage @default(LEAD)
+  expectedCloseAt              DateTime?
   /// Explicit sale/close date (preferred over updatedAt for historical imports).
-  soldAt          DateTime?
-  agreedPrice      Decimal   @db.Decimal(12, 2)
-  originalCurrency String?
-  originalAmount   Decimal?  @db.Decimal(12, 2)
-  exchangeRate     Decimal?  @db.Decimal(12, 6)
-  notes            String?
+  soldAt                       DateTime?
+  agreedPrice                  Decimal   @db.Decimal(12, 2)
+  originalCurrency             String?
+  originalAmount               Decimal?  @db.Decimal(12, 2)
+  exchangeRate                 Decimal?  @db.Decimal(12, 6)
+  notes                        String?
   /// Acquisition cost of the sold item when no Watch is linked (MXN canonical).
   historicalCost               Decimal?  @db.Decimal(12, 2)
   historicalCostCurrency       String?
@@ -623,9 +631,9 @@ model Deal {
   importFingerprint            String?
   importSourceRow              Int?
   sourceTag                    String?
-  deletedAt        DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  deletedAt                    DateTime?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
   tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client                Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
@@ -713,28 +721,28 @@ model Receivable {
 
 /// Immutable receivable payment events. Amount is never updated after create.
 model ReceivablePayment {
-  id                 String                  @id @default(cuid())
-  tenantId           String
-  receivableId       String
-  amount             Decimal                 @db.Decimal(12, 2)
-  currency           Currency                @default(MXN)
-  fxRate             Decimal?                @db.Decimal(12, 6)
-  normalizedAmount   Decimal                 @db.Decimal(12, 2)
-  paymentDate        DateTime
-  method             ReceivablePaymentMethod
-  reference          String?
-  notes              String?
-  createdByUserId    String?
+  id                String                  @id @default(cuid())
+  tenantId          String
+  receivableId      String
+  amount            Decimal                 @db.Decimal(12, 2)
+  currency          Currency                @default(MXN)
+  fxRate            Decimal?                @db.Decimal(12, 6)
+  normalizedAmount  Decimal                 @db.Decimal(12, 2)
+  paymentDate       DateTime
+  method            ReceivablePaymentMethod
+  reference         String?
+  notes             String?
+  createdByUserId   String?
   /// Soft-delete only when no reconciliation exists yet (pre-settlement correction).
-  deletedAt          DateTime?
+  deletedAt         DateTime?
   /// When set, this row is a reversal of another payment.
-  reversesPaymentId  String?
-  createdAt          DateTime                @default(now())
+  reversesPaymentId String?
+  createdAt         DateTime                @default(now())
 
-  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  receivable      Receivable         @relation(fields: [receivableId], references: [id], onDelete: Restrict)
-  createdBy       User?              @relation("ReceivablePaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  reversesPayment ReceivablePayment? @relation("ReceivablePaymentReversal", fields: [reversesPaymentId], references: [id], onDelete: Restrict)
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  receivable      Receivable          @relation(fields: [receivableId], references: [id], onDelete: Restrict)
+  createdBy       User?               @relation("ReceivablePaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reversesPayment ReceivablePayment?  @relation("ReceivablePaymentReversal", fields: [reversesPaymentId], references: [id], onDelete: Restrict)
   reversedBy      ReceivablePayment[] @relation("ReceivablePaymentReversal")
 
   @@index([tenantId])
@@ -745,7 +753,7 @@ model ReceivablePayment {
 }
 
 model FinancialAuditEvent {
-  id           String                   @id @default(cuid())
+  id           String                  @id @default(cuid())
   tenantId     String
   eventType    FinancialAuditEventType
   entityType   String
@@ -755,7 +763,7 @@ model FinancialAuditEvent {
   actorUserId  String?
   message      String
   metadata     Json?
-  createdAt    DateTime                 @default(now())
+  createdAt    DateTime                @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   actor  User?  @relation("FinancialAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
@@ -1050,15 +1058,15 @@ model WatchReference {
 // --- Capital de socios ---
 
 model Investor {
-  id              String   @id @default(cuid())
-  tenantId        String
-  name            String
-  ownershipPercent Decimal  @db.Decimal(5, 2)
-  isActive        Boolean  @default(true)
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  deletedAt       DateTime?
+  id               String    @id @default(cuid())
+  tenantId         String
+  name             String
+  ownershipPercent Decimal   @db.Decimal(5, 2)
+  isActive         Boolean   @default(true)
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
 
   tenant        Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contributions InvestorContribution[]
@@ -1072,16 +1080,16 @@ model Investor {
 }
 
 model InvestorContribution {
-  id           String         @id @default(cuid())
-  tenantId     String
-  investorId   String
-  amount       Decimal        @db.Decimal(12, 2)
-  account      CapitalAccount
-  notes        String?
+  id            String         @id @default(cuid())
+  tenantId      String
+  investorId    String
+  amount        Decimal        @db.Decimal(12, 2)
+  account       CapitalAccount
+  notes         String?
   contributedAt DateTime
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  deletedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   investor      Investor       @relation(fields: [investorId], references: [id], onDelete: Restrict)
@@ -1184,11 +1192,11 @@ model AccountEntry {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  client   Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  deal     Deal?              @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  watch    Watch?             @relation(fields: [watchId], references: [id], onDelete: SetNull)
-  expense  OperatingExpense?  @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  tenant   Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client   Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  deal     Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  watch    Watch?            @relation(fields: [watchId], references: [id], onDelete: SetNull)
+  expense  OperatingExpense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
   payments AccountPayment[]
 
   @@index([tenantId])
@@ -1205,19 +1213,19 @@ model AccountEntry {
 }
 
 model AccountPayment {
-  id               String            @id @default(cuid())
+  id               String           @id @default(cuid())
   tenantId         String
   entryId          String
-  amount           Decimal           @db.Decimal(12, 2)
-  currency         Currency          @default(MXN)
+  amount           Decimal          @db.Decimal(12, 2)
+  currency         Currency         @default(MXN)
   method           PaymentMethod
   paidAt           DateTime
   notes            String?
   cashAccount      TreasuryAccount?
-  exchangeRateUsed Decimal?          @db.Decimal(12, 6)
+  exchangeRateUsed Decimal?         @db.Decimal(12, 6)
   deletedAt        DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entry         AccountEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
@@ -1234,7 +1242,7 @@ model AccountPayment {
 // --- Storefront ---
 
 model StorefrontReservation {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   tenantId String
   watchId  String
   clientId String?
@@ -1246,8 +1254,8 @@ model StorefrontReservation {
   stripeCheckoutSessionId String  @unique
   stripePaymentIntentId   String? @unique
 
-  reservationAmount    Decimal @db.Decimal(12, 2)
-  currency             String  @default("mxn")
+  reservationAmount Decimal @db.Decimal(12, 2)
+  currency          String  @default("mxn")
 
   status               StorefrontReservationStatus @default(PENDING)
   webhookEventId       String?
@@ -1262,10 +1270,10 @@ model StorefrontReservation {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  tenant Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  watch  Watch    @relation(fields: [watchId], references: [id], onDelete: Restrict)
-  client Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  deal   Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  watch  Watch   @relation(fields: [watchId], references: [id], onDelete: Restrict)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -1301,11 +1309,12 @@ model DataImportSession {
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
-  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdBy User               @relation("DataImportCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  files     DataImportFile[]
-  records   DataImportRecord[]
-  events    DataImportEvent[]
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy                User                      @relation("DataImportCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  files                    DataImportFile[]
+  records                  DataImportRecord[]
+  events                   DataImportEvent[]
+  documentExtractionChunks DocumentExtractionChunk[]
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -1315,20 +1324,20 @@ model DataImportSession {
 }
 
 model DataImportFile {
-  id                 String               @id @default(cuid())
-  tenantId           String               @map("tenant_id")
-  sessionId          String               @map("session_id")
-  originalFilename   String               @map("original_filename")
-  storageKey         String               @map("storage_key")
-  mimeType           String               @map("mime_type")
-  fileType           DataImportFileType   @map("file_type")
-  byteSize           Int                  @map("byte_size")
-  checksum           String?
-  status             DataImportFileStatus @default(UPLOADED)
-  detectedEntityType DataImportEntityType @default(UNKNOWN) @map("detected_entity_type")
-  sheetNames         Json?                @map("sheet_names")
-  rowCount           Int                  @default(0) @map("row_count")
-  classificationMeta Json?                @map("classification_meta")
+  id                    String               @id @default(cuid())
+  tenantId              String               @map("tenant_id")
+  sessionId             String               @map("session_id")
+  originalFilename      String               @map("original_filename")
+  storageKey            String               @map("storage_key")
+  mimeType              String               @map("mime_type")
+  fileType              DataImportFileType   @map("file_type")
+  byteSize              Int                  @map("byte_size")
+  checksum              String?
+  status                DataImportFileStatus @default(UPLOADED)
+  detectedEntityType    DataImportEntityType @default(UNKNOWN) @map("detected_entity_type")
+  sheetNames            Json?                @map("sheet_names")
+  rowCount              Int                  @default(0) @map("row_count")
+  classificationMeta    Json?                @map("classification_meta")
   fieldMapping          Json?                @map("field_mapping")
   mappingVersion        String?              @map("mapping_version")
   extractionProvider    String?              @map("extraction_provider")
@@ -1336,18 +1345,71 @@ model DataImportFile {
   extractedDocumentData Json?                @map("extracted_document_data")
   extractionError       String?              @map("extraction_error")
   errorMessage          String?              @map("error_message")
-  createdAt          DateTime             @default(now()) @map("created_at")
-  updatedAt          DateTime             @updatedAt @map("updated_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
 
-  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  session DataImportSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  records DataImportRecord[]
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session                  DataImportSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  records                  DataImportRecord[]
+  documentExtractionChunks DocumentExtractionChunk[]
 
   @@index([tenantId])
   @@index([sessionId])
   @@index([tenantId, sessionId])
   @@index([status])
   @@map("data_import_files")
+}
+
+model DocumentExtractionChunk {
+  id           String           @id @default(cuid())
+  tenantId     String           @map("tenant_id")
+  sessionId    String           @map("session_id")
+  fileId       String           @map("file_id")
+  importTarget DataImportTarget @map("import_target")
+
+  chunkIndex        Int     @map("chunk_index")
+  startPage         Int     @map("start_page")
+  endPage           Int     @map("end_page")
+  pageCount         Int     @map("page_count")
+  sourceFingerprint String  @map("source_fingerprint")
+  chunkFingerprint  String  @map("chunk_fingerprint")
+  parentChunkId     String? @map("parent_chunk_id")
+
+  status       DocumentExtractionChunkStatus @default(PENDING)
+  attemptCount Int                           @default(0) @map("attempt_count")
+
+  provider          String?
+  model             String?
+  extractionVersion String  @map("extraction_version")
+  stopReason        String? @map("stop_reason")
+
+  rawResult        Json? @map("raw_result")
+  normalizedResult Json? @map("normalized_result")
+  saleCount        Int   @default(0) @map("sale_count")
+
+  errorCode        String? @map("error_code")
+  errorCategory    String? @map("error_category")
+  safeErrorMessage String? @map("safe_error_message")
+
+  inputTokens       Int?    @map("input_tokens")
+  outputTokens      Int?    @map("output_tokens")
+  durationMs        Int?    @map("duration_ms")
+  providerRequestId String? @map("provider_request_id")
+
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session DataImportSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  file    DataImportFile    @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, fileId, extractionVersion, chunkIndex])
+  @@index([tenantId, sessionId])
+  @@index([tenantId, fileId, status])
+  @@index([tenantId, fileId, extractionVersion, startPage, endPage])
+  @@map("document_extraction_chunks")
 }
 
 model DataImportRecord {

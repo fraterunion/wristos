@@ -4,8 +4,11 @@ import { HistoricalSaleExtraction } from './historical-sale.types';
 
 // ─── Capacity constants ───────────────────────────────────────────────────────
 
-/** Maximum sales the AI may return per document. Matches tool schema maxItems. */
+/** Maximum sales the AI may return per document/chunk. Matches tool schema maxItems. */
 export const MAX_EXTRACTED_SALES = 200;
+
+/** Maximum sales after merging all chunks into review. */
+export const MAX_MERGED_EXTRACTED_SALES = 2000;
 
 export function resolveSalesMaxTokens(): number {
   const raw = process.env.DOCUMENT_EXTRACTION_MAX_TOKENS;
@@ -70,6 +73,16 @@ export const HistoricalSalesExtractionSchema = z.object({
   sales: z.array(ExtractedHistoricalSaleSchema).max(MAX_EXTRACTED_SALES),
   extractionVersion: z.string().optional(),
   overallConfidence: z.number().min(0).max(1).optional(),
+});
+
+/** Looser schema for persisted merged multi-chunk documents. */
+export const HistoricalSalesMergedExtractionSchema = z.object({
+  sales: z.array(ExtractedHistoricalSaleSchema).max(MAX_MERGED_EXTRACTED_SALES),
+  extractionVersion: z.string().optional(),
+  overallConfidence: z.number().min(0).max(1).optional(),
+  chunkProgress: z.record(z.string(), z.unknown()).optional(),
+  duplicateWarnings: z.array(z.unknown()).optional(),
+  provenanceByIndex: z.array(z.unknown()).optional(),
 });
 
 export type ExtractedHistoricalSale = z.infer<typeof ExtractedHistoricalSaleSchema>;
