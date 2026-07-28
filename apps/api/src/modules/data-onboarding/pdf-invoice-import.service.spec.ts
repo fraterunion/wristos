@@ -343,6 +343,29 @@ describe('PdfInvoiceImportService.processDocument', () => {
     expect(safeRecord.safeMessage).not.toContain('AI timeout');
   });
 
+  it('classifies storage read 401 as IMPORT_STORAGE_ERROR (not EXTRACTION_PROVIDER_ERROR)', async () => {
+    const { ImportStorageError, IMPORT_STORAGE_READ_SAFE_MESSAGE } = await import('./storage/import-storage.errors');
+    const session = makeSession({ id: 'session-1', status: DataImportStatus.UPLOADING });
+    const file = makePdfFile({ sessionId: 'session-1' });
+    const { service, storage } = makeService(session, file);
+    (storage.read as jest.Mock).mockRejectedValue(
+      new ImportStorageError(IMPORT_STORAGE_READ_SAFE_MESSAGE, { httpStatus: 401 }),
+    );
+
+    await expect(service.processDocument('tenant-1', 'session-1'))
+      .rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    const safeRecord = JSON.parse(file.extractionError as unknown as string) as {
+      code: string;
+      category: string;
+      safeMessage: string;
+    };
+    expect(safeRecord.code).toBe('IMPORT_STORAGE_ERROR');
+    expect(safeRecord.category).toBe('storage');
+    expect(safeRecord.safeMessage).toBe(IMPORT_STORAGE_READ_SAFE_MESSAGE);
+    expect(safeRecord.safeMessage).not.toContain('401');
+  });
+
   it('re-extraction (FAILED → UPLOADING) clears prior records and extracts again', async () => {
     const session = makeSession({ id: 'session-1', status: DataImportStatus.FAILED });
     const file = makePdfFile({ sessionId: 'session-1' });

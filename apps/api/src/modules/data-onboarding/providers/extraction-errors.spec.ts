@@ -1,6 +1,12 @@
 import {
+  buildSafeExtractionRecord,
   serializeProviderErrorForDiagnostics,
 } from './extraction-errors';
+import {
+  IMPORT_STORAGE_ERROR_CODE,
+  IMPORT_STORAGE_READ_SAFE_MESSAGE,
+  ImportStorageError,
+} from '../storage/import-storage.errors';
 
 describe('serializeProviderErrorForDiagnostics', () => {
   it('serializes Anthropic-style APIError fields including nested cause', () => {
@@ -52,5 +58,17 @@ describe('serializeProviderErrorForDiagnostics', () => {
       value: { foo: 'bar' },
     });
     expect(serializeProviderErrorForDiagnostics(null)).toEqual({ kind: 'nullish', value: null });
+  });
+});
+
+describe('buildSafeExtractionRecord storage classification', () => {
+  it('maps ImportStorageError to IMPORT_STORAGE_ERROR (not EXTRACTION_PROVIDER_ERROR)', () => {
+    const err = new ImportStorageError(IMPORT_STORAGE_READ_SAFE_MESSAGE, { httpStatus: 401 });
+    const record = buildSafeExtractionRecord(err, 'claude', 'claude-sonnet-4-6');
+    expect(record.code).toBe(IMPORT_STORAGE_ERROR_CODE);
+    expect(record.category).toBe('storage');
+    expect(record.safeMessage).toBe(IMPORT_STORAGE_READ_SAFE_MESSAGE);
+    expect(record.safeMessage).not.toContain('401');
+    expect(record.safeMessage).not.toContain('Cloudinary');
   });
 });

@@ -1,3 +1,8 @@
+import {
+  IMPORT_STORAGE_ERROR_CODE,
+  isImportStorageError,
+} from '../storage/import-storage.errors';
+
 /**
  * Typed error hierarchy for document extraction providers.
  *
@@ -8,6 +13,9 @@
  * Server logs may include full provider diagnostics via
  * serializeProviderErrorForDiagnostics — that payload must never be returned to
  * HTTP clients or persisted as extractionError.
+ *
+ * Storage failures use ImportStorageError (IMPORT_STORAGE_ERROR) and must not
+ * be remapped to EXTRACTION_PROVIDER_ERROR.
  */
 
 export enum ExtractionErrorCode {
@@ -207,6 +215,17 @@ export function buildSafeExtractionRecord(
   model: string;
   occurredAt: string;
 } {
+  if (isImportStorageError(err)) {
+    return {
+      code: IMPORT_STORAGE_ERROR_CODE,
+      category: 'storage',
+      safeMessage: err.safeMessage,
+      provider,
+      model,
+      occurredAt: new Date().toISOString(),
+    };
+  }
+
   const code = isExtractionError(err) ? err.code : ExtractionErrorCode.PROVIDER_ERROR;
   const safeMessage = isExtractionError(err)
     ? err.safeMessage

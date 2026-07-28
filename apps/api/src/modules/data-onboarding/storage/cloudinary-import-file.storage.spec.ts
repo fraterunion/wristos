@@ -1,15 +1,39 @@
-import { createHash } from 'crypto';
-
 import {
   CloudinaryImportFileStorage,
-  encodeCloudinaryPublicIdPath,
+  formatForPrivateDownload,
+  parseCloudinaryStorageKey,
+  toCloudinaryStorageKey,
+  type CloudinaryClient,
 } from './cloudinary-import-file.storage';
+import {
+  IMPORT_STORAGE_ERROR_CODE,
+  IMPORT_STORAGE_READ_SAFE_MESSAGE,
+  ImportStorageError,
+} from './import-storage.errors';
 
-describe('encodeCloudinaryPublicIdPath', () => {
-  it('keeps slashes as path separators and encodes segments', () => {
-    expect(encodeCloudinaryPublicIdPath('folder/tenant/session/file id.pdf')).toBe(
-      'folder/tenant/session/file%20id.pdf',
-    );
+describe('parseCloudinaryStorageKey', () => {
+  it('parses legacy production keys with foldered public_id and .pdf extension', () => {
+    const key =
+      'cloudinary:wristos/watches/imports/tenant/session/1785276545870-w8huq1xd.pdf';
+    expect(parseCloudinaryStorageKey(key)).toEqual({
+      publicId: 'wristos/watches/imports/tenant/session/1785276545870-w8huq1xd.pdf',
+    });
+  });
+
+  it('rejects traversal and malformed keys', () => {
+    expect(() => parseCloudinaryStorageKey('s3:foo')).toThrow(ImportStorageError);
+    expect(() => parseCloudinaryStorageKey('cloudinary:')).toThrow(ImportStorageError);
+    expect(() => parseCloudinaryStorageKey('cloudinary:a/../b')).toThrow(ImportStorageError);
+    expect(() => parseCloudinaryStorageKey('cloudinary:/absolute')).toThrow(ImportStorageError);
+    expect(() => parseCloudinaryStorageKey('cloudinary:https://evil')).toThrow(ImportStorageError);
+  });
+});
+
+describe('formatForPrivateDownload', () => {
+  it('extracts extension without duplicating path segments', () => {
+    expect(formatForPrivateDownload('folder/file.pdf')).toBe('pdf');
+    expect(formatForPrivateDownload('folder/file')).toBe('');
+    expect(formatForPrivateDownload('folder/file.tar.gz')).toBe('gz');
   });
 });
 
@@ -18,11 +42,29 @@ describe('CloudinaryImportFileStorage', () => {
   const apiKey = 'key123';
   const apiSecret = 'secret456';
   const folder = 'wristos/imports';
+
+  let privateDownloadUrl: jest.Mock;
+  let upload: jest.Mock;
+  let destroy: jest.Mock;
+  let resources: jest.Mock;
+  let config: jest.Mock;
+  let client: CloudinaryClient;
   let storage: CloudinaryImportFileStorage;
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
-    storage = new CloudinaryImportFileStorage(cloudName, apiKey, apiSecret, folder);
+    privateDownloadUrl = jest.fn();
+    upload = jest.fn();
+    destroy = jest.fn();
+    resources = jest.fn();
+    config = jest.fn();
+    client = {
+      config,
+      utils: { private_download_url: privateDownloadUrl },
+      uploader: { upload, destroy },
+      api: { resources },
+    };
+    storage = new CloudinaryImportFileStorage(cloudName, apiKey, apiSecret, folder, client);
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -31,11 +73,24 @@ describe('CloudinaryImportFileStorage', () => {
     jest.restoreAllMocks();
   });
 
+  it('configures the SDK with cloud credentials on construct', () => {
+    expect(config).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cloud_name: cloudName,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        secure: true,
+      }),
+    );
+  });
+
   describe('save', () => {
-    it('uploads with type=authenticated on raw/upload endpoint', async () => {
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ public_id: `${folder}/t1/s1/abc` }),
+    it('uploads with resource_type=raw and type=authenticated', async () => {
+      upload.mockResolvedValue({
+        public_id: `${folder}/t1/s1/abc.pdf`,
+        resource_type: 'raw',
+        type: 'authenticated',
+        bytes: 8,
       });
 
       const result = await storage.save({
@@ -45,26 +100,25 @@ describe('CloudinaryImportFileStorage', () => {
         buffer: Buffer.from('%PDF-1.4'),
       });
 
-      expect(result.storageKey).toBe(`cloudinary:${folder}/t1/s1/abc`);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`);
-      expect(init.method).toBe('POST');
-      expect(init.body).toBeInstanceOf(FormData);
-      const form = init.body as FormData;
-      expect(form.get('type')).toBe('authenticated');
-      expect(form.get('folder')).toBe(`${folder}/t1/s1`);
-      expect(form.get('api_key')).toBe(apiKey);
-      expect(form.get('signature')).toEqual(expect.any(String));
+      expect(result.storageKey).toBe(`cloudinary:${folder}/t1/s1/abc.pdf`);
+      expect(upload).toHaveBeenCalledTimes(1);
+      const [dataUri, options] = upload.mock.calls[0] as [string, Record<string, unknown>];
+      expect(dataUri.startsWith('data:application/octet-stream;base64,')).toBe(true);
+      expect(options).toEqual(
+        expect.objectContaining({
+          resource_type: 'raw',
+          type: 'authenticated',
+          folder: `${folder}/t1/s1`,
+          format: 'pdf',
+        }),
+      );
+      expect(typeof options.public_id).toBe('string');
+      // short public_id must not already include .pdf (format is separate)
+      expect(String(options.public_id)).not.toMatch(/\.pdf$/);
     });
 
-    it('throws when upload fails', async () => {
-      fetchMock.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        text: async () => 'unauthorized',
-      });
-
+    it('throws ImportStorageError when upload fails', async () => {
+      upload.mockRejectedValue(Object.assign(new Error('denied'), { http_code: 401 }));
       await expect(
         storage.save({
           tenantId: 't1',
@@ -72,134 +126,164 @@ describe('CloudinaryImportFileStorage', () => {
           filename: 'invoice.pdf',
           buffer: Buffer.from('x'),
         }),
-      ).rejects.toThrow(/Cloudinary import upload failed \(401\)/);
+      ).rejects.toMatchObject({
+        code: IMPORT_STORAGE_ERROR_CODE,
+        httpStatus: 401,
+      });
     });
   });
 
   describe('read', () => {
-    const publicId = `${folder}/t1/s1/file.pdf`;
-    const storageKey = `cloudinary:${publicId}`;
-    const signedUrl =
-      'https://res.cloudinary.com/demo/raw/authenticated/s--signed--/v1/wristos/imports/t1/s1/file.pdf';
+    const publicId = `${folder}/t1/s1/1785276545870-w8huq1xd.pdf`;
+    const storageKey = toCloudinaryStorageKey(publicId);
+    const privateUrl =
+      'https://api.cloudinary.com/v1_1/demo/raw/download?timestamp=1&public_id=x&signature=abc&api_key=key123';
 
-    it('fetches metadata via authenticated Admin API path then downloads signed URL once', async () => {
-      fetchMock
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ secure_url: signedUrl }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          arrayBuffer: async () => Uint8Array.from(Buffer.from('pdf-bytes')).buffer,
-        });
+    it('uses private_download_url with raw + authenticated and returns original bytes', async () => {
+      privateDownloadUrl.mockReturnValue(privateUrl);
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => Uint8Array.from(Buffer.from('%PDF-bytes')).buffer,
+      });
 
       const buf = await storage.read(storageKey);
 
-      expect(buf.toString()).toBe('pdf-bytes');
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-
-      const [metaUrl, metaInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(metaUrl).toBe(
-        `https://api.cloudinary.com/v1_1/${cloudName}/resources/raw/authenticated/${encodeCloudinaryPublicIdPath(publicId)}`,
-      );
-      expect(metaUrl).toContain('/resources/raw/authenticated/');
-      expect(metaUrl).not.toContain('/resources/raw/upload/');
-      expect(metaInit.headers).toEqual(
+      expect(buf.toString()).toBe('%PDF-bytes');
+      expect(privateDownloadUrl).toHaveBeenCalledTimes(1);
+      expect(privateDownloadUrl).toHaveBeenCalledWith(
+        publicId,
+        'pdf',
         expect.objectContaining({
-          Authorization: expect.stringMatching(/^Basic /),
+          resource_type: 'raw',
+          type: 'authenticated',
+          attachment: false,
+          expires_at: expect.any(Number),
         }),
       );
-
-      const [downloadUrl, downloadInit] = fetchMock.mock.calls[1] as [string, RequestInit | undefined];
-      expect(downloadUrl).toBe(signedUrl);
-      expect(downloadInit?.headers?.['Authorization' as never]).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe(privateUrl);
     });
 
-    it('fails closed without a second unsigned fetch when download fails', async () => {
-      fetchMock
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ secure_url: signedUrl }),
-        })
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 403,
-        });
+    it('does not fall back to unsigned secure_url / delivery URL strategies', async () => {
+      privateDownloadUrl.mockReturnValue(privateUrl);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
 
-      await expect(storage.read(storageKey)).rejects.toThrow(
-        /Cloudinary import download failed \(403\)/,
+      await expect(storage.read(storageKey)).rejects.toBeInstanceOf(ImportStorageError);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(privateDownloadUrl).toHaveBeenCalledTimes(1);
+      // No Admin API metadata lookup, no second unsigned fetch
+      const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]));
+      expect(calledUrls.every((u) => u.includes('/raw/download'))).toBe(true);
+      expect(calledUrls.some((u) => u.includes('/raw/authenticated/') || u.includes('/raw/upload/'))).toBe(
+        false,
       );
-      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
-    it('throws when metadata request fails', async () => {
+    it('classifies 401 as ImportStorageError IMPORT_STORAGE_ERROR', async () => {
+      privateDownloadUrl.mockReturnValue(privateUrl);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
+
+      await expect(storage.read(storageKey)).rejects.toMatchObject({
+        name: 'ImportStorageError',
+        code: IMPORT_STORAGE_ERROR_CODE,
+        httpStatus: 401,
+        safeMessage: IMPORT_STORAGE_READ_SAFE_MESSAGE,
+      });
+    });
+
+    it('classifies 403 as ImportStorageError', async () => {
+      privateDownloadUrl.mockReturnValue(privateUrl);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
+
+      await expect(storage.read(storageKey)).rejects.toMatchObject({
+        code: IMPORT_STORAGE_ERROR_CODE,
+        httpStatus: 403,
+      });
+    });
+
+    it('classifies 404 as ImportStorageError', async () => {
+      privateDownloadUrl.mockReturnValue(privateUrl);
       fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
 
-      await expect(storage.read(storageKey)).rejects.toThrow(
-        /Cloudinary import read metadata failed \(404\)/,
+      await expect(storage.read(storageKey)).rejects.toMatchObject({
+        code: IMPORT_STORAGE_ERROR_CODE,
+        httpStatus: 404,
+      });
+    });
+
+    it('supports foldered public_ids from legacy storage keys', async () => {
+      const legacy =
+        'cloudinary:wristos/watches/imports/cmnzph8dm0000qotapt94alxs/cms57jt3e0001pk01cpvfmibi/1785276545870-w8huq1xd.pdf';
+      privateDownloadUrl.mockReturnValue(privateUrl);
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => Uint8Array.from(Buffer.from('ok')).buffer,
+      });
+
+      await storage.read(legacy);
+
+      expect(privateDownloadUrl.mock.calls[0][0]).toBe(
+        'wristos/watches/imports/cmnzph8dm0000qotapt94alxs/cms57jt3e0001pk01cpvfmibi/1785276545870-w8huq1xd.pdf',
       );
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(privateDownloadUrl.mock.calls[0][1]).toBe('pdf');
     });
   });
 
   describe('delete', () => {
-    it('signs destroy with type=authenticated and posts to raw/destroy', async () => {
-      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ result: 'ok' }) });
+    const publicId = `${folder}/t1/s1/file.pdf`;
 
-      const publicId = `${folder}/t1/s1/file.pdf`;
-      await storage.delete(`cloudinary:${publicId}`);
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe(`https://api.cloudinary.com/v1_1/${cloudName}/raw/destroy`);
-      expect(init.method).toBe('POST');
-      expect(init.headers).toEqual(
-        expect.objectContaining({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+    it('destroys with resource_type=raw type=authenticated and accepts ok', async () => {
+      destroy.mockResolvedValue({ result: 'ok' });
+      await storage.delete(toCloudinaryStorageKey(publicId));
+      expect(destroy).toHaveBeenCalledWith(
+        publicId,
+        expect.objectContaining({
+          resource_type: 'raw',
+          type: 'authenticated',
+        }),
       );
+    });
 
-      const body = init.body as URLSearchParams;
-      expect(body.get('type')).toBe('authenticated');
-      expect(body.get('public_id')).toBe(publicId);
-      expect(body.get('api_key')).toBe(apiKey);
+    it('treats already-missing assets as explicit success (not found)', async () => {
+      destroy.mockResolvedValue({ result: 'not found' });
+      await expect(storage.delete(toCloudinaryStorageKey(publicId))).resolves.toBeUndefined();
+    });
 
-      const timestamp = body.get('timestamp')!;
-      const expectedSig = createHash('sha1')
-        .update(`public_id=${publicId}&timestamp=${timestamp}&type=authenticated${apiSecret}`)
-        .digest('hex');
-      expect(body.get('signature')).toBe(expectedSig);
+    it('fails loudly on unexpected destroy result', async () => {
+      destroy.mockResolvedValue({ result: 'error' });
+      await expect(storage.delete(toCloudinaryStorageKey(publicId))).rejects.toMatchObject({
+        code: IMPORT_STORAGE_ERROR_CODE,
+      });
+    });
+
+    it('fails loudly when destroy throws', async () => {
+      destroy.mockRejectedValue(Object.assign(new Error('boom'), { http_code: 500 }));
+      await expect(storage.delete(toCloudinaryStorageKey(publicId))).rejects.toMatchObject({
+        code: IMPORT_STORAGE_ERROR_CODE,
+        httpStatus: 500,
+      });
     });
   });
 
   describe('deleteSessionFiles', () => {
-    it('lists authenticated resources by prefix then deletes each', async () => {
+    it('lists authenticated raw resources by prefix then deletes each', async () => {
       const prefix = `${folder}/t1/s1`;
-      fetchMock
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            resources: [{ public_id: `${prefix}/a.pdf` }, { public_id: `${prefix}/b.pdf` }],
-          }),
-        })
-        .mockResolvedValue({ ok: true, json: async () => ({ result: 'ok' }) });
+      resources.mockResolvedValue({
+        resources: [{ public_id: `${prefix}/a.pdf` }, { public_id: `${prefix}/b.pdf` }],
+      });
+      destroy.mockResolvedValue({ result: 'ok' });
 
       await storage.deleteSessionFiles('t1', 's1');
 
-      const [listUrl, listInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(listUrl).toBe(
-        `https://api.cloudinary.com/v1_1/${cloudName}/resources/raw/authenticated?prefix=${encodeURIComponent(prefix)}&max_results=100`,
+      expect(resources).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource_type: 'raw',
+          type: 'authenticated',
+          prefix,
+          max_results: 100,
+        }),
       );
-      expect(listUrl).not.toContain('/resources/raw/upload');
-      expect(listInit.headers).toEqual(
-        expect.objectContaining({ Authorization: expect.stringMatching(/^Basic /) }),
-      );
-      // 1 list + 2 destroys
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect((fetchMock.mock.calls[1][1] as RequestInit).body as URLSearchParams).toEqual(
-        expect.any(URLSearchParams),
-      );
-      expect(((fetchMock.mock.calls[1][1] as RequestInit).body as URLSearchParams).get('type')).toBe(
-        'authenticated',
-      );
+      expect(destroy).toHaveBeenCalledTimes(2);
     });
   });
 });

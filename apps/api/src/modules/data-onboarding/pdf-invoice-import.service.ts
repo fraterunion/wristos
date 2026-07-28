@@ -243,11 +243,11 @@ export class PdfInvoiceImportService {
       const safeRecord = buildSafeExtractionRecord(err, providerName, modelId);
       const durationMs = Date.now() - startedAt;
 
-      // Log complete original provider/SDK error (and nested causes) for ops.
-      // safeRecord above remains the only payload persisted / returned to clients.
-      // Nest Logger.error(msg, stack?) treats the 2nd arg as a string stack; embed JSON in msg.
+      // Log complete original error for ops. Nest Logger.error(msg, stack?) treats
+      // the 2nd arg as a string stack; embed JSON in msg.
+      // Storage failures are classified as IMPORT_STORAGE_ERROR (not provider).
       this.logger.error(
-        `PDF extraction failed — full provider diagnostics: ${JSON.stringify({
+        `PDF extraction failed — diagnostics: ${JSON.stringify({
           errorCode: safeRecord.code,
           errorCategory: safeRecord.category,
           provider: providerName,
@@ -255,7 +255,7 @@ export class PdfInvoiceImportService {
           sessionId,
           tenantId,
           durationMs,
-          providerError: serializeProviderErrorForDiagnostics(err),
+          error: serializeProviderErrorForDiagnostics(err),
         })}`,
       );
 
