@@ -34,6 +34,7 @@ import {
   ExtractionErrorCode,
   buildSafeExtractionRecord,
   isExtractionError,
+  serializeProviderErrorForDiagnostics,
 } from './providers/extraction-errors';
 import { createExtractionProvider } from './providers/extraction.provider.factory';
 import { HISTORICAL_SALES_EXTRACTION_VERSION } from './providers/prompts/historical-sales-extraction-v1';
@@ -233,29 +234,21 @@ export class PdfSalesImportService {
       const safeRecord = buildSafeExtractionRecord(err, providerName, modelId);
       const durationMs = Date.now() - startedAt;
 
-      const anthropicMeta: Record<string, unknown> = {};
-      const errCause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
-      for (const candidate of [err, errCause]) {
-        if (candidate instanceof Error && 'status' in candidate) {
-          const apiErr = candidate as { status?: unknown; type?: unknown; requestID?: unknown };
-          if (typeof apiErr.status === 'number') anthropicMeta.httpStatus = apiErr.status;
-          if (typeof apiErr.type === 'string') anthropicMeta.errorType = apiErr.type;
-          if (typeof apiErr.requestID === 'string') anthropicMeta.requestId = apiErr.requestID;
-          break;
-        }
-      }
-
-      this.logger.error('Sales PDF extraction failed', {
-        errorCode: safeRecord.code,
-        errorCategory: safeRecord.category,
-        provider: providerName,
-        model: modelId,
-        sessionId,
-        tenantId,
-        errorClass: err instanceof Error ? err.constructor.name : typeof err,
-        durationMs,
-        ...anthropicMeta,
-      });
+      // Log complete original provider/SDK error (and nested causes) for ops.
+      // safeRecord above remains the only payload persisted / returned to clients.
+      // Nest Logger.error(msg, stack?) treats the 2nd arg as a string stack; embed JSON in msg.
+      this.logger.error(
+        `Sales PDF extraction failed — full provider diagnostics: ${JSON.stringify({
+          errorCode: safeRecord.code,
+          errorCategory: safeRecord.category,
+          provider: providerName,
+          model: modelId,
+          sessionId,
+          tenantId,
+          durationMs,
+          providerError: serializeProviderErrorForDiagnostics(err),
+        })}`,
+      );
 
       if (isExtractionError(err) && err.debugInfo) {
         this.logger.debug(`Sales extraction schema error [${sessionId}]: ${JSON.stringify(err.debugInfo)}`);
