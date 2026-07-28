@@ -17,6 +17,12 @@ export type HistoricalSalesChunkExtractionInput = {
   startPage: number;
   endPage: number;
   maxTokens?: number;
+  /** When set, ask the model to return at most this many sales (dense-page batching). */
+  maxSales?: number;
+  /** 1-based continuation pass index for dense single-page extraction. */
+  batchPass?: number;
+  /** Opaque fingerprints of sales already collected on prior passes of the same page. */
+  priorSaleFingerprints?: string[];
 };
 
 export interface DocumentExtractionProvider {

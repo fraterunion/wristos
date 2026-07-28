@@ -59,8 +59,16 @@ Incorrect — do NOT treat bare "$" as USD:
   "$93,000" with no USD/UDS/DLS/DOLARES label
   → saleCurrency = "MXN"`;
 
-export function buildHistoricalSalesChunkUserPrompt(startPage: number, endPage: number): string {
-  return [
+export function buildHistoricalSalesChunkUserPrompt(
+  startPage: number,
+  endPage: number,
+  opts?: {
+    maxSales?: number;
+    batchPass?: number;
+    priorSaleFingerprints?: string[];
+  },
+): string {
+  const lines = [
     `This PDF fragment is ONE page range from a larger historical sales document.`,
     `Original page range (1-based inclusive): ${startPage}–${endPage}.`,
     `Extract ONLY sale rows that are sufficiently visible in these supplied pages.`,
@@ -68,6 +76,54 @@ export function buildHistoricalSalesChunkUserPrompt(startPage: number, endPage: 
     `Do NOT repeat headers as records.`,
     `Do NOT calculate missing financial values.`,
     `If a table row is only partially visible at a page boundary, include it only when enough fields are clearly readable; otherwise omit it.`,
-    `Call extract_historical_sales with every visible sold-watch transaction in this fragment.`,
-  ].join('\n');
+  ];
+
+  const maxSales = opts?.maxSales;
+  if (typeof maxSales === 'number' && maxSales > 0) {
+    const pass = opts?.batchPass ?? 1;
+    const priors = (opts?.priorSaleFingerprints ?? []).slice(0, 80);
+    lines.push(
+      `DENSE PAGE BATCH MODE — pass ${pass}.`,
+      `Return at most ${maxSales} sale rows from this fragment, in top-to-bottom reading order.`,
+      `If more than ${maxSales} visible sales remain, return only the first ${maxSales} not yet extracted.`,
+      `If fewer than ${maxSales} remain, return all remaining visible sales.`,
+    );
+    if (priors.length > 0) {
+      lines.push(
+        `Skip sales that match any of these already-extracted fingerprints (saleDate|brand|model|reference|serial|customer|salePrice):`,
+        priors.join('\n'),
+      );
+    }
+    lines.push(`Call extract_historical_sales with only this batch of sale rows.`);
+  } else {
+    lines.push(`Call extract_historical_sales with every visible sold-watch transaction in this fragment.`);
+  }
+
+  return lines.join('\n');
+}
+
+/** Stable fingerprint for dense-page dedupe / continuation (not a security hash). */
+export function historicalSaleFingerprint(sale: {
+  saleDate?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  reference?: string | null;
+  serialNumber?: string | null;
+  customerName?: string | null;
+  salePrice?: number | null;
+}): string {
+  const norm = (v: string | null | undefined) => (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const price =
+    typeof sale.salePrice === 'number' && Number.isFinite(sale.salePrice)
+      ? String(sale.salePrice)
+      : '';
+  return [
+    norm(sale.saleDate),
+    norm(sale.brand),
+    norm(sale.model),
+    norm(sale.reference),
+    norm(sale.serialNumber),
+    norm(sale.customerName),
+    price,
+  ].join('|');
 }

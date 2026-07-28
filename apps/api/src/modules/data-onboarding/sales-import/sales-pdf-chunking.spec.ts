@@ -2,6 +2,7 @@ import {
   buildChunkFingerprint,
   mapWithConcurrency,
   planPageChunks,
+  resolveSalesPdfChunkMaxTokens,
   resolveSalesPdfPagesPerChunk,
   sha256Hex,
   splitPageRange,
@@ -13,6 +14,10 @@ import {
   isHighConfidenceDuplicate,
   mergeChunkSales,
 } from './sales-pdf-merge';
+import {
+  buildHistoricalSalesChunkUserPrompt,
+  historicalSaleFingerprint,
+} from '../providers/prompts/historical-sales-extraction-v1';
 
 describe('sales-pdf-chunking', () => {
   it('plans deterministic 8-page chunks with a final partial chunk', () => {
@@ -33,6 +38,48 @@ describe('sales-pdf-chunking', () => {
     expect(resolveSalesPdfPagesPerChunk()).toBe(8);
     if (prev === undefined) delete process.env.SALES_PDF_PAGES_PER_CHUNK;
     else process.env.SALES_PDF_PAGES_PER_CHUNK = prev;
+  });
+
+  it('defaults chunk max tokens to 16384 and clamps invalid env', () => {
+    const prev = process.env.SALES_PDF_CHUNK_MAX_TOKENS;
+    delete process.env.SALES_PDF_CHUNK_MAX_TOKENS;
+    expect(resolveSalesPdfChunkMaxTokens()).toBe(16384);
+    process.env.SALES_PDF_CHUNK_MAX_TOKENS = '99999';
+    expect(resolveSalesPdfChunkMaxTokens()).toBe(16384);
+    process.env.SALES_PDF_CHUNK_MAX_TOKENS = '4096';
+    expect(resolveSalesPdfChunkMaxTokens()).toBe(4096);
+    if (prev === undefined) delete process.env.SALES_PDF_CHUNK_MAX_TOKENS;
+    else process.env.SALES_PDF_CHUNK_MAX_TOKENS = prev;
+  });
+
+  it('builds dense-page batch prompts and stable sale fingerprints', () => {
+    const prompt = buildHistoricalSalesChunkUserPrompt(2, 2, {
+      maxSales: 10,
+      batchPass: 2,
+      priorSaleFingerprints: ['a|b|c||||'],
+    });
+    expect(prompt).toContain('DENSE PAGE BATCH MODE');
+    expect(prompt).toContain('at most 10');
+    expect(prompt).toContain('a|b|c||||');
+    const fp1 = historicalSaleFingerprint({
+      saleDate: '2024-01-01',
+      brand: 'Rolex',
+      model: 'Sub',
+      reference: '116610',
+      serialNumber: 'X1',
+      customerName: 'Ana',
+      salePrice: 1000,
+    });
+    const fp2 = historicalSaleFingerprint({
+      saleDate: '2024-01-01',
+      brand: 'Rolex',
+      model: 'Sub',
+      reference: '116610',
+      serialNumber: 'X1',
+      customerName: 'Ana',
+      salePrice: 1000,
+    });
+    expect(fp1).toBe(fp2);
   });
 
   it('splits page ranges in half and refuses single-page split', () => {

@@ -2,7 +2,10 @@ import type { InventoryInvoiceExtraction } from '../inventory-import/inventory-i
 import type { HistoricalSalesExtractionDocument } from '../sales-import/historical-sale-extraction.types';
 import { ExtractionError, ExtractionErrorCode } from './extraction-errors';
 import type { DocumentExtractionProvider } from './document-extraction.provider.interface';
-import { HISTORICAL_SALES_EXTRACTION_VERSION } from './prompts/historical-sales-extraction-v1';
+import {
+  HISTORICAL_SALES_EXTRACTION_VERSION,
+  historicalSaleFingerprint,
+} from './prompts/historical-sales-extraction-v1';
 
 // ─── Inventory scenario responses ─────────────────────────────────────────────
 
@@ -360,11 +363,22 @@ export class FakeExtractionProvider implements DocumentExtractionProvider {
     startPage: number;
     endPage: number;
     maxTokens?: number;
+    maxSales?: number;
+    batchPass?: number;
+    priorSaleFingerprints?: string[];
   }) {
     const startedAt = Date.now();
     const document = await this.extractHistoricalSales(input.pdfBuffer);
+    let sales = document.sales ?? [];
+    const priors = new Set(input.priorSaleFingerprints ?? []);
+    if (priors.size > 0) {
+      sales = sales.filter((s) => !priors.has(historicalSaleFingerprint(s)));
+    }
+    if (typeof input.maxSales === 'number' && input.maxSales > 0) {
+      sales = sales.slice(0, input.maxSales);
+    }
     return {
-      document,
+      document: { ...document, sales },
       stopReason: 'tool_use' as string | null,
       inputTokens: null as number | null,
       outputTokens: null as number | null,

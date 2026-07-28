@@ -13,9 +13,12 @@ import {
   isExtractionError,
 } from '../providers/extraction-errors';
 import type { ExtractedHistoricalSale, HistoricalSalesExtractionDocument } from './historical-sale-extraction.types';
+import { historicalSaleFingerprint } from '../providers/prompts/historical-sales-extraction-v1';
 import {
   buildChunkFingerprint,
+  DENSE_PAGE_BATCH_SIZES,
   mapWithConcurrency,
+  MAX_DENSE_PAGE_PASSES,
   planPageChunks,
   resolveSalesPdfChunkConcurrency,
   resolveSalesPdfChunkMaxTokens,
@@ -24,6 +27,7 @@ import {
   resolveSalesPdfMaxPages,
   resolveSalesPdfMaxProviderCalls,
   resolveSalesPdfPagesPerChunk,
+  SALES_PDF_CHUNK_MAX_TOKENS_CEILING,
   sha256Hex,
   splitPageRange,
   SALES_PDF_CHUNKED_EXTRACTION_VERSION,
@@ -36,6 +40,10 @@ import {
 import { splitPdfPageRange } from './sales-pdf-split';
 
 const MAX_ATTEMPTS_PER_RANGE = 3;
+
+type ChunkProvider = DocumentExtractionProvider & {
+  extractHistoricalSalesChunk: NonNullable<DocumentExtractionProvider['extractHistoricalSalesChunk']>;
+};
 
 export type ChunkedExtractionOverallState =
   | 'PROCESSING'
@@ -219,30 +227,153 @@ export class SalesChunkedExtractionService {
 
         try {
           const fragment = await splitPdfPageRange(pdfBuffer, chunk.startPage, chunk.endPage);
-          providerCallCount += 1;
+          const chunkProvider = provider as ChunkProvider;
 
-          this.logger.log(
-            `Sales chunk provider call: ${JSON.stringify({
-              tenantId,
-              sessionId,
-              fileId,
-              chunkId: chunk.id,
-              chunkIndex: chunk.chunkIndex,
+          const bumpCalls = () => {
+            providerCallCount += 1;
+            this.logger.log(
+              `Sales chunk provider call: ${JSON.stringify({
+                tenantId,
+                sessionId,
+                fileId,
+                chunkId: chunk.id,
+                chunkIndex: chunk.chunkIndex,
+                startPage: chunk.startPage,
+                endPage: chunk.endPage,
+                attempt: chunk.attemptCount + 1,
+                provider: provider.providerName,
+                model: modelId,
+                providerCallCount,
+              })}`,
+            );
+            return providerCallCount <= maxProviderCalls;
+          };
+
+          let result: Awaited<ReturnType<ChunkProvider['extractHistoricalSalesChunk']>>;
+          try {
+            if (!bumpCalls()) {
+              await this.failChunk(
+                chunk.id,
+                ExtractionErrorCode.CAPACITY_LIMIT,
+                'capacity',
+                'Se alcanzó el límite de llamadas al proveedor de extracción.',
+              );
+              return;
+            }
+            result = await chunkProvider.extractHistoricalSalesChunk({
+              pdfBuffer: fragment,
               startPage: chunk.startPage,
               endPage: chunk.endPage,
-              attempt: chunk.attemptCount + 1,
-              provider: provider.providerName,
-              model: modelId,
-              providerCallCount,
-            })}`,
-          );
+              maxTokens: chunkMaxTokens,
+            });
+          } catch (err) {
+            const code = isExtractionError(err) ? err.code : ExtractionErrorCode.PROVIDER_ERROR;
+            const safeMessage = isExtractionError(err)
+              ? err.safeMessage
+              : 'Error al procesar un bloque del documento.';
 
-          const result = await provider.extractHistoricalSalesChunk!({
-            pdfBuffer: fragment,
-            startPage: chunk.startPage,
-            endPage: chunk.endPage,
-            maxTokens: chunkMaxTokens,
-          });
+            if (code !== ExtractionErrorCode.OUTPUT_TRUNCATED) {
+              throw err;
+            }
+
+            // Multi-page truncation → adaptive page split (handled below via rethrow marker).
+            if (chunk.pageCount > 1 && chunk.attemptCount + 1 < MAX_ATTEMPTS_PER_RANGE) {
+              const split = splitPageRange(chunk.startPage, chunk.endPage);
+              if (split) {
+                const [left, right] = split;
+                const nextIndexBase = await this.nextChunkIndex(tenantId, fileId, extractionVersion);
+                if (nextIndexBase + 2 > maxChunks) {
+                  await this.failChunk(chunk.id, code, 'capacity', safeMessage);
+                  return;
+                }
+
+                adaptiveSplitCount += 1;
+                await this.prisma.$transaction([
+                  this.prisma.documentExtractionChunk.update({
+                    where: { id: chunk.id },
+                    data: {
+                      status: DocumentExtractionChunkStatus.SUPERSEDED,
+                      attemptCount: { increment: 1 },
+                      errorCode: code,
+                      errorCategory: 'capacity',
+                      safeErrorMessage: safeMessage,
+                      completedAt: new Date(),
+                    },
+                  }),
+                  this.prisma.documentExtractionChunk.create({
+                    data: {
+                      tenantId,
+                      sessionId,
+                      fileId,
+                      importTarget: DataImportTarget.SALES,
+                      chunkIndex: nextIndexBase,
+                      startPage: left.startPage,
+                      endPage: left.endPage,
+                      pageCount: left.endPage - left.startPage + 1,
+                      sourceFingerprint,
+                      chunkFingerprint: buildChunkFingerprint({
+                        sourceFingerprint,
+                        startPage: left.startPage,
+                        endPage: left.endPage,
+                        extractionVersion,
+                        modelId,
+                      }),
+                      parentChunkId: chunk.id,
+                      status: DocumentExtractionChunkStatus.PENDING,
+                      extractionVersion,
+                    },
+                  }),
+                  this.prisma.documentExtractionChunk.create({
+                    data: {
+                      tenantId,
+                      sessionId,
+                      fileId,
+                      importTarget: DataImportTarget.SALES,
+                      chunkIndex: nextIndexBase + 1,
+                      startPage: right.startPage,
+                      endPage: right.endPage,
+                      pageCount: right.endPage - right.startPage + 1,
+                      sourceFingerprint,
+                      chunkFingerprint: buildChunkFingerprint({
+                        sourceFingerprint,
+                        startPage: right.startPage,
+                        endPage: right.endPage,
+                        extractionVersion,
+                        modelId,
+                      }),
+                      parentChunkId: chunk.id,
+                      status: DocumentExtractionChunkStatus.PENDING,
+                      extractionVersion,
+                    },
+                  }),
+                ]);
+
+                this.logger.log(
+                  `Sales chunk adaptive split: ${JSON.stringify({
+                    parentChunkId: chunk.id,
+                    from: `${chunk.startPage}-${chunk.endPage}`,
+                    left: `${left.startPage}-${left.endPage}`,
+                    right: `${right.startPage}-${right.endPage}`,
+                    adaptiveSplitCount,
+                  })}`,
+                );
+                return;
+              }
+            }
+
+            // Single-page truncation → escalate tokens (if needed) then dense row batches.
+            if (chunk.pageCount === 1) {
+              result = await this.extractDenseSinglePage({
+                provider: chunkProvider,
+                fragment,
+                chunk,
+                preferredMaxTokens: chunkMaxTokens,
+                bumpCalls,
+              });
+            } else {
+              throw err;
+            }
+          }
 
           await this.prisma.documentExtractionChunk.update({
             where: { id: chunk.id },
@@ -285,98 +416,14 @@ export class SalesChunkedExtractionService {
             ? err.safeMessage
             : 'Error al procesar un bloque del documento.';
 
-          if (
-            code === ExtractionErrorCode.OUTPUT_TRUNCATED &&
-            chunk.pageCount > 1 &&
-            chunk.attemptCount + 1 < MAX_ATTEMPTS_PER_RANGE
-          ) {
-            const split = splitPageRange(chunk.startPage, chunk.endPage);
-            if (split) {
-              const [left, right] = split;
-              const nextIndexBase = await this.nextChunkIndex(tenantId, fileId, extractionVersion);
-              if (nextIndexBase + 2 > maxChunks) {
-                await this.failChunk(chunk.id, code, 'capacity', safeMessage);
-                return;
-              }
-
-              adaptiveSplitCount += 1;
-              await this.prisma.$transaction([
-                this.prisma.documentExtractionChunk.update({
-                  where: { id: chunk.id },
-                  data: {
-                    status: DocumentExtractionChunkStatus.SUPERSEDED,
-                    attemptCount: { increment: 1 },
-                    errorCode: code,
-                    errorCategory: 'capacity',
-                    safeErrorMessage: safeMessage,
-                    completedAt: new Date(),
-                  },
-                }),
-                this.prisma.documentExtractionChunk.create({
-                  data: {
-                    tenantId,
-                    sessionId,
-                    fileId,
-                    importTarget: DataImportTarget.SALES,
-                    chunkIndex: nextIndexBase,
-                    startPage: left.startPage,
-                    endPage: left.endPage,
-                    pageCount: left.endPage - left.startPage + 1,
-                    sourceFingerprint,
-                    chunkFingerprint: buildChunkFingerprint({
-                      sourceFingerprint,
-                      startPage: left.startPage,
-                      endPage: left.endPage,
-                      extractionVersion,
-                      modelId,
-                    }),
-                    parentChunkId: chunk.id,
-                    status: DocumentExtractionChunkStatus.PENDING,
-                    extractionVersion,
-                  },
-                }),
-                this.prisma.documentExtractionChunk.create({
-                  data: {
-                    tenantId,
-                    sessionId,
-                    fileId,
-                    importTarget: DataImportTarget.SALES,
-                    chunkIndex: nextIndexBase + 1,
-                    startPage: right.startPage,
-                    endPage: right.endPage,
-                    pageCount: right.endPage - right.startPage + 1,
-                    sourceFingerprint,
-                    chunkFingerprint: buildChunkFingerprint({
-                      sourceFingerprint,
-                      startPage: right.startPage,
-                      endPage: right.endPage,
-                      extractionVersion,
-                      modelId,
-                    }),
-                    parentChunkId: chunk.id,
-                    status: DocumentExtractionChunkStatus.PENDING,
-                    extractionVersion,
-                  },
-                }),
-              ]);
-
-              this.logger.log(
-                `Sales chunk adaptive split: ${JSON.stringify({
-                  parentChunkId: chunk.id,
-                  from: `${chunk.startPage}-${chunk.endPage}`,
-                  left: `${left.startPage}-${left.endPage}`,
-                  right: `${right.startPage}-${right.endPage}`,
-                  adaptiveSplitCount,
-                })}`,
-              );
-              return;
-            }
-          }
-
           await this.failChunk(
             chunk.id,
             code,
-            code === ExtractionErrorCode.OUTPUT_TRUNCATED ? 'capacity' : 'provider',
+            code === ExtractionErrorCode.OUTPUT_TRUNCATED ||
+              code === ExtractionErrorCode.CAPACITY_LIMIT ||
+              code === ExtractionErrorCode.PDF_PAGE_LIMIT_EXCEEDED
+              ? 'capacity'
+              : 'provider',
             safeMessage,
           );
         }
@@ -480,6 +527,150 @@ export class SalesChunkedExtractionService {
       },
       orderBy: { chunkIndex: 'asc' },
     });
+  }
+
+  private async extractDenseSinglePage(args: {
+    provider: ChunkProvider;
+    fragment: Buffer;
+    chunk: ChunkRow;
+    preferredMaxTokens: number;
+    bumpCalls: () => boolean;
+  }): Promise<Awaited<ReturnType<ChunkProvider['extractHistoricalSalesChunk']>>> {
+    const { provider, fragment, chunk, preferredMaxTokens, bumpCalls } = args;
+    const maxTokens = Math.max(preferredMaxTokens, SALES_PDF_CHUNK_MAX_TOKENS_CEILING);
+
+    // Escalate to the token ceiling once before batching (covers env still at 8k).
+    if (preferredMaxTokens < SALES_PDF_CHUNK_MAX_TOKENS_CEILING) {
+      if (!bumpCalls()) {
+        throw new ExtractionError(
+          ExtractionErrorCode.CAPACITY_LIMIT,
+          'Se alcanzó el límite de llamadas al proveedor de extracción.',
+        );
+      }
+      try {
+        this.logger.log(
+          `Sales chunk token escalate: ${JSON.stringify({
+            chunkId: chunk.id,
+            pages: `${chunk.startPage}-${chunk.endPage}`,
+            fromTokens: preferredMaxTokens,
+            toTokens: maxTokens,
+          })}`,
+        );
+        return await provider.extractHistoricalSalesChunk({
+          pdfBuffer: fragment,
+          startPage: chunk.startPage,
+          endPage: chunk.endPage,
+          maxTokens,
+        });
+      } catch (err) {
+        if (!(isExtractionError(err) && err.code === ExtractionErrorCode.OUTPUT_TRUNCATED)) {
+          throw err;
+        }
+        // fall through to dense batches
+      }
+    }
+
+    const collected: ExtractedHistoricalSale[] = [];
+    const seen = new Set<string>();
+    let batchSizeIndex = 0;
+    let batchSize: number = DENSE_PAGE_BATCH_SIZES[0];
+    let totalIn = 0;
+    let totalOut = 0;
+    let lastStop: string | null = null;
+    let lastRequestId: string | null = null;
+    let totalDuration = 0;
+
+    for (let pass = 1; pass <= MAX_DENSE_PAGE_PASSES; pass += 1) {
+      if (!bumpCalls()) {
+        throw new ExtractionError(
+          ExtractionErrorCode.CAPACITY_LIMIT,
+          'Se alcanzó el límite de llamadas al proveedor durante la extracción densa de una página.',
+        );
+      }
+
+      const priors = [...seen].slice(-80);
+      try {
+        this.logger.log(
+          `Sales chunk dense-page batch: ${JSON.stringify({
+            chunkId: chunk.id,
+            page: chunk.startPage,
+            pass,
+            batchSize,
+            priorCount: seen.size,
+          })}`,
+        );
+
+        const batch = await provider.extractHistoricalSalesChunk({
+          pdfBuffer: fragment,
+          startPage: chunk.startPage,
+          endPage: chunk.endPage,
+          maxTokens,
+          maxSales: batchSize,
+          batchPass: pass,
+          priorSaleFingerprints: priors,
+        });
+
+        lastStop = batch.stopReason;
+        lastRequestId = batch.requestId;
+        totalDuration += batch.durationMs;
+        totalIn += batch.inputTokens ?? 0;
+        totalOut += batch.outputTokens ?? 0;
+
+        let added = 0;
+        for (const sale of batch.document.sales ?? []) {
+          const fp = historicalSaleFingerprint(sale);
+          if (seen.has(fp)) continue;
+          seen.add(fp);
+          collected.push(sale);
+          added += 1;
+        }
+
+        if (added === 0 || (batch.document.sales?.length ?? 0) < batchSize) {
+          break;
+        }
+      } catch (err) {
+        if (isExtractionError(err) && err.code === ExtractionErrorCode.OUTPUT_TRUNCATED) {
+          if (batchSizeIndex < DENSE_PAGE_BATCH_SIZES.length - 1) {
+            batchSizeIndex += 1;
+            batchSize = DENSE_PAGE_BATCH_SIZES[batchSizeIndex];
+            this.logger.warn(
+              `Sales chunk dense-page reduce batch: ${JSON.stringify({
+                chunkId: chunk.id,
+                page: chunk.startPage,
+                nextBatchSize: batchSize,
+              })}`,
+            );
+            continue;
+          }
+          throw new ExtractionError(
+            ExtractionErrorCode.OUTPUT_TRUNCATED,
+            `No se pudo completar la extracción de la página ${chunk.startPage} porque la respuesta se truncó incluso en lotes pequeños.`,
+            { startPage: chunk.startPage, endPage: chunk.endPage, batchSize },
+          );
+        }
+        throw err;
+      }
+    }
+
+    if (collected.length === 0) {
+      throw new ExtractionError(
+        ExtractionErrorCode.OUTPUT_TRUNCATED,
+        `No se pudo completar la extracción del bloque de páginas ${chunk.startPage}–${chunk.endPage} porque la respuesta se truncó.`,
+        { startPage: chunk.startPage, endPage: chunk.endPage },
+      );
+    }
+
+    return {
+      document: {
+        sales: collected,
+        extractionVersion: SALES_PDF_CHUNKED_EXTRACTION_VERSION,
+      },
+      stopReason: lastStop,
+      inputTokens: totalIn || null,
+      outputTokens: totalOut || null,
+      requestId: lastRequestId,
+      durationMs: totalDuration,
+    };
   }
 
   private async claimChunk(tenantId: string, chunkId: string): Promise<boolean> {

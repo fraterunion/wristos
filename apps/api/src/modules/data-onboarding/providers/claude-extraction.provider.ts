@@ -389,7 +389,11 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
                 } as Anthropic.DocumentBlockParam,
                 {
                   type: 'text',
-                  text: buildHistoricalSalesChunkUserPrompt(input.startPage, input.endPage),
+                  text: buildHistoricalSalesChunkUserPrompt(input.startPage, input.endPage, {
+                    maxSales: input.maxSales,
+                    batchPass: input.batchPass,
+                    priorSaleFingerprints: input.priorSaleFingerprints,
+                  }),
                 },
               ],
             },
