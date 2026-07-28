@@ -18,6 +18,7 @@ import {
   buildChunkFingerprint,
   DENSE_PAGE_BATCH_SIZES,
   mapWithConcurrency,
+  MAX_ATTEMPTS_PER_RANGE,
   MAX_DENSE_PAGE_PASSES,
   planPageChunks,
   resolveSalesPdfChunkConcurrency,
@@ -28,6 +29,7 @@ import {
   resolveSalesPdfMaxProviderCalls,
   resolveSalesPdfPagesPerChunk,
   SALES_PDF_CHUNK_MAX_TOKENS_CEILING,
+  SALES_PDF_DENSE_BATCH_MAX_TOKENS,
   sha256Hex,
   splitPageRange,
   SALES_PDF_CHUNKED_EXTRACTION_VERSION,
@@ -38,8 +40,6 @@ import {
   type MergeSalesResult,
 } from './sales-pdf-merge';
 import { splitPdfPageRange } from './sales-pdf-split';
-
-const MAX_ATTEMPTS_PER_RANGE = 3;
 
 type ChunkProvider = DocumentExtractionProvider & {
   extractHistoricalSalesChunk: NonNullable<DocumentExtractionProvider['extractHistoricalSalesChunk']>;
@@ -142,6 +142,17 @@ export class SalesChunkedExtractionService {
       await this.prisma.documentExtractionChunk.deleteMany({
         where: { tenantId, fileId, extractionVersion },
       });
+    } else {
+      // Each process/reprocess call gets a fresh attempt budget for FAILED leaves.
+      await this.prisma.documentExtractionChunk.updateMany({
+        where: {
+          tenantId,
+          fileId,
+          extractionVersion,
+          status: DocumentExtractionChunkStatus.FAILED,
+        },
+        data: { attemptCount: 0 },
+      });
     }
 
     const existing = await this.prisma.documentExtractionChunk.findMany({
@@ -198,11 +209,16 @@ export class SalesChunkedExtractionService {
     // Process until no PENDING/FAILED leaf work remains or capacity exhausted.
     for (let round = 0; round < maxProviderCalls; round += 1) {
       const leafs = await this.listActiveLeafChunks(tenantId, fileId, extractionVersion);
-      const work = leafs.filter(
-        (c) =>
-          c.status === DocumentExtractionChunkStatus.PENDING ||
-          c.status === DocumentExtractionChunkStatus.FAILED,
-      );
+      const work = leafs.filter((c) => {
+        if (c.status === DocumentExtractionChunkStatus.PENDING) return true;
+        if (
+          c.status === DocumentExtractionChunkStatus.FAILED &&
+          c.attemptCount < MAX_ATTEMPTS_PER_RANGE
+        ) {
+          return true;
+        }
+        return false;
+      });
 
       if (work.length === 0) break;
 
@@ -251,21 +267,33 @@ export class SalesChunkedExtractionService {
 
           let result: Awaited<ReturnType<ChunkProvider['extractHistoricalSalesChunk']>>;
           try {
-            if (!bumpCalls()) {
-              await this.failChunk(
-                chunk.id,
-                ExtractionErrorCode.CAPACITY_LIMIT,
-                'capacity',
-                'Se alcanzó el límite de llamadas al proveedor de extracción.',
-              );
-              return;
+            // Dense single pages: start with bounded row batches (avoids 90s+ full-page timeouts).
+            if (chunk.pageCount === 1) {
+              result = await this.extractDenseSinglePage({
+                provider: chunkProvider,
+                fragment,
+                chunk,
+                preferredMaxTokens: Math.min(chunkMaxTokens, SALES_PDF_DENSE_BATCH_MAX_TOKENS),
+                bumpCalls,
+                startWithBatches: true,
+              });
+            } else {
+              if (!bumpCalls()) {
+                await this.failChunk(
+                  chunk.id,
+                  ExtractionErrorCode.CAPACITY_LIMIT,
+                  'capacity',
+                  'Se alcanzó el límite de llamadas al proveedor de extracción.',
+                );
+                return;
+              }
+              result = await chunkProvider.extractHistoricalSalesChunk({
+                pdfBuffer: fragment,
+                startPage: chunk.startPage,
+                endPage: chunk.endPage,
+                maxTokens: chunkMaxTokens,
+              });
             }
-            result = await chunkProvider.extractHistoricalSalesChunk({
-              pdfBuffer: fragment,
-              startPage: chunk.startPage,
-              endPage: chunk.endPage,
-              maxTokens: chunkMaxTokens,
-            });
           } catch (err) {
             const code = isExtractionError(err) ? err.code : ExtractionErrorCode.PROVIDER_ERROR;
             const safeMessage = isExtractionError(err)
@@ -361,18 +389,7 @@ export class SalesChunkedExtractionService {
               }
             }
 
-            // Single-page truncation → escalate tokens (if needed) then dense row batches.
-            if (chunk.pageCount === 1) {
-              result = await this.extractDenseSinglePage({
-                provider: chunkProvider,
-                fragment,
-                chunk,
-                preferredMaxTokens: chunkMaxTokens,
-                bumpCalls,
-              });
-            } else {
-              throw err;
-            }
+            throw err;
           }
 
           await this.prisma.documentExtractionChunk.update({
@@ -535,38 +552,44 @@ export class SalesChunkedExtractionService {
     chunk: ChunkRow;
     preferredMaxTokens: number;
     bumpCalls: () => boolean;
+    startWithBatches?: boolean;
   }): Promise<Awaited<ReturnType<ChunkProvider['extractHistoricalSalesChunk']>>> {
-    const { provider, fragment, chunk, preferredMaxTokens, bumpCalls } = args;
-    const maxTokens = Math.max(preferredMaxTokens, SALES_PDF_CHUNK_MAX_TOKENS_CEILING);
+    const { provider, fragment, chunk, preferredMaxTokens, bumpCalls, startWithBatches = false } =
+      args;
+    const batchTokens = Math.min(
+      Math.max(preferredMaxTokens, SALES_PDF_DENSE_BATCH_MAX_TOKENS),
+      SALES_PDF_CHUNK_MAX_TOKENS_CEILING,
+    );
 
-    // Escalate to the token ceiling once before batching (covers env still at 8k).
-    if (preferredMaxTokens < SALES_PDF_CHUNK_MAX_TOKENS_CEILING) {
-      if (!bumpCalls()) {
-        throw new ExtractionError(
-          ExtractionErrorCode.CAPACITY_LIMIT,
-          'Se alcanzó el límite de llamadas al proveedor de extracción.',
-        );
-      }
-      try {
-        this.logger.log(
-          `Sales chunk token escalate: ${JSON.stringify({
-            chunkId: chunk.id,
-            pages: `${chunk.startPage}-${chunk.endPage}`,
-            fromTokens: preferredMaxTokens,
-            toTokens: maxTokens,
-          })}`,
-        );
-        return await provider.extractHistoricalSalesChunk({
-          pdfBuffer: fragment,
-          startPage: chunk.startPage,
-          endPage: chunk.endPage,
-          maxTokens,
-        });
-      } catch (err) {
-        if (!(isExtractionError(err) && err.code === ExtractionErrorCode.OUTPUT_TRUNCATED)) {
-          throw err;
+    if (!startWithBatches) {
+      // Escalate once before batching when a full-page attempt already truncated.
+      if (preferredMaxTokens < SALES_PDF_CHUNK_MAX_TOKENS_CEILING) {
+        if (!bumpCalls()) {
+          throw new ExtractionError(
+            ExtractionErrorCode.CAPACITY_LIMIT,
+            'Se alcanzó el límite de llamadas al proveedor de extracción.',
+          );
         }
-        // fall through to dense batches
+        try {
+          this.logger.log(
+            `Sales chunk token escalate: ${JSON.stringify({
+              chunkId: chunk.id,
+              pages: `${chunk.startPage}-${chunk.endPage}`,
+              fromTokens: preferredMaxTokens,
+              toTokens: SALES_PDF_CHUNK_MAX_TOKENS_CEILING,
+            })}`,
+          );
+          return await provider.extractHistoricalSalesChunk({
+            pdfBuffer: fragment,
+            startPage: chunk.startPage,
+            endPage: chunk.endPage,
+            maxTokens: SALES_PDF_CHUNK_MAX_TOKENS_CEILING,
+          });
+        } catch (err) {
+          if (!(isExtractionError(err) && err.code === ExtractionErrorCode.OUTPUT_TRUNCATED)) {
+            throw err;
+          }
+        }
       }
     }
 
@@ -597,6 +620,7 @@ export class SalesChunkedExtractionService {
             pass,
             batchSize,
             priorCount: seen.size,
+            maxTokens: batchTokens,
           })}`,
         );
 
@@ -604,7 +628,7 @@ export class SalesChunkedExtractionService {
           pdfBuffer: fragment,
           startPage: chunk.startPage,
           endPage: chunk.endPage,
-          maxTokens,
+          maxTokens: batchTokens,
           maxSales: batchSize,
           batchPass: pass,
           priorSaleFingerprints: priors,

@@ -35,7 +35,7 @@ import { INVOICE_EXTRACTION_SYSTEM_PROMPT, INVOICE_EXTRACTION_VERSION } from './
 // ─── Configuration helpers ────────────────────────────────────────────────────
 
 /** Default per-request timeout in ms. Override with DOCUMENT_EXTRACTION_TIMEOUT_MS. */
-const DEFAULT_TIMEOUT_MS = 90_000;
+const DEFAULT_TIMEOUT_MS = 180_000;
 
 function resolveTimeoutMs(): number {
   const raw = process.env.DOCUMENT_EXTRACTION_TIMEOUT_MS;
