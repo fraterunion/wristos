@@ -14,7 +14,12 @@ import {
   resolveSalesMaxTokens,
 } from '../sales-import/historical-sale-extraction.types';
 import type { DocumentExtractionProvider } from './document-extraction.provider.interface';
-import { ExtractionError, ExtractionErrorCode, isExtractionError } from './extraction-errors';
+import {
+  ExtractionError,
+  ExtractionErrorCode,
+  isExtractionError,
+  serializeProviderErrorForDiagnostics,
+} from './extraction-errors';
 import {
   HISTORICAL_SALES_EXTRACTION_SYSTEM_PROMPT,
   HISTORICAL_SALES_EXTRACTION_VERSION,
@@ -154,18 +159,12 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
     } catch (err) {
       if (isExtractionError(err)) throw err;
 
-      // Extract safe metadata for logging — never log err.error (raw body) or err.headers.
-      const errMeta: Record<string, unknown> = {
-        errorClass: err instanceof Error ? err.constructor.name : typeof err,
-        errorName: err instanceof Error ? err.name : undefined,
-      };
-      if (err instanceof Error && 'status' in err) {
-        const apiErr = err as { status?: unknown; type?: unknown; requestID?: unknown };
-        if (typeof apiErr.status === 'number') errMeta.httpStatus = apiErr.status;
-        if (typeof apiErr.type === 'string') errMeta.errorType = apiErr.type;
-        if (typeof apiErr.requestID === 'string') errMeta.requestId = apiErr.requestID;
-      }
-      this.logger.error('[stage:create_failed] messages.create threw an error', errMeta);
+      // Full provider diagnostics for ops only — never return/persist this object.
+      // Nest Logger.error(msg, stack?) treats the 2nd arg as a string stack; embed JSON in msg.
+      const providerDiagnostics = serializeProviderErrorForDiagnostics(err);
+      this.logger.error(
+        `[stage:create_failed] messages.create threw an error — full provider diagnostics: ${JSON.stringify(providerDiagnostics)}`,
+      );
 
       // Classify timeout vs general API failures — never expose err.message to callers
       const isTimeout =
@@ -287,17 +286,12 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
     } catch (err) {
       if (isExtractionError(err)) throw err;
 
-      const errMeta: Record<string, unknown> = {
-        errorClass: err instanceof Error ? err.constructor.name : typeof err,
-        errorName: err instanceof Error ? err.name : undefined,
-      };
-      if (err instanceof Error && 'status' in err) {
-        const apiErr = err as { status?: unknown; type?: unknown; requestID?: unknown };
-        if (typeof apiErr.status === 'number') errMeta.httpStatus = apiErr.status;
-        if (typeof apiErr.type === 'string') errMeta.errorType = apiErr.type;
-        if (typeof apiErr.requestID === 'string') errMeta.requestId = apiErr.requestID;
-      }
-      this.logger.error('[stage:create_failed] messages.create threw an error', errMeta);
+      // Full provider diagnostics for ops only — never return/persist this object.
+      // Nest Logger.error(msg, stack?) treats the 2nd arg as a string stack; embed JSON in msg.
+      const providerDiagnostics = serializeProviderErrorForDiagnostics(err);
+      this.logger.error(
+        `[stage:create_failed] messages.create threw an error — full provider diagnostics: ${JSON.stringify(providerDiagnostics)}`,
+      );
 
       const isTimeout =
         (err instanceof Error && (

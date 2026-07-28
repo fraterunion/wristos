@@ -315,6 +315,37 @@ describe('ClaudeExtractionProvider', () => {
     expect((caught as ExtractionError).cause).toBe(originalErr);
   });
 
+  it('logs full Anthropic-style provider diagnostics before wrapping PROVIDER_ERROR', async () => {
+    const originalErr = Object.assign(new Error('credit balance too low'), {
+      name: 'AuthenticationError',
+      status: 401,
+      type: 'authentication_error',
+      requestID: 'req_diag_123',
+      error: { type: 'error', error: { type: 'authentication_error', message: 'credit balance too low' } },
+      headers: { 'request-id': 'req_diag_123', 'anthropic-ratelimit-requests-limit': '50' },
+      cause: Object.assign(new Error('nested cause'), { name: 'CauseError' }),
+    });
+    mockCreate.mockRejectedValue(originalErr);
+
+    const errorSpy = jest.spyOn((provider as unknown as { logger: { error: (...args: unknown[]) => void } }).logger, 'error');
+
+    const caught = await provider.extractInventoryInvoice(Buffer.from('%PDF-')).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(ExtractionError);
+    expect((caught as ExtractionError).code).toBe(ExtractionErrorCode.PROVIDER_ERROR);
+    expect((caught as ExtractionError).safeMessage).not.toContain('credit balance');
+    expect((caught as ExtractionError).cause).toBe(originalErr);
+
+    expect(errorSpy).toHaveBeenCalled();
+    const logged = String(errorSpy.mock.calls[0]?.[0] ?? '');
+    expect(logged).toContain('full provider diagnostics');
+    expect(logged).toContain('credit balance too low');
+    expect(logged).toContain('AuthenticationError');
+    expect(logged).toContain('req_diag_123');
+    expect(logged).toContain('"status":401');
+    expect(logged).toContain('nested cause');
+    errorSpy.mockRestore();
+  });
+
   it('preserves the original SDK error as ExtractionError.cause on TIMEOUT', async () => {
     const timeoutErr = Object.assign(new Error('Request timed out'), { name: 'APIConnectionTimeoutError' });
     mockCreate.mockRejectedValue(timeoutErr);

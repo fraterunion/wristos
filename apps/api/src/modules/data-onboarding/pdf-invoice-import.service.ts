@@ -30,7 +30,7 @@ import { buildMappingVersion } from './inventory-import/watch-field-mapping';
 import type { MappingEntry } from './inventory-import/watch-import.types';
 import { IMPORT_FILE_STORAGE } from './tokens';
 import type { DocumentExtractionProvider } from './providers/document-extraction.provider.interface';
-import { ExtractionError, ExtractionErrorCode, buildSafeExtractionRecord, isExtractionError } from './providers/extraction-errors';
+import { ExtractionError, ExtractionErrorCode, buildSafeExtractionRecord, isExtractionError, serializeProviderErrorForDiagnostics } from './providers/extraction-errors';
 import { createExtractionProvider } from './providers/extraction.provider.factory';
 import type { ImportFileStorage } from './storage/import-file-storage.interface';
 import {
@@ -243,31 +243,21 @@ export class PdfInvoiceImportService {
       const safeRecord = buildSafeExtractionRecord(err, providerName, modelId);
       const durationMs = Date.now() - startedAt;
 
-      // Extract safe Anthropic API metadata from err or its cause (ExtractionError wraps SDK errors).
-      // Never log err.error (raw body) or err.headers.
-      const anthropicMeta: Record<string, unknown> = {};
-      const errCause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
-      for (const candidate of [err, errCause]) {
-        if (candidate instanceof Error && 'status' in candidate) {
-          const apiErr = candidate as { status?: unknown; type?: unknown; requestID?: unknown };
-          if (typeof apiErr.status === 'number') anthropicMeta.httpStatus = apiErr.status;
-          if (typeof apiErr.type === 'string') anthropicMeta.errorType = apiErr.type;
-          if (typeof apiErr.requestID === 'string') anthropicMeta.requestId = apiErr.requestID;
-          break;
-        }
-      }
-
-      this.logger.error('PDF extraction failed', {
-        errorCode: safeRecord.code,
-        errorCategory: safeRecord.category,
-        provider: providerName,
-        model: modelId,
-        sessionId,
-        tenantId,
-        errorClass: err instanceof Error ? err.constructor.name : typeof err,
-        durationMs,
-        ...anthropicMeta,
-      });
+      // Log complete original provider/SDK error (and nested causes) for ops.
+      // safeRecord above remains the only payload persisted / returned to clients.
+      // Nest Logger.error(msg, stack?) treats the 2nd arg as a string stack; embed JSON in msg.
+      this.logger.error(
+        `PDF extraction failed — full provider diagnostics: ${JSON.stringify({
+          errorCode: safeRecord.code,
+          errorCategory: safeRecord.category,
+          provider: providerName,
+          model: modelId,
+          sessionId,
+          tenantId,
+          durationMs,
+          providerError: serializeProviderErrorForDiagnostics(err),
+        })}`,
+      );
 
       if (isExtractionError(err) && err.debugInfo) {
         this.logger.debug(`Extraction schema error [${sessionId}]: ${JSON.stringify(err.debugInfo)}`);
