@@ -23,16 +23,28 @@ export enum ExtractionErrorCode {
   TIMEOUT = 'EXTRACTION_TIMEOUT',
   /** Provider returned a response that did not match the expected schema. */
   SCHEMA_INVALID = 'EXTRACTION_SCHEMA_INVALID',
+  /** Alias used by chunked sales pipeline for invalid structured output. */
+  OUTPUT_INVALID = 'EXTRACTION_OUTPUT_INVALID',
   /** Provider returned no usable structured output (tool call absent / empty). */
   NO_TOOL_RESPONSE = 'EXTRACTION_NO_TOOL_RESPONSE',
   /** Document has more pages than the configured limit. */
   PAGE_LIMIT_EXCEEDED = 'EXTRACTION_PAGE_LIMIT_EXCEEDED',
+  /** Alias for page-limit exceeded in sales PDF guards. */
+  PDF_PAGE_LIMIT_EXCEEDED = 'PDF_PAGE_LIMIT_EXCEEDED',
   /** Provider hit max_tokens before completing the response (document too large). */
   OUTPUT_TRUNCATED = 'EXTRACTION_OUTPUT_TRUNCATED',
   /** PDF is password-protected and cannot be read. */
   PDF_ENCRYPTED = 'EXTRACTION_PDF_ENCRYPTED',
   /** PDF bytes are corrupt or unreadable. */
   PDF_CORRUPT = 'EXTRACTION_PDF_CORRUPT',
+  /** Alias for corrupt/invalid PDF classification. */
+  INVALID_PDF = 'INVALID_PDF',
+  /** Some chunks succeeded while others remain unresolved. */
+  PARTIAL_FAILURE = 'EXTRACTION_PARTIAL_FAILURE',
+  /** Merge/cross-record validation failed. */
+  MERGE_VALIDATION_ERROR = 'MERGE_VALIDATION_ERROR',
+  /** Capacity guard (max chunks / provider calls) hit. */
+  CAPACITY_LIMIT = 'EXTRACTION_CAPACITY_LIMIT',
   /** Any other unclassified provider error. */
   PROVIDER_ERROR = 'EXTRACTION_PROVIDER_ERROR',
 }
@@ -234,11 +246,17 @@ export function buildSafeExtractionRecord(
   const category =
     code === ExtractionErrorCode.TIMEOUT          ? 'timeout' :
     code === ExtractionErrorCode.OUTPUT_TRUNCATED ? 'capacity' :
+    code === ExtractionErrorCode.CAPACITY_LIMIT   ? 'capacity' :
     code === ExtractionErrorCode.SCHEMA_INVALID   ? 'schema' :
+    code === ExtractionErrorCode.OUTPUT_INVALID   ? 'schema' :
     code === ExtractionErrorCode.NO_TOOL_RESPONSE ? 'schema' :
     code === ExtractionErrorCode.PAGE_LIMIT_EXCEEDED ? 'validation' :
+    code === ExtractionErrorCode.PDF_PAGE_LIMIT_EXCEEDED ? 'validation' :
     code === ExtractionErrorCode.PDF_ENCRYPTED    ? 'validation' :
     code === ExtractionErrorCode.PDF_CORRUPT      ? 'validation' :
+    code === ExtractionErrorCode.INVALID_PDF      ? 'validation' :
+    code === ExtractionErrorCode.PARTIAL_FAILURE  ? 'partial' :
+    code === ExtractionErrorCode.MERGE_VALIDATION_ERROR ? 'merge' :
     'provider';
 
   return { code, category, safeMessage, provider, model, occurredAt: new Date().toISOString() };

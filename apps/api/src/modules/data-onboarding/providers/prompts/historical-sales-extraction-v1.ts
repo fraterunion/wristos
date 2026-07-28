@@ -1,5 +1,8 @@
 export const HISTORICAL_SALES_EXTRACTION_VERSION = 'v1';
 
+/** Chunked multi-pass historical sales extraction. */
+export const SALES_PDF_CHUNKED_EXTRACTION_VERSION = 'sales-pdf-chunked-v1';
+
 export const HISTORICAL_SALES_EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting structured historical watch sale rows from luxury dealer workbooks, ledgers, and PDF sales documents.
 
 SECURITY NOTICE — READ FIRST:
@@ -55,3 +58,16 @@ Incorrect — do NOT extract a monthly total as a sale:
 Incorrect — do NOT treat bare "$" as USD:
   "$93,000" with no USD/UDS/DLS/DOLARES label
   → saleCurrency = "MXN"`;
+
+export function buildHistoricalSalesChunkUserPrompt(startPage: number, endPage: number): string {
+  return [
+    `This PDF fragment is ONE page range from a larger historical sales document.`,
+    `Original page range (1-based inclusive): ${startPage}–${endPage}.`,
+    `Extract ONLY sale rows that are sufficiently visible in these supplied pages.`,
+    `Do NOT invent values. Do NOT summarize. Do NOT include markdown.`,
+    `Do NOT repeat headers as records.`,
+    `Do NOT calculate missing financial values.`,
+    `If a table row is only partially visible at a page boundary, include it only when enough fields are clearly readable; otherwise omit it.`,
+    `Call extract_historical_sales with every visible sold-watch transaction in this fragment.`,
+  ].join('\n');
+}

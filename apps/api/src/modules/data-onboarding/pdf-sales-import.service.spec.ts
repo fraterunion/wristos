@@ -23,7 +23,8 @@ describe('PdfSalesImportService.requireSalesSession', () => {
       },
     };
     const storage = { read: jest.fn() };
-    return new PdfSalesImportService(prisma as never, storage as never);
+    const chunked = { run: jest.fn(), getProgress: jest.fn() };
+    return new PdfSalesImportService(prisma as never, storage as never, chunked as never);
   }
 
   it('hard-requires importTarget=SALES (title VENTAS does not bypass)', async () => {
@@ -145,7 +146,8 @@ describe('PdfSalesImportService storage failure classification', () => {
       }),
     };
 
-    const service = new PdfSalesImportService(prismaStub as never, storage as never);
+    const chunked = { run: jest.fn(), getProgress: jest.fn(async () => null) };
+    const service = new PdfSalesImportService(prismaStub as never, storage as never, chunked as never);
     (service as unknown as { provider: unknown }).provider = {
       providerName: 'claude',
       modelId: 'claude-test',

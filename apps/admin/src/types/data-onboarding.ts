@@ -232,7 +232,26 @@ export type InventoryInvoiceExtraction = {
   overallConfidence?: number;
 };
 
-export type ExtractionState = 'not_processed' | 'processing' | 'failed' | 'corrupt' | 'ready';
+export type ExtractionState = 'not_processed' | 'processing' | 'failed' | 'corrupt' | 'ready' | 'partially_completed';
+
+export type ChunkExtractionProgress = {
+  overallState: 'PROCESSING' | 'COMPLETED' | 'PARTIALLY_COMPLETED' | 'FAILED';
+  extractionVersion: string;
+  totalPages: number;
+  totalChunks: number;
+  completedChunks: number;
+  failedChunks: number;
+  processingChunks: number;
+  pendingChunks: number;
+  extractedRecordCount: number;
+  progressPercent: number;
+  failedPageRanges: Array<{
+    startPage: number;
+    endPage: number;
+    errorCode: string | null;
+    safeMessage: string | null;
+  }>;
+};
 
 export type HistoricalSaleExtraction = {
   sourceRow?: number | null;
@@ -270,6 +289,7 @@ export type DocumentExtractionResponse = {
   extractionError: string | null;
   watchCount?: number;
   saleCount?: number;
+  chunkProgress?: ChunkExtractionProgress | null;
 };
 
 export type SalesDryRunSummary = DryRunSummary & {

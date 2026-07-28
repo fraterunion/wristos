@@ -7,6 +7,7 @@ import { DataOnboardingService } from './data-onboarding.service';
 import { WatchImportService } from './inventory-import/watch-import.service';
 import { PdfInvoiceImportService } from './pdf-invoice-import.service';
 import { PdfSalesImportService } from './pdf-sales-import.service';
+import { SalesChunkedExtractionService } from './sales-import/sales-chunked-extraction.service';
 import { SalesImportService } from './sales-import/sales-import.service';
 import { createImportFileStorage } from './storage/import-file-storage.factory';
 import { IMPORT_FILE_STORAGE } from './tokens';
@@ -20,6 +21,7 @@ export { IMPORT_FILE_STORAGE } from './tokens';
     DataOnboardingService,
     WatchImportService,
     SalesImportService,
+    SalesChunkedExtractionService,
     PdfInvoiceImportService,
     PdfSalesImportService,
   ],

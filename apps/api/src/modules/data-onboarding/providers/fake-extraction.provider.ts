@@ -354,4 +354,22 @@ export class FakeExtractionProvider implements DocumentExtractionProvider {
 
     return SALES_SCENARIOS['single-sale']();
   }
+
+  async extractHistoricalSalesChunk(input: {
+    pdfBuffer: Buffer;
+    startPage: number;
+    endPage: number;
+    maxTokens?: number;
+  }) {
+    const startedAt = Date.now();
+    const document = await this.extractHistoricalSales(input.pdfBuffer);
+    return {
+      document,
+      stopReason: 'tool_use' as string | null,
+      inputTokens: null as number | null,
+      outputTokens: null as number | null,
+      requestId: null as string | null,
+      durationMs: Date.now() - startedAt,
+    };
+  }
 }

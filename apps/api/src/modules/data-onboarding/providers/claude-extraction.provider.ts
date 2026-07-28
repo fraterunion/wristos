@@ -23,7 +23,13 @@ import {
 import {
   HISTORICAL_SALES_EXTRACTION_SYSTEM_PROMPT,
   HISTORICAL_SALES_EXTRACTION_VERSION,
+  SALES_PDF_CHUNKED_EXTRACTION_VERSION,
+  buildHistoricalSalesChunkUserPrompt,
 } from './prompts/historical-sales-extraction-v1';
+import type {
+  HistoricalSalesChunkExtractionInput,
+  HistoricalSalesChunkExtractionResult,
+} from './document-extraction.provider.interface';
 import { INVOICE_EXTRACTION_SYSTEM_PROMPT, INVOICE_EXTRACTION_VERSION } from './prompts/invoice-extraction-v1';
 
 // ─── Configuration helpers ────────────────────────────────────────────────────
@@ -350,5 +356,138 @@ export class ClaudeExtractionProvider implements DocumentExtractionProvider {
     }
 
     return { ...validated.data, extractionVersion: HISTORICAL_SALES_EXTRACTION_VERSION };
+  }
+
+  async extractHistoricalSalesChunk(
+    input: HistoricalSalesChunkExtractionInput,
+  ): Promise<HistoricalSalesChunkExtractionResult> {
+    const maxTokens = input.maxTokens ?? this.salesMaxTokens;
+    this.logger.debug(
+      `[stage:buffer_received] model=${this.model} byteLength=${input.pdfBuffer.byteLength} ` +
+      `kind=historical_sales_chunk pages=${input.startPage}-${input.endPage} maxTokens=${maxTokens}`,
+    );
+
+    const base64 = input.pdfBuffer.toString('base64');
+    const startedAt = Date.now();
+
+    let response: Anthropic.Message;
+    try {
+      response = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: maxTokens,
+          system: HISTORICAL_SALES_EXTRACTION_SYSTEM_PROMPT,
+          tools: [EXTRACT_HISTORICAL_SALES_TOOL],
+          tool_choice: { type: 'tool', name: 'extract_historical_sales' },
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+                } as Anthropic.DocumentBlockParam,
+                {
+                  type: 'text',
+                  text: buildHistoricalSalesChunkUserPrompt(input.startPage, input.endPage),
+                },
+              ],
+            },
+          ],
+        },
+        {
+          timeout: this.timeoutMs,
+          maxRetries: 0,
+        },
+      );
+    } catch (err) {
+      if (isExtractionError(err)) throw err;
+      this.logger.error(
+        `[stage:create_failed] chunk messages.create failed — diagnostics: ${JSON.stringify(
+          serializeProviderErrorForDiagnostics(err),
+        )}`,
+      );
+
+      const isTimeout =
+        (err instanceof Error && (
+          err.name === 'APIConnectionTimeoutError' ||
+          err.message.includes('timed out') ||
+          err.message.includes('timeout')
+        )) ||
+        (err as { status?: number }).status === 408;
+
+      if (isTimeout) {
+        throw new ExtractionError(
+          ExtractionErrorCode.TIMEOUT,
+          `La extracción del bloque (páginas ${input.startPage}–${input.endPage}) excedió el tiempo límite.`,
+          { startPage: input.startPage, endPage: input.endPage },
+          { cause: err },
+        );
+      }
+
+      throw new ExtractionError(
+        ExtractionErrorCode.PROVIDER_ERROR,
+        'El servicio de extracción respondió con un error inesperado en uno de los bloques. Intente de nuevo.',
+        { startPage: input.startPage, endPage: input.endPage },
+        { cause: err },
+      );
+    }
+
+    const durationMs = Date.now() - startedAt;
+    const requestId =
+      typeof (response as { id?: unknown }).id === 'string'
+        ? (response as { id: string }).id
+        : null;
+
+    if (response.stop_reason === 'max_tokens') {
+      throw new ExtractionError(
+        ExtractionErrorCode.OUTPUT_TRUNCATED,
+        `No se pudo completar la extracción del bloque de páginas ${input.startPage}–${input.endPage} porque la respuesta se truncó.`,
+        {
+          startPage: input.startPage,
+          endPage: input.endPage,
+          stopReason: response.stop_reason,
+          outputTokens: response.usage?.output_tokens ?? null,
+        },
+      );
+    }
+
+    const toolBlock = response.content.find(
+      (c): c is Anthropic.ToolUseBlock => c.type === 'tool_use' && c.name === 'extract_historical_sales',
+    );
+    if (!toolBlock) {
+      throw new ExtractionError(
+        ExtractionErrorCode.NO_TOOL_RESPONSE,
+        'El proveedor de extracción no devolvió datos estructurados para este bloque.',
+        { startPage: input.startPage, endPage: input.endPage },
+      );
+    }
+
+    const cleanedInput = stripNullsDeep(toolBlock.input);
+    const validated = HistoricalSalesExtractionSchema.safeParse(cleanedInput);
+    if (!validated.success) {
+      throw new ExtractionError(
+        ExtractionErrorCode.OUTPUT_INVALID,
+        'La respuesta de extracción del bloque no cumple con el esquema esperado.',
+        {
+          startPage: input.startPage,
+          endPage: input.endPage,
+          issueCount: validated.error.issues.length,
+          issuePaths: validated.error.issues.map((i) => i.path.join('.')).slice(0, 10),
+        },
+      );
+    }
+
+    return {
+      document: {
+        ...validated.data,
+        extractionVersion: SALES_PDF_CHUNKED_EXTRACTION_VERSION,
+      },
+      stopReason: response.stop_reason ?? null,
+      inputTokens: response.usage?.input_tokens ?? null,
+      outputTokens: response.usage?.output_tokens ?? null,
+      requestId,
+      durationMs,
+    };
   }
 }

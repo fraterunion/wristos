@@ -428,6 +428,44 @@ export function SalesExtractionReviewStep({
     return <div className="h-40 animate-pulse rounded-xl bg-white/10" />;
   }
 
+  const progress = extraction.chunkProgress;
+  const isProcessing = extraction.extractionState === 'processing';
+  const isPartial = extraction.extractionState === 'partially_completed';
+
+  if (isProcessing) {
+    return (
+      <section className="ui-card space-y-3">
+        <h2 className="text-sm font-medium text-white">Procesando documento por bloques</h2>
+        <p className="text-sm text-muted">
+          {progress
+            ? `${progress.completedChunks} de ${progress.totalChunks} bloques procesados · ${progress.progressPercent}% completado`
+            : 'Iniciando extracción por páginas…'}
+        </p>
+        {progress?.processingChunks ? (
+          <p className="text-xs text-white/60">Bloques en proceso: {progress.processingChunks}</p>
+        ) : null}
+        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full rounded-full bg-emerald-400/70 transition-all"
+            style={{ width: `${progress?.progressPercent ?? 5}%` }}
+          />
+        </div>
+        <button
+          type="button"
+          className="ui-btn-secondary text-xs"
+          onClick={() => {
+            void getDocumentExtraction(session.id).then((resp) => {
+              setExtraction(resp);
+              setLocalSales(isSalesExtraction(resp.extraction) ? resp.extraction.sales : []);
+            });
+          }}
+        >
+          Actualizar progreso
+        </button>
+      </section>
+    );
+  }
+
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <section className="ui-card">
@@ -444,6 +482,37 @@ export function SalesExtractionReviewStep({
       </section>
 
       <div>
+        {isPartial ? (
+          <section className="ui-card mb-4 border border-amber-500/30 bg-amber-500/10">
+            <h3 className="text-sm font-medium text-amber-100">Extracción incompleta</h3>
+            <p className="mt-1 text-xs text-amber-100/80">
+              Se extrajeron algunos bloques, pero uno o más bloques requieren revisión o reintento.
+            </p>
+            {progress?.failedPageRanges?.length ? (
+              <ul className="mt-2 space-y-1 text-xs text-amber-50/90">
+                {progress.failedPageRanges.map((r) => (
+                  <li key={`${r.startPage}-${r.endPage}`}>
+                    Páginas {r.startPage}–{r.endPage}
+                    {r.safeMessage ? ` — ${r.safeMessage}` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <button
+              type="button"
+              disabled={reprocessing}
+              onClick={() => {
+                setReprocessing(true);
+                void onReprocess().finally(() => setReprocessing(false));
+              }}
+              className="ui-btn-primary mt-3 inline-flex items-center gap-2 text-xs"
+            >
+              {reprocessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Reintentar bloques fallidos
+            </button>
+          </section>
+        ) : null}
+
         <section className="ui-card mb-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-white">
@@ -530,7 +599,7 @@ export function SalesExtractionReviewStep({
 
         <button
           type="button"
-          disabled={validating || localSales.length === 0 || saving}
+          disabled={validating || localSales.length === 0 || saving || isPartial}
           onClick={() => {
             setValidating(true);
             void onValidate().finally(() => setValidating(false));
@@ -540,6 +609,11 @@ export function SalesExtractionReviewStep({
           {validating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           Validar ventas (dry-run)
         </button>
+        {isPartial ? (
+          <p className="mt-2 text-xs text-amber-200/80">
+            Dry-run y commit permanecen bloqueados hasta completar todos los bloques.
+          </p>
+        ) : null}
       </div>
     </div>
   );

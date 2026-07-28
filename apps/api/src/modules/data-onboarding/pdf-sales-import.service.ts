@@ -38,6 +38,7 @@ import {
 } from './providers/extraction-errors';
 import { createExtractionProvider } from './providers/extraction.provider.factory';
 import { HISTORICAL_SALES_EXTRACTION_VERSION } from './providers/prompts/historical-sales-extraction-v1';
+import { SalesChunkedExtractionService } from './sales-import/sales-chunked-extraction.service';
 import type { ImportFileStorage } from './storage/import-file-storage.interface';
 import { IMPORT_FILE_STORAGE } from './tokens';
 import {
@@ -45,6 +46,10 @@ import {
   inspectPdf,
   maxPdfPages,
 } from './utils/file-validation.util';
+import { SALES_PDF_CHUNKED_EXTRACTION_VERSION } from './sales-import/sales-pdf-chunking';
+import {
+  HistoricalSalesMergedExtractionSchema,
+} from './sales-import/historical-sale-extraction.types';
 
 const EXTRACTABLE_STATUSES: DataImportStatus[] = [
   DataImportStatus.UPLOADING,
@@ -66,6 +71,7 @@ export class PdfSalesImportService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(IMPORT_FILE_STORAGE) private readonly storage: ImportFileStorage,
+    private readonly chunkedExtraction: SalesChunkedExtractionService,
   ) {
     this.provider = createExtractionProvider();
     if (this.provider) {
@@ -156,33 +162,72 @@ export class PdfSalesImportService {
 
       const pageCount = inspection.pageCount ?? 0;
       const pageLimit = maxPdfPages();
-      if (pageCount > 0 && pageCount > pageLimit) {
+      // Prefer the higher sales-specific page guard inside chunked service; keep legacy guard as soft check.
+      if (pageCount > 0 && pageCount > Math.max(pageLimit, 500)) {
         throw new ExtractionError(
           ExtractionErrorCode.PAGE_LIMIT_EXCEEDED,
-          `El documento tiene demasiadas páginas (${pageCount}). El máximo permitido es ${pageLimit}.`,
+          `El documento tiene demasiadas páginas (${pageCount}). El máximo permitido es ${Math.max(pageLimit, 500)}.`,
         );
       }
-      if (inspection.parseStatus === 'UNKNOWN_PAGE_COUNT') {
-        this.logger.warn(`Could not determine page count for sales session ${sessionId} — allowing through`);
+      if (inspection.parseStatus === 'UNKNOWN_PAGE_COUNT' || pageCount <= 0) {
+        throw new ExtractionError(
+          ExtractionErrorCode.INVALID_PDF,
+          'No se pudo determinar el número de páginas del PDF. Verifica el archivo e inténtalo nuevamente.',
+        );
       }
 
-      const extraction = await this.provider.extractHistoricalSales(buffer);
+      const { document: extraction, merge, progress } = await this.chunkedExtraction.run({
+        tenantId,
+        sessionId,
+        fileId: file.id,
+        pdfBuffer: buffer,
+        totalPages: pageCount,
+        provider: this.provider,
+        fullReset: false,
+      });
+
+      if (progress.overallState === 'FAILED') {
+        throw new ExtractionError(
+          ExtractionErrorCode.PARTIAL_FAILURE,
+          'No se pudo extraer ningún bloque del documento. Revisa el archivo o reintenta.',
+          { progress },
+        );
+      }
 
       const identityMapping = SALES_IDENTITY_MAPPING as unknown as SalesMappingEntry[];
       const mappingVersion = buildSalesMappingVersion(identityMapping);
 
-      const recordRows = extraction.sales.map((sale, i) => ({
-        tenantId,
-        sessionId,
-        fileId: file.id,
-        entityType: DataImportEntityType.SALES,
-        sourceSheet: 'PDF',
-        sourceRowNumber: sale.sourceRow ?? i + 1,
-        rawData: bridgeExtractedHistoricalSale(sale) as unknown as Prisma.InputJsonValue,
-        isValid: true,
-        importStatus: DataImportRecordStatus.STAGED,
-        duplicateKey: null as string | null,
-      }));
+      const recordRows = merge.sales.map((sale, i) => {
+        const bridged = bridgeExtractedHistoricalSale(sale);
+        const provenance = sale._provenance?.[0];
+        return {
+          tenantId,
+          sessionId,
+          fileId: file.id,
+          entityType: DataImportEntityType.SALES,
+          sourceSheet: provenance
+            ? `PDF p.${provenance.sourcePageStart}-${provenance.sourcePageEnd}`
+            : 'PDF',
+          sourceRowNumber: sale.sourceRow ?? i + 1,
+          rawData: {
+            ...bridged,
+            _provenance: sale._provenance,
+            _recordFingerprint: sale._recordFingerprint,
+          } as unknown as Prisma.InputJsonValue,
+          isValid: true,
+          importStatus: DataImportRecordStatus.STAGED,
+          duplicateKey: sale._recordFingerprint ?? null,
+        };
+      });
+
+      const isPartial = progress.overallState === 'PARTIALLY_COMPLETED';
+      const extractedPayload = {
+        ...extraction,
+        extractionVersion: SALES_PDF_CHUNKED_EXTRACTION_VERSION,
+        chunkProgress: progress,
+        duplicateWarnings: merge.duplicateWarnings,
+        provenanceByIndex: merge.sales.map((s) => s._provenance ?? []),
+      };
 
       await this.prisma.$transaction(async (tx) => {
         await tx.dataImportRecord.deleteMany({ where: { tenantId, sessionId } });
@@ -197,13 +242,21 @@ export class PdfSalesImportService {
             detectedEntityType: DataImportEntityType.SALES,
             fieldMapping: identityMapping as unknown as Prisma.InputJsonValue,
             mappingVersion,
-            extractedDocumentData: {
-              ...extraction as unknown as Record<string, unknown>,
-              extractionVersion: HISTORICAL_SALES_EXTRACTION_VERSION,
-            } as Prisma.InputJsonValue,
+            extractedDocumentData: extractedPayload as unknown as Prisma.InputJsonValue,
             extractionProvider: providerName,
             extractionModel: modelId,
-            extractionError: null,
+            extractionError: isPartial
+              ? JSON.stringify({
+                  code: ExtractionErrorCode.PARTIAL_FAILURE,
+                  category: 'partial',
+                  safeMessage:
+                    'Se extrajeron algunos bloques, pero uno o más bloques requieren revisión o reintento.',
+                  provider: providerName,
+                  model: modelId,
+                  occurredAt: new Date().toISOString(),
+                  progress,
+                })
+              : null,
             errorMessage: null,
           },
         });
@@ -216,18 +269,30 @@ export class PdfSalesImportService {
             totalRows: recordRows.length,
             validRows: recordRows.length,
             completedAt: new Date(),
+            errorMessage: isPartial
+              ? 'Se extrajeron algunos bloques, pero uno o más bloques requieren revisión o reintento.'
+              : null,
           },
         });
       });
 
       const durationMs = Date.now() - startedAt;
-      await this.logEvent(tenantId, sessionId, DataImportEventType.SALES_EXTRACTION_COMPLETED, 'Sales PDF extraction completed', {
-        fileId: file.id,
-        saleCount: recordRows.length,
-        overallConfidence: extraction.overallConfidence,
-        durationMs,
-        pageCount: pageCount > 0 ? pageCount : null,
-      });
+      await this.logEvent(
+        tenantId,
+        sessionId,
+        isPartial
+          ? DataImportEventType.SALES_EXTRACTION_FAILED
+          : DataImportEventType.SALES_EXTRACTION_COMPLETED,
+        isPartial ? 'Sales PDF chunked extraction partially completed' : 'Sales PDF chunked extraction completed',
+        {
+          fileId: file.id,
+          saleCount: recordRows.length,
+          durationMs,
+          pageCount,
+          extractionVersion: SALES_PDF_CHUNKED_EXTRACTION_VERSION,
+          progress,
+        },
+      );
 
       return { fileId: file.id, saleCount: recordRows.length };
     } catch (err) {
@@ -285,18 +350,27 @@ export class PdfSalesImportService {
     extractionModel: string | null;
     extractionError: string | null;
     saleCount: number;
+    chunkProgress?: Record<string, unknown> | null;
   }> {
     const session = await this.requireSalesSession(tenantId, sessionId);
 
     if (session.status === DataImportStatus.PROCESSING) {
+      const file = await this.prisma.dataImportFile.findFirst({
+        where: { tenantId, sessionId, fileType: DataImportFileType.PDF },
+        select: { id: true },
+      });
+      const progress = file
+        ? await this.chunkedExtraction.getProgress(tenantId, file.id)
+        : null;
       return {
-        fileId: '',
+        fileId: file?.id ?? '',
         extractionState: 'processing',
         extraction: null,
         extractionProvider: null,
         extractionModel: null,
         extractionError: null,
         saleCount: 0,
+        chunkProgress: progress as unknown as Record<string, unknown> | null,
       };
     }
 
@@ -315,6 +389,8 @@ export class PdfSalesImportService {
       throw new NotFoundException('No hay un archivo PDF en esta sesión.');
     }
 
+    const liveProgress = await this.chunkedExtraction.getProgress(tenantId, file.id);
+
     if (!file.extractedDocumentData) {
       const state: ExtractionState = file.extractionError ? 'failed' : 'not_processed';
       return {
@@ -325,34 +401,53 @@ export class PdfSalesImportService {
         extractionModel: file.extractionModel,
         extractionError: file.extractionError,
         saleCount: file.rowCount,
+        chunkProgress: liveProgress as unknown as Record<string, unknown> | null,
       };
     }
 
-    const parsed = HistoricalSalesExtractionSchema.safeParse(file.extractedDocumentData);
+    const parsed = HistoricalSalesMergedExtractionSchema.safeParse(file.extractedDocumentData);
     if (!parsed.success) {
-      this.logger.warn(
-        `Stored sales extraction for session ${sessionId} failed re-validation ` +
-        `(${parsed.error.issues.length} issue(s)). Returning 'corrupt' state.`,
-      );
-      return {
-        fileId: file.id,
-        extractionState: 'corrupt',
-        extraction: null,
-        extractionProvider: file.extractionProvider,
-        extractionModel: file.extractionModel,
-        extractionError: 'Los datos de extracción almacenados no son compatibles con la versión actual del esquema.',
-        saleCount: file.rowCount,
-      };
+      // Backward compatible with single-pass v1 payloads.
+      const legacy = HistoricalSalesExtractionSchema.safeParse(file.extractedDocumentData);
+      if (!legacy.success) {
+        this.logger.warn(
+          `Stored sales extraction for session ${sessionId} failed re-validation ` +
+          `(${parsed.error.issues.length} issue(s)). Returning 'corrupt' state.`,
+        );
+        return {
+          fileId: file.id,
+          extractionState: 'corrupt',
+          extraction: null,
+          extractionProvider: file.extractionProvider,
+          extractionModel: file.extractionModel,
+          extractionError: 'Los datos de extracción almacenados no son compatibles con la versión actual del esquema.',
+          saleCount: file.rowCount,
+          chunkProgress: liveProgress as unknown as Record<string, unknown> | null,
+        };
+      }
     }
+
+    const payload = (parsed.success ? parsed.data : file.extractedDocumentData) as HistoricalSalesExtractionDocument & {
+      chunkProgress?: Record<string, unknown>;
+    };
+
+    const isPartial =
+      liveProgress?.overallState === 'PARTIALLY_COMPLETED' ||
+      (typeof file.extractionError === 'string' && file.extractionError.includes('EXTRACTION_PARTIAL_FAILURE'));
 
     return {
       fileId: file.id,
-      extractionState: 'ready',
-      extraction: parsed.data,
+      extractionState: isPartial ? 'partially_completed' : 'ready',
+      extraction: {
+        sales: payload.sales,
+        extractionVersion: payload.extractionVersion,
+        overallConfidence: payload.overallConfidence,
+      },
       extractionProvider: file.extractionProvider,
       extractionModel: file.extractionModel,
       extractionError: file.extractionError,
       saleCount: file.rowCount,
+      chunkProgress: (liveProgress ?? payload.chunkProgress ?? null) as unknown as Record<string, unknown> | null,
     };
   }
 
