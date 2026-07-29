@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "migrationSource": "wrist-caviar-master-workbook-v1",
+  "notes": "Example only — copy to .local/migrations/wrist-caviar/resolutions.json and fill real human decisions. Never invent amounts.",
+  "resolutions": [
+    {
+      "id": "res_defer_crypto",
+      "issueCode": "DEFERRED_DESTINATION",
+      "entityType": "deferred",
+      "resolutionType": "DEFER",
+      "reason": "CRIPTO CESAR deferred from this migration",
+      "actor": "platform-admin@example.com",
+      "date": "2026-07-28",
+      "resolvedValue": { "group": "CRIPTO_CESAR" }
+    },
+    {
+      "id": "res_defer_oscar",
+      "issueCode": "DEFERRED_DESTINATION",
+      "entityType": "deferred",
+      "resolutionType": "DEFER",
+      "reason": "OSCAR PAPA CAMI deferred from this migration",
+      "actor": "platform-admin@example.com",
+      "date": "2026-07-28",
+      "resolvedValue": { "group": "OSCAR_PAPA_CAMI" }
+    },
+    {
+      "id": "res_cxp_formula_example",
+      "issueCode": "CXP_FORMULA_ERROR",
+      "entityType": "payable",
+      "sourceCandidateId": "REPLACE_WITH_CANDIDATE_ID",
+      "resolutionType": "FORMULA_OVERRIDE",
+      "reason": "Legacy Excel formula broken; human confirmed remaining balance",
+      "actor": "platform-admin@example.com",
+      "date": "2026-07-28",
+      "resolvedValue": { "declaredRemaining": 0 }
+    },
+    {
+      "id": "res_ack_reporte_example",
+      "issueCode": "REPORT_RECONCILIATION_MISMATCH",
+      "resolutionType": "ACKNOWLEDGE_SCOPE_DIFFERENCE",
+      "reason": "Scope difference acknowledged for this concept",
+      "actor": "platform-admin@example.com",
+      "date": "2026-07-28",
+      "acknowledgedWarning": true,
+      "resolvedValue": { "concept": "EFECTIVO_USD" }
+    }
+  ]
+}

@@ -33,6 +33,9 @@ coverage/
 RELOJES CESAR ADMIN.xlsx
 **/RELOJES CESAR ADMIN.xlsx
 
+# One-time migration packages / resolutions / reports (sensitive)
+.local/migrations/
+
 # Playwright screenshots (optional local artifacts)
 # apps/admin/e2e/screenshots*/
 apps/admin/test-results/
