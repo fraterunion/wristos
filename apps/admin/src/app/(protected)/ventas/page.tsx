@@ -511,7 +511,11 @@ export default function VentasPage() {
 
                         {/* Pendiente */}
                         <td className="px-3 py-3.5 text-right align-middle whitespace-nowrap hidden lg:table-cell">
-                          {pendingNum > 0 ? (
+                          {status === 'HISTORICO' || sale.isHistoricalImport ? (
+                            <span className="text-sm tabular-nums text-white/35">
+                              {fmtMxn(sale.pendingAmount)}
+                            </span>
+                          ) : pendingNum > 0 ? (
                             <span className="text-sm tabular-nums text-rose-400">
                               {fmtMxn(pendingNum)}
                             </span>

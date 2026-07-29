@@ -1,4 +1,5 @@
 import {
+  isSettledHistoricalSaleSnapshot,
   isWorkbookHistoricalSaleSourceTag,
   parseHistoricalWatchSnapshotFromNotes,
 } from './historical-watch-snapshot';
@@ -49,5 +50,28 @@ describe('isWorkbookHistoricalSaleSourceTag', () => {
     expect(isWorkbookHistoricalSaleSourceTag('HISTORICAL_SALES_IMPORT')).toBe(true);
     expect(isWorkbookHistoricalSaleSourceTag('manual')).toBe(false);
     expect(isWorkbookHistoricalSaleSourceTag(null)).toBe(false);
+  });
+});
+
+describe('isSettledHistoricalSaleSnapshot', () => {
+  it('is true only for historical imports with zero payment rows', () => {
+    expect(
+      isSettledHistoricalSaleSnapshot({
+        sourceTag: 'wrist-caviar-master-workbook-v1',
+        paymentCount: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isSettledHistoricalSaleSnapshot({
+        sourceTag: 'wrist-caviar-master-workbook-v1',
+        paymentCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isSettledHistoricalSaleSnapshot({
+        sourceTag: null,
+        paymentCount: 0,
+      }),
+    ).toBe(false);
   });
 });

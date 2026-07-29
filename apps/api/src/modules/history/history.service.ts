@@ -5,6 +5,7 @@ import { effectiveSaleDate } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   HistoricalWatchSnapshot,
+  isSettledHistoricalSaleSnapshot,
   isWorkbookHistoricalSaleSourceTag,
   parseHistoricalWatchSnapshotFromNotes,
 } from './historical-watch-snapshot';
@@ -84,19 +85,37 @@ export class HistoryService {
 
       // Payment summary computed from the payments already loaded.
       // The payments query has `where: { deletedAt: null }` so all are active.
-      const paidTotal = deal.payments
+      const isHistoricalImport =
+        isWorkbookHistoricalSaleSourceTag(deal.sourceTag) || deal.importSessionId != null;
+      const settledHistorical = isSettledHistoricalSaleSnapshot({
+        sourceTag: deal.sourceTag,
+        importSessionId: deal.importSessionId,
+        paymentCount: deal.payments.length,
+      });
+
+      // Live operational math — overridden below for settled historical snapshots.
+      let paidTotal = deal.payments
         .filter((p) => p.status === PaymentStatus.PAID)
         .reduce((acc, p) => acc.plus(p.amount), new Prisma.Decimal(0));
-      const rawPending = deal.agreedPrice.minus(paidTotal);
-      const pendingAmount = rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
-      const computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE' =
+      let pendingAmount = (() => {
+        const rawPending = deal.agreedPrice.minus(paidTotal);
+        return rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
+      })();
+      let computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE' | 'HISTORICO' =
         paidTotal.gte(deal.agreedPrice) ? 'PAGADO' :
         paidTotal.greaterThan(0) ? 'PARCIAL' :
         'PENDIENTE';
+
+      // Display/read-model only: workbook historical sales are completed snapshots.
+      // Open AR lives in CXC — do not invent Payment rows.
+      if (settledHistorical) {
+        paidTotal = deal.agreedPrice;
+        pendingAmount = new Prisma.Decimal(0);
+        computedStatus = 'HISTORICO';
+      }
+
       const paymentMethods = [...new Set(deal.payments.map((p) => p.method as string))];
       const saleDate = effectiveSaleDate(deal);
-      const isHistoricalImport =
-        isWorkbookHistoricalSaleSourceTag(deal.sourceTag) || deal.importSessionId != null;
       const historicalWatchSnapshot = deal.watchId
         ? null
         : parseHistoricalWatchSnapshotFromNotes(deal.notes);
@@ -124,7 +143,7 @@ export class HistoryService {
         netReceived: netReceivedDecimal.toString(),
         paidTotal: paidTotal.toString(),
         pendingAmount: pendingAmount.toString(),
-        computedStatus: isHistoricalImport && deal.payments.length === 0 ? 'HISTORICO' as const : computedStatus,
+        computedStatus,
         paymentMethods,
         notes: deal.notes,
         soldAt: saleDate.toISOString(),

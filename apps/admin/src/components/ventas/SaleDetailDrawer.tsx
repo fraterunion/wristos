@@ -1,7 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
 import type { SoldItem } from '@/lib/ventas-api';
 
 type SaleDetailDrawerProps = {
@@ -122,12 +120,6 @@ function SummaryRow({
 }
 
 export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDetailDrawerProps) {
-  const [showAdvancedPayment, setShowAdvancedPayment] = useState(false);
-
-  useEffect(() => {
-    setShowAdvancedPayment(false);
-  }, [sale?.dealId, open]);
-
   if (!open || !sale) return null;
 
   const status = sale.computedStatus;
@@ -213,31 +205,12 @@ export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDeta
           {isHistorical ? (
             <div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
               <p className="text-[11px] leading-relaxed text-white/40">
-                El historial de pagos no se migró con esta importación
-                {sale.paymentCount != null ? ` (referencia: ${sale.paymentCount} pago${sale.paymentCount === 1 ? '' : 's'} históricos)` : ''}.
+                Venta histórica de solo lectura. El cobro abierto vive en Cuentas (CXC); no se
+                registran pagos sobre este registro.
+                {sale.paymentCount != null
+                  ? ` (referencia: ${sale.paymentCount} pago${sale.paymentCount === 1 ? '' : 's'} históricos)`
+                  : ''}
               </p>
-              {!showAdvancedPayment ? (
-                <button
-                  type="button"
-                  onClick={() => setShowAdvancedPayment(true)}
-                  className="mt-2 text-[11px] text-white/45 underline underline-offset-2 hover:text-white/70"
-                >
-                  Registrar pago actual (avanzado)
-                </button>
-              ) : (
-                <div className="mt-2 space-y-2">
-                  <p className="text-[11px] text-amber-200/80">
-                    Solo usa esto si necesitas registrar un pago real hoy. No reescribe el historial importado.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => onAddPayment(sale)}
-                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-100 transition hover:border-amber-500/45"
-                  >
-                    Continuar y registrar pago
-                  </button>
-                </div>
-              )}
             </div>
           ) : null}
         </div>
@@ -252,8 +225,14 @@ export function SaleDetailDrawer({ sale, open, onClose, onAddPayment }: SaleDeta
               <KpiTile label="Pagado" value={fmtMxn(sale.paidTotal)} tone="positive" />
               <KpiTile
                 label="Pendiente"
-                value={pendingNum > 0 ? fmtMxn(sale.pendingAmount) : '—'}
-                tone={pendingNum > 0 ? 'negative' : 'muted'}
+                value={
+                  isHistorical
+                    ? fmtMxn(sale.pendingAmount)
+                    : pendingNum > 0
+                      ? fmtMxn(sale.pendingAmount)
+                      : '—'
+                }
+                tone={pendingNum > 0 && !isHistorical ? 'negative' : 'muted'}
               />
               <KpiTile label="Estatus" value={STATUS_LABELS[status] ?? status} />
             </div>
