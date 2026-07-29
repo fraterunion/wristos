@@ -24,9 +24,12 @@ export type CapitalInvestorFull = CapitalInvestorBalance & {
 export type CapitalSummary = {
   totalCapitalContributed: string;
   totalBusinessProfit: string;
+  totalBankCommissions?: string;
   totalDistributionsPaid: string;
   totalPendingToPartners: string;
   capitalNeto: string;
+  contributionsIncomplete?: boolean;
+  roiAvailable?: boolean;
   investors: CapitalInvestorBalance[];
 };
 
