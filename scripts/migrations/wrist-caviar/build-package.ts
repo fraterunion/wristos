@@ -75,20 +75,55 @@ function applyResolutions(
     if (res.resolutionType === 'CORRECT_VALUE' && res.sourceCandidateId) {
       const r = snap.receivables.find((x) => x.id === res.sourceCandidateId);
       if (r) {
-        Object.assign(r, patch);
+        if (patch.principal != null) r.principal = Number(patch.principal);
+        if (patch.outstanding != null || patch.declaredOutstanding != null) {
+          const o = Number(patch.outstanding ?? patch.declaredOutstanding);
+          r.declaredOutstanding = o;
+          r.calculatedOutstanding = o;
+        }
+        if (typeof patch.watchOrConcept === 'string') r.watchOrConcept = patch.watchOrConcept;
+        if (patch.currency === 'MXN' || patch.currency === 'USD') r.currency = patch.currency;
         r.ambiguous = false;
         r.balanceMismatch = false;
       }
       const p = snap.payables.find((x) => x.id === res.sourceCandidateId);
       if (p) {
-        Object.assign(p, patch);
+        if (patch.principal != null) p.principal = Number(patch.principal);
+        if (
+          patch.remaining != null ||
+          patch.outstanding != null ||
+          patch.declaredRemaining != null
+        ) {
+          const rem = Number(patch.remaining ?? patch.outstanding ?? patch.declaredRemaining);
+          p.declaredRemaining = rem;
+          p.calculatedRemaining = rem;
+        }
+        if (typeof patch.watchOrConcept === 'string') p.watchOrConcept = patch.watchOrConcept;
         p.ambiguous = false;
         p.balanceMismatch = false;
         p.formulaErrors = [];
       }
       const sale = snap.sales.find((x) => x.id === res.sourceCandidateId);
       if (sale) {
-        Object.assign(sale, patch);
+        if (patch.salePrice != null) sale.salePrice = Number(patch.salePrice);
+        if (patch.cost !== undefined) sale.cost = patch.cost == null ? null : Number(patch.cost);
+        if (patch.extras !== undefined)
+          sale.extras = patch.extras == null ? null : Number(patch.extras);
+        if (patch.declaredProfit != null) sale.declaredProfit = Number(patch.declaredProfit);
+        if (patch.calculatedProfit != null) sale.calculatedProfit = Number(patch.calculatedProfit);
+        const saleExt = sale as unknown as Record<string, unknown>;
+        if (patch.originalCurrency !== undefined) {
+          saleExt.originalCurrency = patch.originalCurrency;
+        }
+        if (patch.originalAmount !== undefined) {
+          saleExt.originalAmount = patch.originalAmount;
+        }
+        if (patch.exchangeRate !== undefined) {
+          saleExt.exchangeRate = patch.exchangeRate;
+        }
+        if (patch.extrasNote !== undefined) {
+          saleExt.extrasNote = patch.extrasNote;
+        }
         if (patch.declaredProfit != null || patch.cost != null || patch.salePrice != null) {
           sale.profitMismatch = false;
         }
@@ -244,6 +279,12 @@ export async function buildPackage(params: {
   resolutionsPath: string | null;
   outRoot?: string;
   allowOutOfRangeCounts?: boolean;
+  /** Pre-analyzed / pre-overlaid analysis (skips re-read of workbook). */
+  preparedAnalysis?: WorkbookAnalysis;
+  /** Override package directory name (fingerprint prefix). */
+  packageDirPrefix?: string;
+  /** Override workbook fingerprint stored on candidates/manifest. */
+  fingerprintOverride?: string;
 }): Promise<{
   packageDir: string;
   packageFingerprint: string;
@@ -258,7 +299,12 @@ export async function buildPackage(params: {
     allAccounted: boolean;
   };
 }> {
-  const analysis = await analyzeWorkbookFile(params.workbookPath);
+  const analysis =
+    params.preparedAnalysis ?? (await analyzeWorkbookFile(params.workbookPath));
+  if (params.fingerprintOverride) {
+    analysis.fingerprint = params.fingerprintOverride;
+    analysis.fingerprintPrefix = prefix(params.fingerprintOverride);
+  }
   if (analysis.parserVersion !== PARSER_VERSION) {
     throw new Error(`Unsupported parser version: ${analysis.parserVersion}`);
   }
@@ -268,7 +314,7 @@ export async function buildPackage(params: {
     throw new Error(`Acceptance count gate failed:\n${countWarnings.join('\n')}`);
   }
 
-  const fpPrefix = prefix(analysis.fingerprint);
+  const fpPrefix = params.packageDirPrefix ?? prefix(analysis.fingerprint);
   const baseDir = path.resolve(params.outRoot ?? LOCAL_ROOT, fpPrefix);
   ensureDir(baseDir);
 
@@ -411,6 +457,12 @@ export async function buildPackage(params: {
           extras: sale.extras,
           approvedProfit,
           mutatesInventory: false,
+          originalCurrency: (sale as unknown as Record<string, unknown>).originalCurrency ?? null,
+          originalAmount: (sale as unknown as Record<string, unknown>).originalAmount ?? null,
+          exchangeRate: (sale as unknown as Record<string, unknown>).exchangeRate ?? null,
+          extrasNote: (sale as unknown as Record<string, unknown>).extrasNote ?? null,
+          businessOwnerOverride:
+            (sale as unknown as Record<string, unknown>).businessOwnerOverride ?? null,
         },
         disposition,
         reason,

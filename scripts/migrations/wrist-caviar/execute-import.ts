@@ -354,13 +354,24 @@ async function createOne(
         stage: 'CLOSED_WON',
         soldAt: parseDate(p.saleDate),
         agreedPrice: dec(p.salePrice as number) ?? new Prisma.Decimal(0),
+        originalCurrency:
+          p.originalCurrency != null ? String(p.originalCurrency) : undefined,
+        originalAmount: dec(p.originalAmount as number | null),
+        exchangeRate: dec(p.exchangeRate as number | null),
         historicalCost: dec(p.cost as number | null),
         extrasAmount: dec(p.extras as number | null),
+        extrasCurrency: p.extrasNote ? 'MXN' : undefined,
         reportedProfit: dec(p.approvedProfit as number | null),
         calculatedProfit: dec(p.approvedProfit as number | null),
         importFingerprint: String(p.importFingerprint ?? item.candidateFingerprint),
         sourceTag: MIGRATION_SOURCE,
-        notes: snapshot,
+        notes: [
+          snapshot,
+          p.extrasNote ? `extrasNote=${p.extrasNote}` : '',
+          p.businessOwnerOverride ? `override=${p.businessOwnerOverride}` : '',
+        ]
+          .filter(Boolean)
+          .join('; '),
       },
     });
     return row.id;

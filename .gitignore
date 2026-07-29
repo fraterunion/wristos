@@ -40,3 +40,7 @@ RELOJES CESAR ADMIN.xlsx
 # apps/admin/e2e/screenshots*/
 apps/admin/test-results/
 apps/api/.local/
+
+# Wrist Caviar one-time migration source workbooks (local only)
+HOJA CXP EDGAR.xlsx
+**/HOJA CXP EDGAR.xlsx

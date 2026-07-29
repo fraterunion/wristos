@@ -6,6 +6,28 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Load repo .env when present (local dry-run / execute against local Postgres)
+try {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!m) continue;
+      if (process.env[m[1]!] != null) continue;
+      let v = m[2]!.trim();
+      if (
+        (v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'"))
+      ) {
+        v = v.slice(1, -1);
+      }
+      process.env[m[1]!] = v;
+    }
+  }
+} catch {
+  // ignore
+}
+
 import { parseArgs, requireArg, writeJson } from './args';
 import { analyzeWorkbookFile, assertAcceptanceCounts, buildPackage } from './build-package';
 import { LOCAL_ROOT } from './config';
@@ -23,7 +45,7 @@ async function main() {
   if (!command || command === 'help') {
     // eslint-disable-next-line no-console
     console.log(
-      `Commands: analyze | build | validate | dry-run | apply-resolutions | execute | reconcile`,
+      `Commands: analyze | build | build-resolved-v3 | validate | dry-run | apply-resolutions | execute | reconcile`,
     );
     process.exit(0);
   }
@@ -89,6 +111,28 @@ async function main() {
       packageDir: result.packageDir,
       packageFingerprintPrefix: prefix(result.packageFingerprint),
     });
+    return;
+  }
+
+  if (command === 'build-resolved-v3') {
+    const workbook = requireArg(args, 'workbook');
+    const edgar = requireArg(args, 'edgar');
+    const tenantId = requireArg(args, 'tenant-id');
+    const runDry = args['dry-run'] === true || args['dry-run'] === 'true';
+    const { buildResolvedV3 } = await import('./build-resolved-v3');
+    const result = await buildResolvedV3({
+      workbookPath: workbook,
+      edgarPath: edgar,
+      tenantId,
+      runDryRun: runDry,
+    });
+    safeLog('wrist_caviar_build_resolved_v3_ok', {
+      packageDir: result.packageDir,
+      combinedFingerprintPrefix: prefix(result.combinedFingerprint),
+      conflictCount: result.conflictCount,
+      dispositionCounts: result.dispositionCounts,
+    });
+    if (result.conflictCount > 0) process.exitCode = 2;
     return;
   }
 
