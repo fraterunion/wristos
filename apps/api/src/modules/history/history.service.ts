@@ -3,6 +3,11 @@ import { DealStage, OperatingExpenseCategory, PaymentStatus, Prisma, Watch, Watc
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { effectiveSaleDate } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  HistoricalWatchSnapshot,
+  isWorkbookHistoricalSaleSourceTag,
+  parseHistoricalWatchSnapshotFromNotes,
+} from './historical-watch-snapshot';
 
 type WatchWithExpenses = Watch & { expenses: WatchExpense[] };
 
@@ -90,11 +95,21 @@ export class HistoryService {
         'PENDIENTE';
       const paymentMethods = [...new Set(deal.payments.map((p) => p.method as string))];
       const saleDate = effectiveSaleDate(deal);
-      const isHistoricalImport = deal.sourceTag === 'HISTORICAL_SALES_IMPORT' || deal.importSessionId != null;
+      const isHistoricalImport =
+        isWorkbookHistoricalSaleSourceTag(deal.sourceTag) || deal.importSessionId != null;
+      const historicalWatchSnapshot = deal.watchId
+        ? null
+        : parseHistoricalWatchSnapshotFromNotes(deal.notes);
 
       return {
         dealId: deal.id,
-        watch: this.serializeWatch(deal.watch, deal.historicalCost, isHistoricalImport),
+        watch: this.serializeWatch(
+          deal.watch,
+          deal.historicalCost,
+          isHistoricalImport,
+          historicalWatchSnapshot,
+        ),
+        historicalWatchSnapshot,
         buyer: {
           id: deal.client.id,
           name: deal.client.name,
@@ -155,7 +170,12 @@ export class HistoryService {
     });
 
     return deals.map((deal) => {
-      const isHistoricalImport = deal.sourceTag === 'HISTORICAL_SALES_IMPORT' || deal.importSessionId != null;
+      const isHistoricalImport =
+        isWorkbookHistoricalSaleSourceTag(deal.sourceTag) || deal.importSessionId != null;
+      const snapshot = deal.watchId
+        ? null
+        : parseHistoricalWatchSnapshotFromNotes(deal.notes);
+
       return {
       dealId: deal.id,
       stage: deal.stage,
@@ -169,11 +189,14 @@ export class HistoryService {
           }
         : {
             id: null,
-            brand: isHistoricalImport ? 'Venta histórica' : 'Histórico',
-            model: '—',
-            serialNumber: null,
+            brand:
+              snapshot?.brand ??
+              (isHistoricalImport ? 'Venta histórica' : 'Histórico'),
+            model: snapshot?.model ?? '—',
+            serialNumber: snapshot?.serial ?? null,
             status: null,
           },
+      historicalWatchSnapshot: snapshot,
       client: {
         id: deal.client.id,
         name: deal.client.name,
@@ -195,15 +218,18 @@ export class HistoryService {
     watch: WatchWithExpenses | null,
     historicalCost?: Prisma.Decimal | null,
     isHistoricalImport = false,
+    snapshot: HistoricalWatchSnapshot | null = null,
   ) {
     if (!watch) {
       const cost = historicalCost?.toString() ?? null;
       return {
         id: null,
-        brand: isHistoricalImport ? 'Venta histórica' : 'Histórico',
-        model: '—',
-        reference: null,
-        serialNumber: null,
+        brand:
+          snapshot?.brand ??
+          (isHistoricalImport ? 'Venta histórica' : 'Histórico'),
+        model: snapshot?.model ?? '—',
+        reference: snapshot?.reference ?? null,
+        serialNumber: snapshot?.serial ?? null,
         condition: null,
         cost,
         priceMin: null,

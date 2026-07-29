@@ -65,6 +65,13 @@ export function createQuickWatch(payload: {
   return apiPost<Watch>('/inventory', body, AUTH);
 }
 
+export type HistoricalWatchSnapshot = {
+  brand: string | null;
+  model: string | null;
+  reference: string | null;
+  serial: string | null;
+};
+
 export type SoldItem = {
   dealId: string;
   watch: {
@@ -80,6 +87,8 @@ export type SoldItem = {
     consignmentOwnerName: string | null;
     consignmentSplitPercentage: string | null;
   };
+  /** Sale-time identity from Notes only — never a link to inventory. */
+  historicalWatchSnapshot?: HistoricalWatchSnapshot | null;
   buyer: { id: string; name: string; email: string | null; phone: string | null };
   agreedPrice: string;
   originalCurrency: 'MXN' | 'USD' | null;

@@ -237,4 +237,21 @@ describe('wrist-caviar deterministic rules', () => {
       true,
     );
   });
+
+  it('22b. serial identical to current inventory still forbids Watch link/mutation', () => {
+    // CRITICAL: historical sales are independent of INVENTARIO even when serials collide.
+    const inventorySerial = 'SHARED-SERIAL-EXACT-MATCH-001';
+    const r = applyHistoricalSaleFieldRules({
+      serial: inventorySerial,
+      reference: '16610',
+    });
+    expect(r.serial).toBe(inventorySerial);
+    expect(
+      r.audits.some(
+        (a) =>
+          a.audit.ruleId === 'WC_HISTORICAL_SALE_NO_CURRENT_WATCH' &&
+          a.payloadPatch?.mutatesInventory === false,
+      ),
+    ).toBe(true);
+  });
 });
