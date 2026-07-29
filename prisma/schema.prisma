@@ -1142,6 +1142,9 @@ model TreasuryEntry {
   currency        Currency
   amountMxn       Decimal           @db.Decimal(12, 2)
   exchangeRate    Decimal?          @db.Decimal(12, 6)
+  /// Bank commission component (CONTROL BANCOS). Nullable — not defaulted to 0.
+  /// Distinct from amount/amountMxn (movement totals). Populated for migrated BANK rows.
+  commission      Decimal?          @db.Decimal(12, 2)
   transactionDate DateTime
   description     String?
 

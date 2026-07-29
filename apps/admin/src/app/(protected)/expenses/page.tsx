@@ -37,9 +37,10 @@ const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
   OTHER: 'Otros',
 };
 
-const COMMISSION_SECTION_LABELS: Partial<Record<OperatingExpenseCategory, string>> = {
+const COMMISSION_SECTION_LABELS: Record<string, string> = {
   COMMISSIONS: 'Ventas',
   BANK_FEES: 'Bancos',
+  TREASURY_BANK_COMMISSIONS: 'Bancos',
 };
 
 type Filters = {
@@ -129,7 +130,7 @@ function SummaryCard({
 function categoryBarLabel(row: ExpenseCategorySummary): string {
   if (row.isCommission) {
     return (
-      COMMISSION_SECTION_LABELS[row.category as OperatingExpenseCategory] ??
+      COMMISSION_SECTION_LABELS[row.category] ??
       CATEGORY_LABELS[row.category as OperatingExpenseCategory] ??
       row.category
     );
@@ -147,6 +148,9 @@ function CategoryBar({ row, maxTotal }: { row: ExpenseCategorySummary; maxTotal:
         >
           {categoryBarLabel(row)}
         </span>
+        {row.sourceLabel && (
+          <p className="mt-0.5 text-[10px] text-muted">{row.sourceLabel}</p>
+        )}
       </div>
       <div className="flex-1">
         <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
@@ -494,13 +498,20 @@ export default function ExpensesPage() {
                 label="Comisiones Bancos"
                 value={formatCurrency(summary.totalBankFees)}
                 tone="gold"
+                sub={
+                  summary.bankCommissionMovementCountAllTime != null
+                    ? `${summary.bankCommissionMovementCountAllTime} movimientos · Fuente: Control Bancos`
+                    : 'Fuente: Control Bancos'
+                }
               />
               <SummaryCard
                 label="Categoría Principal"
                 value={
                   summary.biggestCategory
-                    ? (CATEGORY_LABELS[summary.biggestCategory as OperatingExpenseCategory] ??
-                      summary.biggestCategory)
+                    ? summary.biggestCategory === 'TREASURY_BANK_COMMISSIONS'
+                      ? 'Bancos'
+                      : (CATEGORY_LABELS[summary.biggestCategory as OperatingExpenseCategory] ??
+                        summary.biggestCategory)
                     : '—'
                 }
                 tone="muted"

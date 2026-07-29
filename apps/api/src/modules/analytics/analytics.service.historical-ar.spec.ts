@@ -56,7 +56,11 @@ describe('AnalyticsService — historical sales excluded from totalPendingBalanc
         update: jest.fn(),
       },
       accountEntry: { create: jest.fn(), update: jest.fn(), findMany: jest.fn() },
-      treasuryEntry: { create: jest.fn() },
+      treasuryEntry: {
+        create: jest.fn(),
+        aggregate: jest.fn(async () => ({ _sum: { commission: null } })),
+        count: jest.fn(async () => 0),
+      },
       operatingExpense: {
         aggregate: jest.fn(async () => ({ _sum: { amount: null } })),
       },

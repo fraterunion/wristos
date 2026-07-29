@@ -101,6 +101,10 @@ describe('AnalyticsService — historical sale dating', () => {
       operatingExpense: {
         aggregate: jest.fn(async () => ({ _sum: { amount: null } })),
       },
+      treasuryEntry: {
+        aggregate: jest.fn(async () => ({ _sum: { commission: null } })),
+        count: jest.fn(async () => 0),
+      },
     };
 
     const treasury = {
