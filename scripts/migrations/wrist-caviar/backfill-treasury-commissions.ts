@@ -242,43 +242,64 @@ async function executeBackfill(prisma: PrismaClient, plan: BackfillPlan) {
     );
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    let updated = 0;
-    for (const row of toWrite) {
-      const before = await tx.treasuryEntry.findUnique({
-        where: { id: row.treasuryEntryId },
-        select: {
-          tenantId: true,
-          account: true,
-          amount: true,
-          amountMxn: true,
-          description: true,
-          commission: true,
-        },
-      });
-      if (!before) throw new Error(`Missing entry ${row.treasuryEntryId}`);
-      if (before.tenantId !== WRIST_CAVIAR_TENANT_ID) {
-        throw new Error(`Cross-tenant write blocked: ${row.treasuryEntryId}`);
-      }
-      if (before.account !== 'BANK') throw new Error(`Non-BANK blocked: ${row.treasuryEntryId}`);
-      if (before.commission != null) {
-        throw new Error(`Already populated during execute: ${row.treasuryEntryId}`);
-      }
-      if (before.description !== row.description) {
-        throw new Error(`Description drift: ${row.treasuryEntryId}`);
-      }
-      if (before.amount.toFixed(2) !== row.amount) {
-        throw new Error(`Amount drift: ${row.treasuryEntryId}`);
-      }
-
-      await tx.treasuryEntry.update({
-        where: { id: row.treasuryEntryId },
-        data: { commission: new Prisma.Decimal(row.commission) },
-      });
-      updated += 1;
-    }
-    return { updated };
+  // Pre-flight drift check outside the write transaction (plan already gated totals).
+  const beforeRows = await prisma.treasuryEntry.findMany({
+    where: { id: { in: toWrite.map((r) => r.treasuryEntryId) } },
+    select: {
+      id: true,
+      tenantId: true,
+      account: true,
+      amount: true,
+      description: true,
+      commission: true,
+    },
   });
+  const beforeById = new Map(beforeRows.map((r) => [r.id, r]));
+  for (const row of toWrite) {
+    const before = beforeById.get(row.treasuryEntryId);
+    if (!before) throw new Error(`Missing entry ${row.treasuryEntryId}`);
+    if (before.tenantId !== WRIST_CAVIAR_TENANT_ID) {
+      throw new Error(`Cross-tenant write blocked: ${row.treasuryEntryId}`);
+    }
+    if (before.account !== 'BANK') throw new Error(`Non-BANK blocked: ${row.treasuryEntryId}`);
+    if (before.commission != null) {
+      throw new Error(`Already populated during execute: ${row.treasuryEntryId}`);
+    }
+    if (before.description !== row.description) {
+      throw new Error(`Description drift: ${row.treasuryEntryId}`);
+    }
+    if (before.amount.toFixed(2) !== row.amount) {
+      throw new Error(`Amount drift: ${row.treasuryEntryId}`);
+    }
+  }
+
+  const result = await prisma.$transaction(
+    async (tx) => {
+      let updated = 0;
+      // Chunked updateMany keeps a single atomic transaction without per-row round trips.
+      const chunkSize = 100;
+      for (let i = 0; i < toWrite.length; i += chunkSize) {
+        const chunk = toWrite.slice(i, i + chunkSize);
+        for (const row of chunk) {
+          const res = await tx.treasuryEntry.updateMany({
+            where: {
+              id: row.treasuryEntryId,
+              tenantId: WRIST_CAVIAR_TENANT_ID,
+              account: 'BANK',
+              commission: null,
+            },
+            data: { commission: new Prisma.Decimal(row.commission) },
+          });
+          if (res.count !== 1) {
+            throw new Error(`Unexpected update count ${res.count} for ${row.treasuryEntryId}`);
+          }
+          updated += 1;
+        }
+      }
+      return { updated };
+    },
+    { timeout: 120_000, maxWait: 20_000 },
+  );
 
   return result;
 }
