@@ -6,8 +6,17 @@ import { useAuthContext } from '@/lib/auth-context';
 import { getApiBaseUrl } from '@/lib/api-client';
 import { readSession } from '@/lib/auth-storage';
 import { WristCaviarReviewPanel } from './ReviewPanel';
+import { WristCaviarSimulationPanel } from './SimulationPanel';
 
-type Step = 'archivo' | 'analisis' | 'validaciones' | 'conciliacion' | 'preview' | 'revision' | 'aprobacion';
+type Step =
+  | 'archivo'
+  | 'analisis'
+  | 'validaciones'
+  | 'conciliacion'
+  | 'preview'
+  | 'revision'
+  | 'aprobacion'
+  | 'simulacion';
 
 type AnalysisSummary = {
   analysisId: string;
@@ -41,6 +50,7 @@ const STEPS: Array<{ id: Step; label: string }> = [
   { id: 'preview', label: '5. Vista previa' },
   { id: 'revision', label: '6. Revisión' },
   { id: 'aprobacion', label: '7. Aprobación' },
+  { id: 'simulacion', label: '8. Simulación' },
 ];
 
 const PREVIEW_TABS = [
@@ -357,6 +367,24 @@ export default function WristCaviarMigrationPage() {
                   : prev,
               )
             }
+          />
+          <div className="mt-4">
+            <button
+              type="button"
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs text-white"
+              onClick={() => setStep('simulacion')}
+            >
+              Ir a simulación
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {summary && step === 'simulacion' && tenantId ? (
+        <section data-testid="simulation-section">
+          <WristCaviarSimulationPanel
+            analysisId={summary.analysisId}
+            tenantId={tenantId}
           />
         </section>
       ) : null}

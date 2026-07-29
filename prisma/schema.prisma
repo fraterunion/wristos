@@ -390,6 +390,7 @@ model Tenant {
   receivablePayments           ReceivablePayment[]
   financialAuditEvents         FinancialAuditEvent[]
   wristCaviarMigrationAnalyses WristCaviarMigrationAnalysis[]
+  wristCaviarMigrationDryRuns  WristCaviarMigrationDryRun[]
 
   @@index([slug])
   @@map("tenants")
@@ -412,6 +413,7 @@ model User {
   wristCaviarMigrationResolutions     WristCaviarMigrationResolution[]      @relation("WristCaviarMigrationResolvedBy")
   wristCaviarMigrationEntityApprovals WristCaviarMigrationEntityApproval[]  @relation("WristCaviarMigrationEntityApprovedBy")
   wristCaviarMigrationDatasets        WristCaviarMigrationReviewedDataset[] @relation("WristCaviarMigrationDatasetFrozenBy")
+  wristCaviarMigrationDryRuns         WristCaviarMigrationDryRun[]          @relation("WristCaviarDryRunCreatedBy")
 
   @@map("users")
 }
@@ -1518,6 +1520,7 @@ model WristCaviarMigrationAnalysis {
   resolutions     WristCaviarMigrationResolution[]
   entityApprovals WristCaviarMigrationEntityApproval[]
   datasets        WristCaviarMigrationReviewedDataset[]
+  dryRuns         WristCaviarMigrationDryRun[]
 
   @@index([tenantId])
   @@index([tenantId, createdAt])
@@ -1692,8 +1695,122 @@ model WristCaviarMigrationReviewedDataset {
 
   analysis WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
   frozenBy User                         @relation("WristCaviarMigrationDatasetFrozenBy", fields: [frozenByUserId], references: [id], onDelete: Restrict)
+  dryRuns  WristCaviarMigrationDryRun[]
 
   @@index([tenantId, analysisId])
   @@index([analysisId, datasetVersion])
   @@map("wrist_caviar_migration_reviewed_datasets")
+}
+
+enum WristCaviarDryRunStatus {
+  GENERATING
+  COMPLETED
+  COMPLETED_WITH_CONFLICTS
+  FAILED
+  INVALIDATED
+  STALE
+}
+
+enum WristCaviarDryRunAction {
+  CREATE
+  LINK
+  SKIP
+  CONFLICT
+  DEFERRED
+}
+
+enum WristCaviarDryRunPlanReadiness {
+  READY_FOR_APPROVAL
+  NEEDS_CONFLICT_RESOLUTION
+  STALE
+  FAILED
+}
+
+model WristCaviarMigrationDryRun {
+  id                          String                          @id @default(cuid())
+  tenantId                    String                          @map("tenant_id")
+  analysisId                  String                          @map("analysis_id")
+  datasetId                   String                          @map("dataset_id")
+  datasetVersion              String                          @map("dataset_version")
+  datasetFingerprint          String                          @map("dataset_fingerprint")
+  status                      WristCaviarDryRunStatus         @default(GENERATING)
+  planReadiness               WristCaviarDryRunPlanReadiness? @map("plan_readiness")
+  plannerVersion              String                          @map("planner_version")
+  planFingerprint             String?                         @map("plan_fingerprint")
+  planFingerprintPrefix       String?                         @map("plan_fingerprint_prefix")
+  destinationStateFingerprint String?                         @map("destination_state_fingerprint")
+  destinationStateByGroup     Json?                           @map("destination_state_by_group")
+  sourceCounts                Json                            @map("source_counts")
+  actionCounts                Json                            @map("action_counts")
+  conflictCounts              Json                            @map("conflict_counts")
+  financialSummary            Json?                           @map("financial_summary")
+  reconciliationSummary       Json?                           @map("reconciliation_summary")
+  dependencySummary           Json?                           @map("dependency_summary")
+  progressPhase               String?                         @map("progress_phase")
+  errorMessage                String?                         @map("error_message")
+  createdByUserId             String                          @map("created_by_user_id")
+  createdAt                   DateTime                        @default(now()) @map("created_at")
+  completedAt                 DateTime?                       @map("completed_at")
+  invalidatedAt               DateTime?                       @map("invalidated_at")
+  invalidationReason          String?                         @map("invalidation_reason")
+  durationMs                  Int?                            @map("duration_ms")
+
+  tenant    Tenant                              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  dataset   WristCaviarMigrationReviewedDataset @relation(fields: [datasetId], references: [id], onDelete: Restrict)
+  analysis  WristCaviarMigrationAnalysis        @relation(fields: [analysisId], references: [id], onDelete: Restrict)
+  createdBy User                                @relation("WristCaviarDryRunCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  items     WristCaviarMigrationDryRunItem[]
+
+  @@index([tenantId, datasetId])
+  @@index([tenantId, createdAt])
+  @@index([datasetId, status])
+  @@map("wrist_caviar_migration_dry_runs")
+}
+
+model WristCaviarMigrationDryRunItem {
+  id                 String                  @id @default(cuid())
+  dryRunId           String                  @map("dry_run_id")
+  tenantId           String                  @map("tenant_id")
+  entityGroup        String                  @map("entity_group")
+  entityType         String                  @map("entity_type")
+  sourceCandidateId  String                  @map("source_candidate_id")
+  sourceFingerprint  String                  @map("source_fingerprint")
+  action             WristCaviarDryRunAction
+  confidence         String?
+  destinationId      String?                 @map("destination_id")
+  dependencyKeys     Json?                   @map("dependency_keys")
+  plannedPayload     Json?                   @map("planned_payload")
+  comparisonSnapshot Json?                   @map("comparison_snapshot")
+  conflictCode       String?                 @map("conflict_code")
+  conflictDetails    Json?                   @map("conflict_details")
+  provenance         Json
+  sequence           Int
+  createdAt          DateTime                @default(now()) @map("created_at")
+
+  dryRun WristCaviarMigrationDryRun @relation(fields: [dryRunId], references: [id], onDelete: Cascade)
+
+  @@unique([dryRunId, entityType, sourceCandidateId])
+  @@index([dryRunId, action])
+  @@index([tenantId, entityGroup])
+  @@index([dryRunId, sequence])
+  @@map("wrist_caviar_migration_dry_run_items")
+}
+
+/// Simulated/future mapping table for idempotent commits (Phase 2 writes none to operational tables).
+model WristCaviarMigrationDestinationMap {
+  id                String    @id @default(cuid())
+  tenantId          String    @map("tenant_id")
+  datasetId         String    @map("dataset_id")
+  sourceCandidateId String    @map("source_candidate_id")
+  entityType        String    @map("entity_type")
+  destinationId     String    @map("destination_id")
+  sourceFingerprint String    @map("source_fingerprint")
+  dryRunId          String?   @map("dry_run_id")
+  commitId          String?   @map("commit_id")
+  importedAt        DateTime? @map("imported_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, datasetId, entityType, sourceCandidateId])
+  @@index([tenantId, entityType, destinationId])
+  @@map("wrist_caviar_migration_destination_maps")
 }

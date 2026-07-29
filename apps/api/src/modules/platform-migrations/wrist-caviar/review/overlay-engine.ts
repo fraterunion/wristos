@@ -389,8 +389,24 @@ export function applyResolutionOverlays(
 }
 
 export function fingerprintReviewedDataset(payload: unknown): string {
-  const canonical = JSON.stringify(payload);
+  const canonical = stableCanonicalStringify(payload);
   return createHash('sha256').update(canonical).digest('hex');
+}
+
+/** Deterministic JSON for fingerprints (jsonb round-trips reorder keys). */
+function stableCanonicalStringify(value: unknown): string {
+  return JSON.stringify(canonicalizeForFingerprint(value));
+}
+
+function canonicalizeForFingerprint(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonicalizeForFingerprint);
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    out[key] = canonicalizeForFingerprint(obj[key]);
+  }
+  return out;
 }
 
 export const DATASET_VERSION_PREFIX = 'wrist-caviar-reviewed-v';
