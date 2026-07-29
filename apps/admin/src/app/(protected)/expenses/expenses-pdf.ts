@@ -39,6 +39,7 @@ const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
   MARKETING:   'Instagram Ads / Marketing',
   COMMISSIONS: 'Comisiones',
   BANK_FEES:   'Comisiones de bancos',
+  OTHER:       'Otros',
 };
 
 const MONTHS = [

@@ -1,8 +1,21 @@
 import type ExcelJS from 'exceljs';
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 
+const candidateSeq = new Map<string, number>();
+
+/** Reset between workbook analyses so IDs are reproducible for the same parse order. */
+export function resetCandidateIdCounters(): void {
+  candidateSeq.clear();
+}
+
+/**
+ * Deterministic candidate id for a single analysis run.
+ * Relies on stable parser traversal order (same workbook → same sequence).
+ */
 export function newCandidateId(prefix: string): string {
-  return `${prefix}_${randomUUID().slice(0, 8)}`;
+  const n = (candidateSeq.get(prefix) ?? 0) + 1;
+  candidateSeq.set(prefix, n);
+  return `${prefix}_${String(n).padStart(6, '0')}`;
 }
 
 export function fingerprintBuffer(buffer: Buffer): string {

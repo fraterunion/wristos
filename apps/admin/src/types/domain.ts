@@ -246,7 +246,8 @@ export type OperatingExpenseCategory =
   | 'TRAVEL'
   | 'MARKETING'
   | 'COMMISSIONS'
-  | 'BANK_FEES';
+  | 'BANK_FEES'
+  | 'OTHER';
 
 export type VentaPaymentMethod = 'CASH' | 'BANCOS' | 'CESAR';
 export type VentaBankChannel = 'JOSE' | 'MAYTE';

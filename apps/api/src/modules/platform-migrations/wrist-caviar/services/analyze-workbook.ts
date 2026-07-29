@@ -30,6 +30,7 @@ import {
   runCrossSheetValidations,
 } from '../validation/cross-sheet.validation';
 import { loadAndValidateWorkbook } from '../workbook/workbook-loader';
+import { resetCandidateIdCounters } from '../workbook/cell.util';
 
 function classifySheet(name: string): SheetClassification {
   switch (name) {
@@ -122,6 +123,7 @@ export async function analyzeWristCaviarWorkbook(
   buffer: Buffer,
   fileName: string,
 ): Promise<WorkbookAnalysis> {
+  resetCandidateIdCounters();
   const started = Date.now();
   const loaded = await loadAndValidateWorkbook(buffer, fileName);
 

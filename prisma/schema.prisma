@@ -102,6 +102,7 @@ enum OperatingExpenseCategory {
   MARKETING
   COMMISSIONS
   BANK_FEES
+  OTHER
 }
 
 // --- Cuentas (AR/AP) ---
@@ -1696,4 +1697,46 @@ model WristCaviarMigrationReviewedDataset {
   @@index([tenantId, analysisId])
   @@index([analysisId, datasetVersion])
   @@map("wrist_caviar_migration_reviewed_datasets")
+}
+
+/// Idempotent one-time CLI import mappings (Wrist Caviar). Not a reusable product table.
+model WristCaviarOneTimeImportMap {
+  id                    String   @id @default(cuid())
+  tenantId              String   @map("tenant_id")
+  migrationSource       String   @map("migration_source")
+  workbookFingerprint   String   @map("workbook_fingerprint")
+  packageFingerprint    String   @map("package_fingerprint")
+  sourceCandidateId     String   @map("source_candidate_id")
+  sourceFingerprint     String   @map("source_fingerprint")
+  destinationEntityType String   @map("destination_entity_type")
+  destinationId         String   @map("destination_id")
+  importRunId           String   @map("import_run_id")
+  importedAt            DateTime @default(now()) @map("imported_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, migrationSource, packageFingerprint, destinationEntityType, sourceCandidateId])
+  @@index([tenantId, destinationEntityType, destinationId])
+  @@index([tenantId, importRunId])
+  @@map("wrist_caviar_one_time_import_maps")
+}
+
+model WristCaviarOneTimeImportRun {
+  id                  String    @id @default(cuid())
+  tenantId            String    @map("tenant_id")
+  migrationSource     String    @map("migration_source")
+  workbookFingerprint String    @map("workbook_fingerprint")
+  packageFingerprint  String    @map("package_fingerprint")
+  environment         String
+  mode                String
+  status              String
+  plannedCounts       Json      @map("planned_counts")
+  resultCounts        Json?     @map("result_counts")
+  backupVerified      Boolean   @default(false) @map("backup_verified")
+  backupNote          String?   @map("backup_note")
+  startedAt           DateTime  @default(now()) @map("started_at")
+  completedAt         DateTime? @map("completed_at")
+  errorMessage        String?   @map("error_message")
+
+  @@index([tenantId, packageFingerprint])
+  @@map("wrist_caviar_one_time_import_runs")
 }
