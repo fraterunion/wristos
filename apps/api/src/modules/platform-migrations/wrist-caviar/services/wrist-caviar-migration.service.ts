@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../../../../prisma/prisma.service';
 import type { MulterFile } from '../../../data-onboarding/types/multer-file.type';
 import { maxFileBytes } from '../constants';
+import { mapLegacyIssueCode } from '../review/issue-taxonomy';
 import {
   analyzeWristCaviarWorkbook,
   toAnalysisSummary,
@@ -113,15 +114,41 @@ export class WristCaviarMigrationService {
           })),
         },
         issues: {
-          create: analysis.issues.slice(0, 2000).map((issue) => ({
+          create: analysis.issues.slice(0, 2000).map((issue) => {
+            const taxonomyCode = mapLegacyIssueCode(issue.code, issue.source?.sourceSheet);
+            return {
+              tenantId: params.targetTenantId,
+              code: issue.code,
+              taxonomyCode,
+              severity: issue.severity,
+              category: issue.category ?? null,
+              message: issue.message,
+              sourceSheet: issue.source?.sourceSheet ?? null,
+              sourceRow: issue.source?.sourceRow ?? null,
+              sourceBlockId: issue.source?.sourceBlockId ?? null,
+              reviewStatus: 'UNRESOLVED',
+            };
+          }),
+        },
+        reviewedSnapshot: privateSnapshot as object,
+        reviewVersion: 0,
+        entityApprovals: {
+          create: [
+            'CUSTOMERS',
+            'INVENTORY',
+            'SALES',
+            'RECEIVABLES',
+            'PAYABLES',
+            'EXPENSES',
+            'CASH_LEDGER',
+            'BANK_LEDGER',
+            'PARTNER_LEDGER',
+            'PROFIT_DISTRIBUTIONS',
+            'DEFERRED',
+          ].map((entityGroup) => ({
             tenantId: params.targetTenantId,
-            code: issue.code,
-            severity: issue.severity,
-            category: issue.category ?? null,
-            message: issue.message,
-            sourceSheet: issue.source?.sourceSheet ?? null,
-            sourceRow: issue.source?.sourceRow ?? null,
-            sourceBlockId: issue.source?.sourceBlockId ?? null,
+            entityGroup: entityGroup as never,
+            status: 'NOT_REVIEWED' as never,
           })),
         },
       },
@@ -261,6 +288,7 @@ export class WristCaviarMigrationService {
   private buildPrivateSnapshot(analysis: WorkbookAnalysis) {
     return {
       reconciliation: analysis.reconciliation,
+      reportedBalances: analysis.reportedBalances,
       customers: analysis.customers,
       inventory: analysis.inventory,
       sales: analysis.sales,

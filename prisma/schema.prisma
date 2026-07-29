@@ -404,11 +404,14 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  tenantUsers                  TenantUser[]
-  dataImportSessions           DataImportSession[]            @relation("DataImportCreatedBy")
-  receivablePaymentsCreated    ReceivablePayment[]            @relation("ReceivablePaymentCreatedBy")
-  financialAuditEvents         FinancialAuditEvent[]          @relation("FinancialAuditActor")
-  wristCaviarMigrationAnalyses WristCaviarMigrationAnalysis[] @relation("WristCaviarMigrationCreatedBy")
+  tenantUsers                         TenantUser[]
+  dataImportSessions                  DataImportSession[]                   @relation("DataImportCreatedBy")
+  receivablePaymentsCreated           ReceivablePayment[]                   @relation("ReceivablePaymentCreatedBy")
+  financialAuditEvents                FinancialAuditEvent[]                 @relation("FinancialAuditActor")
+  wristCaviarMigrationAnalyses        WristCaviarMigrationAnalysis[]        @relation("WristCaviarMigrationCreatedBy")
+  wristCaviarMigrationResolutions     WristCaviarMigrationResolution[]      @relation("WristCaviarMigrationResolvedBy")
+  wristCaviarMigrationEntityApprovals WristCaviarMigrationEntityApproval[]  @relation("WristCaviarMigrationEntityApprovedBy")
+  wristCaviarMigrationDatasets        WristCaviarMigrationReviewedDataset[] @relation("WristCaviarMigrationDatasetFrozenBy")
 
   @@map("users")
 }
@@ -1500,14 +1503,21 @@ model WristCaviarMigrationAnalysis {
   reconciliationSummary Json                               @map("reconciliation_summary")
   /// Private normalized snapshot for paginated preview (platform-admin only). Never public CDN.
   privateSnapshot       Json?                              @map("private_snapshot")
+  /// Working reviewed snapshot (original + active overlays). Not frozen.
+  reviewedSnapshot      Json?                              @map("reviewed_snapshot")
+  /// Optimistic concurrency for review mutations.
+  reviewVersion         Int                                @default(0) @map("review_version")
   errorMessage          String?                            @map("error_message")
   createdAt             DateTime                           @default(now()) @map("created_at")
   updatedAt             DateTime                           @updatedAt @map("updated_at")
 
-  tenant    Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdBy User                        @relation("WristCaviarMigrationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  issues    WristCaviarMigrationIssue[]
-  sheets    WristCaviarMigrationSheet[]
+  tenant          Tenant                                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy       User                                  @relation("WristCaviarMigrationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  issues          WristCaviarMigrationIssue[]
+  sheets          WristCaviarMigrationSheet[]
+  resolutions     WristCaviarMigrationResolution[]
+  entityApprovals WristCaviarMigrationEntityApproval[]
+  datasets        WristCaviarMigrationReviewedDataset[]
 
   @@index([tenantId])
   @@index([tenantId, createdAt])
@@ -1540,17 +1550,150 @@ model WristCaviarMigrationIssue {
   tenantId      String  @map("tenant_id")
   analysisId    String  @map("analysis_id")
   code          String
+  /// Normalized Phase 1.5 taxonomy code
+  taxonomyCode  String? @map("taxonomy_code")
   severity      String
   category      String?
   message       String
   sourceSheet   String? @map("source_sheet")
   sourceRow     Int?    @map("source_row")
   sourceBlockId String? @map("source_block_id")
+  entityType    String? @map("entity_type")
+  candidateId   String? @map("candidate_id")
+  /// UNRESOLVED | RESOLVED | ACKNOWLEDGED | EXCLUDED | DEFERRED
+  reviewStatus  String  @default("UNRESOLVED") @map("review_status")
 
-  analysis WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  analysis    WristCaviarMigrationAnalysis     @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  resolutions WristCaviarMigrationResolution[]
 
   @@index([tenantId])
   @@index([analysisId])
   @@index([analysisId, severity])
+  @@index([analysisId, taxonomyCode])
+  @@index([analysisId, reviewStatus])
   @@map("wrist_caviar_migration_issues")
+}
+
+enum WristCaviarMigrationResolutionType {
+  ACCEPT_AS_IS
+  CORRECT_VALUE
+  MAP_ENTITY
+  MERGE_EXACT_DUPLICATE
+  KEEP_SEPARATE
+  EXCLUDE_FROM_MIGRATION
+  DEFER
+  CONFIRM_SCOPE_DIFFERENCE
+  CONFIRM_FORMULA_OVERRIDE
+  ACKNOWLEDGE_WARNING
+  CHOOSE_CANONICAL_NAME
+  MARK_SERIAL_UNKNOWN
+  CONFIRM_INVENTORY_OVERLAP
+}
+
+enum WristCaviarMigrationResolutionStatus {
+  ACTIVE
+  SUPERSEDED
+}
+
+model WristCaviarMigrationResolution {
+  id               String                               @id @default(cuid())
+  tenantId         String                               @map("tenant_id")
+  analysisId       String                               @map("analysis_id")
+  issueId          String?                              @map("issue_id")
+  entityType       String?                              @map("entity_type")
+  candidateId      String?                              @map("candidate_id")
+  resolutionType   WristCaviarMigrationResolutionType   @map("resolution_type")
+  status           WristCaviarMigrationResolutionStatus @default(ACTIVE)
+  originalValue    Json?                                @map("original_value")
+  resolvedValue    Json?                                @map("resolved_value")
+  reason           String?
+  notes            String?
+  idempotencyKey   String?                              @map("idempotency_key")
+  resolvedByUserId String                               @map("resolved_by_user_id")
+  resolvedAt       DateTime                             @default(now()) @map("resolved_at")
+  createdAt        DateTime                             @default(now()) @map("created_at")
+  updatedAt        DateTime                             @updatedAt @map("updated_at")
+
+  analysis   WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  issue      WristCaviarMigrationIssue?   @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  resolvedBy User                         @relation("WristCaviarMigrationResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([analysisId, idempotencyKey])
+  @@index([tenantId, analysisId])
+  @@index([analysisId, issueId])
+  @@index([analysisId, status])
+  @@map("wrist_caviar_migration_resolutions")
+}
+
+enum WristCaviarMigrationEntityGroup {
+  CUSTOMERS
+  INVENTORY
+  SALES
+  RECEIVABLES
+  PAYABLES
+  EXPENSES
+  CASH_LEDGER
+  BANK_LEDGER
+  PARTNER_LEDGER
+  PROFIT_DISTRIBUTIONS
+  DEFERRED
+}
+
+enum WristCaviarMigrationEntityApprovalStatus {
+  NOT_REVIEWED
+  IN_REVIEW
+  APPROVED
+  DEFERRED
+  BLOCKED
+}
+
+model WristCaviarMigrationEntityApproval {
+  id                 String                                   @id @default(cuid())
+  tenantId           String                                   @map("tenant_id")
+  analysisId         String                                   @map("analysis_id")
+  entityGroup        WristCaviarMigrationEntityGroup          @map("entity_group")
+  status             WristCaviarMigrationEntityApprovalStatus @default(NOT_REVIEWED)
+  reason             String?
+  approvedByUserId   String?                                  @map("approved_by_user_id")
+  approvedAt         DateTime?                                @map("approved_at")
+  invalidatedAt      DateTime?                                @map("invalidated_at")
+  invalidationReason String?                                  @map("invalidation_reason")
+  createdAt          DateTime                                 @default(now()) @map("created_at")
+  updatedAt          DateTime                                 @updatedAt @map("updated_at")
+
+  analysis   WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  approvedBy User?                        @relation("WristCaviarMigrationEntityApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([analysisId, entityGroup])
+  @@index([tenantId, analysisId])
+  @@map("wrist_caviar_migration_entity_approvals")
+}
+
+model WristCaviarMigrationReviewedDataset {
+  id                        String                        @id @default(cuid())
+  tenantId                  String                        @map("tenant_id")
+  analysisId                String                        @map("analysis_id")
+  datasetVersion            String                        @map("dataset_version")
+  fingerprint               String
+  fingerprintPrefix         String                        @map("fingerprint_prefix")
+  parserVersion             String                        @map("parser_version")
+  sourceWorkbookFingerprint String                        @map("source_workbook_fingerprint")
+  activeResolutionIds       Json                          @map("active_resolution_ids")
+  entityCounts              Json                          @map("entity_counts")
+  reconciliationSummary     Json                          @map("reconciliation_summary")
+  approvalStates            Json                          @map("approval_states")
+  readiness                 WristCaviarMigrationReadiness
+  /// Immutable frozen reviewed snapshot
+  snapshot                  Json
+  supersededByDatasetId     String?                       @map("superseded_by_dataset_id")
+  frozenByUserId            String                        @map("frozen_by_user_id")
+  frozenAt                  DateTime                      @default(now()) @map("frozen_at")
+  createdAt                 DateTime                      @default(now()) @map("created_at")
+
+  analysis WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  frozenBy User                         @relation("WristCaviarMigrationDatasetFrozenBy", fields: [frozenByUserId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, analysisId])
+  @@index([analysisId, datasetVersion])
+  @@map("wrist_caviar_migration_reviewed_datasets")
 }
