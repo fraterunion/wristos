@@ -35,8 +35,8 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/capital', label: 'Capital', icon: TrendingUp },
   { href: '/radar', label: 'Radar', icon: Radar },
   { href: '/data-onboarding', label: 'Importar datos', icon: Upload },
+  { href: '/platform/migrations/wrist-caviar', label: 'Migración WC', icon: Upload },
 ];
-
 export function Sidebar() {
   const pathname = usePathname();
 

@@ -24,6 +24,7 @@ import { StripeModule } from './modules/stripe/stripe.module';
 import { StorefrontModule } from './modules/storefront/storefront.module';
 import { DataOnboardingModule } from './modules/data-onboarding/data-onboarding.module';
 import { ReceivablesModule } from './modules/receivables/receivables.module';
+import { PlatformMigrationsModule } from './modules/platform-migrations/platform-migrations.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { ReceivablesModule } from './modules/receivables/receivables.module';
     StorefrontModule,
     DataOnboardingModule,
     ReceivablesModule,
+    PlatformMigrationsModule,
   ],
   controllers: [AppController],
 })
