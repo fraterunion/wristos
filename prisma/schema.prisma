@@ -355,40 +355,41 @@ model Tenant {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  roles                    Role[]
-  tenantUsers              TenantUser[]
-  clients                  Client[]
-  clientPreferences        ClientPreference[]
-  clientInteractions       ClientInteraction[]
-  watches                  Watch[]
-  watchImages              WatchImage[]
-  watchExpenses            WatchExpense[]
-  operatingExpenses        OperatingExpense[]
-  deals                    Deal[]
-  payments                 Payment[]
-  automationRules          AutomationRule[]
-  automationRuns           AutomationRun[]
-  matchSuggestions         MatchSuggestion[]
-  channels                 Channel[]
-  radarImports             RadarImport[]
-  channelMessages          ChannelMessage[]
-  contacts                 Contact[]
-  marketListings           MarketListing[]
-  investors                Investor[]
-  investorContributions    InvestorContribution[]
-  investorDistributions    InvestorDistribution[]
-  accountEntries           AccountEntry[]
-  accountPayments          AccountPayment[]
-  treasuryEntries          TreasuryEntry[]
-  storefrontReservations   StorefrontReservation[]
-  dataImportSessions       DataImportSession[]
-  dataImportFiles          DataImportFile[]
-  dataImportRecords        DataImportRecord[]
-  dataImportEvents         DataImportEvent[]
-  documentExtractionChunks DocumentExtractionChunk[]
-  receivables              Receivable[]
-  receivablePayments       ReceivablePayment[]
-  financialAuditEvents     FinancialAuditEvent[]
+  roles                        Role[]
+  tenantUsers                  TenantUser[]
+  clients                      Client[]
+  clientPreferences            ClientPreference[]
+  clientInteractions           ClientInteraction[]
+  watches                      Watch[]
+  watchImages                  WatchImage[]
+  watchExpenses                WatchExpense[]
+  operatingExpenses            OperatingExpense[]
+  deals                        Deal[]
+  payments                     Payment[]
+  automationRules              AutomationRule[]
+  automationRuns               AutomationRun[]
+  matchSuggestions             MatchSuggestion[]
+  channels                     Channel[]
+  radarImports                 RadarImport[]
+  channelMessages              ChannelMessage[]
+  contacts                     Contact[]
+  marketListings               MarketListing[]
+  investors                    Investor[]
+  investorContributions        InvestorContribution[]
+  investorDistributions        InvestorDistribution[]
+  accountEntries               AccountEntry[]
+  accountPayments              AccountPayment[]
+  treasuryEntries              TreasuryEntry[]
+  storefrontReservations       StorefrontReservation[]
+  dataImportSessions           DataImportSession[]
+  dataImportFiles              DataImportFile[]
+  dataImportRecords            DataImportRecord[]
+  dataImportEvents             DataImportEvent[]
+  documentExtractionChunks     DocumentExtractionChunk[]
+  receivables                  Receivable[]
+  receivablePayments           ReceivablePayment[]
+  financialAuditEvents         FinancialAuditEvent[]
+  wristCaviarMigrationAnalyses WristCaviarMigrationAnalysis[]
 
   @@index([slug])
   @@map("tenants")
@@ -403,10 +404,11 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  tenantUsers               TenantUser[]
-  dataImportSessions        DataImportSession[]   @relation("DataImportCreatedBy")
-  receivablePaymentsCreated ReceivablePayment[]   @relation("ReceivablePaymentCreatedBy")
-  financialAuditEvents      FinancialAuditEvent[] @relation("FinancialAuditActor")
+  tenantUsers                  TenantUser[]
+  dataImportSessions           DataImportSession[]            @relation("DataImportCreatedBy")
+  receivablePaymentsCreated    ReceivablePayment[]            @relation("ReceivablePaymentCreatedBy")
+  financialAuditEvents         FinancialAuditEvent[]          @relation("FinancialAuditActor")
+  wristCaviarMigrationAnalyses WristCaviarMigrationAnalysis[] @relation("WristCaviarMigrationCreatedBy")
 
   @@map("users")
 }
@@ -1464,4 +1466,91 @@ model DataImportEvent {
   @@index([tenantId, sessionId])
   @@index([tenantId, createdAt])
   @@map("data_import_events")
+}
+
+// --- Wrist Caviar master workbook migration (analysis / preview only) ---
+
+enum WristCaviarMigrationReadiness {
+  READY_FOR_DRY_RUN
+  NEEDS_REVIEW
+  BLOCKED
+}
+
+enum WristCaviarMigrationAnalysisStatus {
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
+model WristCaviarMigrationAnalysis {
+  id                    String                             @id @default(cuid())
+  tenantId              String                             @map("tenant_id")
+  createdByUserId       String                             @map("created_by_user_id")
+  status                WristCaviarMigrationAnalysisStatus @default(ANALYZING)
+  readiness             WristCaviarMigrationReadiness
+  parserVersion         String                             @map("parser_version")
+  fingerprint           String
+  fingerprintPrefix     String                             @map("fingerprint_prefix")
+  fileName              String                             @map("file_name")
+  fileSizeBytes         Int                                @map("file_size_bytes")
+  durationMs            Int?                               @map("duration_ms")
+  sheetSummaries        Json                               @map("sheet_summaries")
+  normalizedCounts      Json                               @map("normalized_counts")
+  issueSummary          Json                               @map("issue_summary")
+  reconciliationSummary Json                               @map("reconciliation_summary")
+  /// Private normalized snapshot for paginated preview (platform-admin only). Never public CDN.
+  privateSnapshot       Json?                              @map("private_snapshot")
+  errorMessage          String?                            @map("error_message")
+  createdAt             DateTime                           @default(now()) @map("created_at")
+  updatedAt             DateTime                           @updatedAt @map("updated_at")
+
+  tenant    Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy User                        @relation("WristCaviarMigrationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  issues    WristCaviarMigrationIssue[]
+  sheets    WristCaviarMigrationSheet[]
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, readiness])
+  @@map("wrist_caviar_migration_analyses")
+}
+
+model WristCaviarMigrationSheet {
+  id                String @id @default(cuid())
+  tenantId          String @map("tenant_id")
+  analysisId        String @map("analysis_id")
+  sheetName         String @map("sheet_name")
+  classification    String
+  status            String
+  detectedRecords   Int    @map("detected_records")
+  warningCount      Int    @map("warning_count")
+  errorCount        Int    @map("error_count")
+  manualReviewCount Int    @map("manual_review_count")
+  notes             Json?
+
+  analysis WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([analysisId])
+  @@map("wrist_caviar_migration_sheets")
+}
+
+model WristCaviarMigrationIssue {
+  id            String  @id @default(cuid())
+  tenantId      String  @map("tenant_id")
+  analysisId    String  @map("analysis_id")
+  code          String
+  severity      String
+  category      String?
+  message       String
+  sourceSheet   String? @map("source_sheet")
+  sourceRow     Int?    @map("source_row")
+  sourceBlockId String? @map("source_block_id")
+
+  analysis WristCaviarMigrationAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([analysisId])
+  @@index([analysisId, severity])
+  @@map("wrist_caviar_migration_issues")
 }

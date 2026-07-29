@@ -28,3 +28,7 @@ coverage/
 
 # Local import uploads only (do NOT ignore apps/**/storage source modules)
 /storage/
+
+# Local Wrist Caviar maestro workbook — never commit
+RELOJES CESAR ADMIN.xlsx
+**/RELOJES CESAR ADMIN.xlsx
