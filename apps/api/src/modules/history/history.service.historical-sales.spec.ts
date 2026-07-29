@@ -104,6 +104,8 @@ describe('HistoryService — historical sales never link to inventory', () => {
     expect(row.notes).toContain(`serial=${SHARED_SERIAL}`);
     expect(row.isHistoricalImport).toBe(true);
     expect(row.computedStatus).toBe('HISTORICO');
+    expect(row.paidTotal).toBe('25000');
+    expect(row.pendingAmount).toBe('0');
 
     // Must never look up or mutate inventory by serial / notes identity
     expect(watchFindFirst).not.toHaveBeenCalled();

@@ -13,6 +13,7 @@ import {
   effectiveSaleDate,
 } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isSettledHistoricalSaleSnapshot } from '../history/historical-watch-snapshot';
 import { TreasuryService } from '../treasury/treasury.service';
 import { AnalyticsPeriod } from './dto/analytics-period.dto';
 
@@ -152,13 +153,21 @@ export class AnalyticsService {
         where: { ...paymentWhere, status: PaymentStatus.PAID },
         _sum: { amount: true },
       }),
-      // Accounts receivable: CLOSED_WON + PENDING_PAYMENT deals with outstanding balance
+      // Accounts receivable: CLOSED_WON + PENDING_PAYMENT deals with outstanding balance.
+      // Workbook historical snapshots (no Payment rows) are excluded in the loop below —
+      // open AR for those tenants lives in CXC / AccountEntry RECEIVABLE, not on Deal.
       this.prisma.deal.findMany({
         where: {
           ...dealWhere,
           stage: { in: [DealStage.CLOSED_WON, DealStage.PENDING_PAYMENT] },
         },
-        select: { id: true, agreedPrice: true },
+        select: {
+          id: true,
+          agreedPrice: true,
+          sourceTag: true,
+          importSessionId: true,
+          _count: { select: { payments: { where: { deletedAt: null } } } },
+        },
       }),
       this.prisma.payment.groupBy({
         by: ['dealId'],
@@ -211,6 +220,16 @@ export class AnalyticsService {
 
     let totalPendingBalance = new Prisma.Decimal(0);
     for (const deal of receivableDeals) {
+      // Settled historical snapshots are not live receivables (CXC owns open AR).
+      if (
+        isSettledHistoricalSaleSnapshot({
+          sourceTag: deal.sourceTag,
+          importSessionId: deal.importSessionId,
+          paymentCount: deal._count.payments,
+        })
+      ) {
+        continue;
+      }
       const paid = paidMap.get(deal.id) ?? new Prisma.Decimal(0);
       const pending = deal.agreedPrice.minus(paid);
       if (pending.greaterThan(0)) {

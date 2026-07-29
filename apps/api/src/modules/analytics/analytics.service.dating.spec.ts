@@ -73,7 +73,13 @@ describe('AnalyticsService — historical sale dating', () => {
         }) => {
           const tenantRows = deals.filter((d) => d.tenantId === where.tenantId && d.deletedAt === null);
           if (select?.agreedPrice && select?.id) {
-            return tenantRows.map((d) => ({ id: d.id, agreedPrice: d.agreedPrice }));
+            return tenantRows.map((d) => ({
+              id: d.id,
+              agreedPrice: d.agreedPrice,
+              sourceTag: (d as { sourceTag?: string | null }).sourceTag ?? null,
+              importSessionId: (d as { importSessionId?: string | null }).importSessionId ?? null,
+              _count: { payments: 0 },
+            }));
           }
           if (where.AND) {
             return tenantRows

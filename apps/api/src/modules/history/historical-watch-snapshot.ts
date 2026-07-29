@@ -51,3 +51,17 @@ export function isWorkbookHistoricalSaleSourceTag(sourceTag: string | null | und
     sourceTag === 'wrist-caviar-master-workbook-v1'
   );
 }
+
+/**
+ * True when a deal should be treated as a completed historical snapshot for
+ * display / live-AR exclusion (no deal Payment rows; open AR lives in CXC).
+ */
+export function isSettledHistoricalSaleSnapshot(input: {
+  sourceTag?: string | null;
+  importSessionId?: string | null;
+  paymentCount: number;
+}): boolean {
+  const isHistorical =
+    isWorkbookHistoricalSaleSourceTag(input.sourceTag) || input.importSessionId != null;
+  return isHistorical && input.paymentCount === 0;
+}
