@@ -5,7 +5,7 @@ import { analyzeWristCaviarWorkbook } from '../../../apps/api/src/modules/platfo
 import { normalizeCustomerName } from '../../../apps/api/src/modules/platform-migrations/wrist-caviar/normalization/customer-normalize';
 import type { WorkbookAnalysis } from '../../../apps/api/src/modules/platform-migrations/wrist-caviar/types/migration.types';
 
-import { ACCEPTANCE_COUNTS, EXPENSE_CATEGORY_MAP, LOCAL_ROOT, MIGRATION_SOURCE, PARSER_VERSION, type Disposition } from './config';
+import { ACCEPTANCE_COUNTS, LOCAL_ROOT, MIGRATION_SOURCE, PARSER_VERSION, type Disposition } from './config';
 import { prefix, safeLog, sha256Hex } from './hash';
 import { ensureDir, writeJson } from './args';
 import {
@@ -14,6 +14,17 @@ import {
   type ResolutionRecord,
   type ResolutionsFile,
 } from './resolutions.schema';
+import {
+  applyHistoricalSaleFieldRules,
+  classifyPartnerMovement,
+  classifyPayableCard,
+  classifyReceivableCard,
+  freeFormCreditorSupported,
+  resolveExpenseCategory,
+  type RuleAudit,
+} from './rules';
+import { generateHumanReview } from './generate-human-review';
+import { generateSalesReconciliation } from './generate-sales-reconciliation';
 
 export type CanonicalCandidate = {
   sourceCandidateId: string;
@@ -29,15 +40,9 @@ export type CanonicalCandidate = {
   resolutionIds: string[];
   disposition: Disposition;
   dispositionReason: string;
+  appliedRules?: RuleAudit[];
   destinationHint?: { entityType: string; id?: string };
 };
-
-function mapExpenseCategory(concept: string): string | null {
-  for (const rule of EXPENSE_CATEGORY_MAP) {
-    if (rule.pattern.test(concept)) return rule.category;
-  }
-  return null;
-}
 
 function applyResolutions(
   analysis: WorkbookAnalysis,
@@ -135,6 +140,7 @@ function candidateBase(
   disposition: Disposition,
   reason: string,
   resolutionIds: string[],
+  appliedRules: RuleAudit[] = [],
 ): CanonicalCandidate {
   const candidateFingerprint = sha256Hex({ entityType, id, payload });
   return {
@@ -151,6 +157,7 @@ function candidateBase(
     resolutionIds,
     disposition,
     dispositionReason: reason,
+    appliedRules: appliedRules.length ? appliedRules : undefined,
   };
 }
 
@@ -200,7 +207,20 @@ export async function buildPackage(params: {
   resolutionsPath: string | null;
   outRoot?: string;
   allowOutOfRangeCounts?: boolean;
-}): Promise<{ packageDir: string; packageFingerprint: string; analysis: WorkbookAnalysis }> {
+}): Promise<{
+  packageDir: string;
+  packageFingerprint: string;
+  analysis: WorkbookAnalysis;
+  dispositionCounts: Record<string, number>;
+  humanDecisionCount: number;
+  salesRecon: {
+    sourceSaleCount: number;
+    plannedDealCount: number;
+    excludedSaleCount: number;
+    conflictedSaleCount: number;
+    allAccounted: boolean;
+  };
+}> {
   const analysis = await analyzeWorkbookFile(params.workbookPath);
   if (analysis.parserVersion !== PARSER_VERSION) {
     throw new Error(`Unsupported parser version: ${analysis.parserVersion}`);
@@ -301,12 +321,17 @@ export async function buildPackage(params: {
 
   for (const sale of reviewed.sales) {
     const custNorm = normalizeCustomerName(sale.customerName);
+    const saleFieldRules = applyHistoricalSaleFieldRules({
+      serial: sale.serial,
+      reference: sale.reference,
+    });
     const approvedProfit =
       sale.declaredProfit != null && !sale.profitMismatch
         ? sale.declaredProfit
         : sale.calculatedProfit;
     let disposition: Disposition = 'CREATE';
     let reason = 'historical_sale_create';
+    const applied: RuleAudit[] = saleFieldRules.audits.map((a) => a.audit);
     if (sale.profitMismatch) {
       const fixed = resolutionsFile.resolutions.some(
         (r) =>
@@ -342,8 +367,8 @@ export async function buildPackage(params: {
           customerNormalized: custNorm,
           brand: sale.brand,
           model: sale.model,
-          reference: sale.reference,
-          serial: sale.serial,
+          reference: saleFieldRules.reference ?? sale.reference,
+          serial: saleFieldRules.serial,
           cost: sale.cost,
           salePrice: sale.salePrice,
           extras: sale.extras,
@@ -353,6 +378,7 @@ export async function buildPackage(params: {
         disposition,
         reason,
         resFor(resolutionsFile.resolutions, sale.id, 'sale').map((r) => r.id),
+        applied,
       ),
     );
   }
@@ -360,11 +386,20 @@ export async function buildPackage(params: {
   for (const card of reviewed.receivables) {
     let disposition: Disposition = 'CREATE';
     let reason = 'receivable_create';
+    const applied: RuleAudit[] = [];
     const cardRes = resolutionsFile.resolutions.filter((r) => r.sourceCandidateId === card.id);
     const excluded = cardRes.find((r) => r.resolutionType === 'EXCLUDE_INVALID_SOURCE_BLOCK');
+    const emptyRule = classifyReceivableCard({
+      principal: card.principal,
+      payments: card.payments,
+    });
     if (excluded) {
       disposition = 'EXCLUDED';
       reason = 'excluded_by_resolution';
+    } else if (emptyRule) {
+      disposition = emptyRule.disposition;
+      reason = emptyRule.dispositionReason;
+      applied.push(emptyRule.audit);
     } else if (card.ambiguous || card.balanceMismatch || card.principal == null) {
       const fixed = cardRes.some((r) =>
         ['ACCEPT_SOURCE', 'ACCEPT_CALCULATED', 'CORRECT_VALUE', 'FORMULA_OVERRIDE'].includes(
@@ -402,6 +437,7 @@ export async function buildPackage(params: {
         disposition,
         reason,
         resFor(resolutionsFile.resolutions, card.id, 'receivable').map((r) => r.id),
+        applied,
       ),
     );
     for (const pay of card.payments) {
@@ -424,11 +460,20 @@ export async function buildPackage(params: {
   for (const card of reviewed.payables) {
     let disposition: Disposition = 'CREATE';
     let reason = 'payable_create';
+    const applied: RuleAudit[] = [];
     const cardRes = resolutionsFile.resolutions.filter((r) => r.sourceCandidateId === card.id);
     const excluded = cardRes.find((r) => r.resolutionType === 'EXCLUDE_INVALID_SOURCE_BLOCK');
+    const emptyRule = classifyPayableCard({
+      principal: card.principal,
+      payments: card.payments,
+    });
     if (excluded) {
       disposition = 'EXCLUDED';
       reason = 'excluded_by_resolution';
+    } else if (emptyRule) {
+      disposition = emptyRule.disposition;
+      reason = emptyRule.dispositionReason;
+      applied.push(emptyRule.audit);
     } else if (
       card.ambiguous ||
       card.balanceMismatch ||
@@ -450,6 +495,9 @@ export async function buildPackage(params: {
       } else {
         reason = 'payable_resolved';
       }
+    } else {
+      const freeForm = freeFormCreditorSupported(card.creditorName);
+      if (freeForm) applied.push(freeForm.audit);
     }
     candidates.push(
       candidateBase(
@@ -474,6 +522,7 @@ export async function buildPackage(params: {
         disposition,
         reason,
         resFor(resolutionsFile.resolutions, card.id, 'payable').map((r) => r.id),
+        applied,
       ),
     );
     for (const pay of card.payments) {
@@ -494,7 +543,7 @@ export async function buildPackage(params: {
   }
 
   for (const exp of reviewed.expenses) {
-    const category = mapExpenseCategory(exp.concept);
+    const resolved = resolveExpenseCategory(exp.concept);
     candidates.push(
       candidateBase(
         exp.id,
@@ -507,11 +556,12 @@ export async function buildPackage(params: {
           concept: exp.concept,
           amount: exp.amount,
           account: exp.account,
-          category,
+          category: resolved.category,
         },
-        category ? 'CREATE' : 'CONFLICT',
-        category ? 'expense_create' : 'category_mapping_required',
+        resolved.patch.disposition,
+        resolved.patch.dispositionReason,
         [],
+        [resolved.patch.audit],
       ),
     );
   }
@@ -588,10 +638,21 @@ export async function buildPackage(params: {
     const deferred = resolutionsFile.resolutions.find(
       (r) => r.sourceCandidateId === row.id && r.resolutionType === 'DEFER',
     );
+    const classified = classifyPartnerMovement({
+      entryAmount: row.entryAmount,
+      exitAmount: row.exitAmount,
+      classification: row.classification,
+    });
+    const applied: RuleAudit[] = [];
     let disposition: Disposition =
-      row.classification === 'UNCLASSIFIED' ? 'CONFLICT' : 'CREATE';
+      classified.classification === 'UNCLASSIFIED' ? 'CONFLICT' : 'CREATE';
     let reason =
       disposition === 'CONFLICT' ? 'unclassified_partner_movement' : 'partner_create';
+    if (classified.patch) {
+      disposition = classified.patch.disposition;
+      reason = classified.patch.dispositionReason;
+      applied.push(classified.patch.audit);
+    }
     if (excluded) {
       disposition = 'EXCLUDED';
       reason = 'excluded_by_resolution';
@@ -610,11 +671,12 @@ export async function buildPackage(params: {
           entryDate: row.entryDate,
           entryAmount: row.entryAmount,
           exitAmount: row.exitAmount,
-          classification: row.classification,
+          classification: classified.classification,
         },
         disposition,
         reason,
         resFor(resolutionsFile.resolutions, row.id, 'partner').map((r) => r.id),
+        applied,
       ),
     );
   }
@@ -798,12 +860,33 @@ export async function buildPackage(params: {
   ].join('\n');
   fs.writeFileSync(path.join(baseDir, 'review.md'), `${reviewMd}\n`);
 
+  const human = generateHumanReview({
+    outDir: baseDir,
+    fingerprintPrefix: fpPrefix,
+    candidates,
+  });
+  const salesRecon = generateSalesReconciliation({
+    outDir: baseDir,
+    fingerprintPrefix: fpPrefix,
+    candidates,
+    includeSensitiveTotals: true,
+  });
+
   safeLog('wrist_caviar_package_built', {
     workbookFingerprintPrefix: fpPrefix,
     packageFingerprintPrefix: prefix(packageFingerprint),
     dispositionCounts,
     conflictCount: dispositionCounts.CONFLICT,
+    humanDecisions: human.decisionCount,
+    salesAccounted: salesRecon.allAccounted,
   });
 
-  return { packageDir: baseDir, packageFingerprint, analysis: reviewed };
+  return {
+    packageDir: baseDir,
+    packageFingerprint,
+    analysis: reviewed,
+    dispositionCounts,
+    humanDecisionCount: human.decisionCount,
+    salesRecon,
+  };
 }

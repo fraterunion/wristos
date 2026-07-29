@@ -102,6 +102,7 @@ enum OperatingExpenseCategory {
   MARKETING
   COMMISSIONS
   BANK_FEES
+  OTHER
 }
 
 // --- Cuentas (AR/AP) ---

@@ -20,6 +20,7 @@ const ALL_CATEGORIES: OperatingExpenseCategory[] = [
   'MARKETING',
   'COMMISSIONS',
   'BANK_FEES',
+  'OTHER',
 ];
 
 const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
@@ -33,6 +34,7 @@ const CATEGORY_LABELS: Record<OperatingExpenseCategory, string> = {
   MARKETING: 'Marketing',
   COMMISSIONS: 'Comisiones',
   BANK_FEES: 'Comisiones de bancos',
+  OTHER: 'Otros',
 };
 
 const COMMISSION_SECTION_LABELS: Partial<Record<OperatingExpenseCategory, string>> = {

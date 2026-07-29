@@ -14,15 +14,15 @@ export const ACCEPTANCE_COUNTS = {
 } as const;
 
 export const EXPENSE_CATEGORY_MAP: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /gasolin|combustible|pemex/i, category: 'GASOLINE' },
+  { pattern: /gasolin|combustible|pemex|^gas$/i, category: 'GASOLINE' },
   { pattern: /caseta|peaje|toll/i, category: 'TOLLS' },
   { pattern: /relojero|watchmaker|servicio reloj/i, category: 'WATCHMAKER' },
   { pattern: /estacionamiento|parking/i, category: 'PARKING' },
   { pattern: /comida|cena|almuerzo|restaurante|meals?/i, category: 'MEALS' },
   { pattern: /vuelo|avion|airline|flight/i, category: 'FLIGHTS' },
-  { pattern: /viaje|hotel|uber|taxi|travel/i, category: 'TRAVEL' },
-  { pattern: /marketing|publicidad|ads?/i, category: 'MARKETING' },
-  { pattern: /comision|commission/i, category: 'COMMISSIONS' },
+  { pattern: /viaje|hotel|uber|taxi|travel|viaticos|viáticos|chofer/i, category: 'TRAVEL' },
+  { pattern: /marketing|publicidad|pauta|ads?/i, category: 'MARKETING' },
+  { pattern: /comision|comisión|commission/i, category: 'COMMISSIONS' },
   { pattern: /banco|comision banc|bank fee/i, category: 'BANK_FEES' },
 ];
 
