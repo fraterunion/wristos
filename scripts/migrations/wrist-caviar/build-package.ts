@@ -25,6 +25,7 @@ import {
 } from './rules';
 import { generateHumanReview } from './generate-human-review';
 import { generateSalesReconciliation } from './generate-sales-reconciliation';
+import { writeExpenseCategoryAudit, writePartnerClassificationAudit } from './generate-audits';
 
 export type CanonicalCandidate = {
   sourceCandidateId: string;
@@ -642,6 +643,7 @@ export async function buildPackage(params: {
       entryAmount: row.entryAmount,
       exitAmount: row.exitAmount,
       classification: row.classification,
+      concept: row.concept,
     });
     const applied: RuleAudit[] = [];
     let disposition: Disposition =
@@ -864,12 +866,19 @@ export async function buildPackage(params: {
     outDir: baseDir,
     fingerprintPrefix: fpPrefix,
     candidates,
+    analysis: reviewed,
   });
   const salesRecon = generateSalesReconciliation({
     outDir: baseDir,
     fingerprintPrefix: fpPrefix,
     candidates,
     includeSensitiveTotals: true,
+  });
+  writeExpenseCategoryAudit({ outDir: baseDir, candidates });
+  writePartnerClassificationAudit({
+    outDir: baseDir,
+    analysis: reviewed,
+    candidates,
   });
 
   safeLog('wrist_caviar_package_built', {
@@ -879,6 +888,7 @@ export async function buildPackage(params: {
     conflictCount: dispositionCounts.CONFLICT,
     humanDecisions: human.decisionCount,
     salesAccounted: salesRecon.allAccounted,
+    unmappedConflicts: human.unmappedConflicts.length,
   });
 
   return {

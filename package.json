@@ -20,6 +20,7 @@
     "migrate:wrist-caviar:build": "tsx scripts/migrations/wrist-caviar/cli.ts build",
     "migrate:wrist-caviar:validate": "tsx scripts/migrations/wrist-caviar/cli.ts validate",
     "migrate:wrist-caviar:dry-run": "tsx scripts/migrations/wrist-caviar/cli.ts dry-run",
+    "migrate:wrist-caviar:apply-resolutions": "tsx scripts/migrations/wrist-caviar/cli.ts apply-resolutions",
     "migrate:wrist-caviar:execute": "tsx scripts/migrations/wrist-caviar/cli.ts execute",
     "migrate:wrist-caviar:reconcile": "tsx scripts/migrations/wrist-caviar/cli.ts reconcile"
   },

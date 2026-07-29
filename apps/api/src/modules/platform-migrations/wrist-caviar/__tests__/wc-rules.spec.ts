@@ -142,12 +142,13 @@ describe('wrist-caviar deterministic rules', () => {
     expect(r.patch).toBeNull();
   });
 
-  it('19. partner entry/exit deterministic', () => {
+  it('19. partner entry/exit deterministic for plain concepts', () => {
     expect(
       classifyPartnerMovement({
         entryAmount: 100,
         exitAmount: null,
         classification: 'UNCLASSIFIED',
+        concept: 'aportacion cesar',
       }).classification,
     ).toBe('CONTRIBUTION');
     expect(
@@ -155,12 +156,73 @@ describe('wrist-caviar deterministic rules', () => {
         entryAmount: null,
         exitAmount: 40,
         classification: 'UNCLASSIFIED',
+        concept: 'retiro',
       }).classification,
     ).toBe('WITHDRAWAL');
   });
 
+  it('19b. suspicious partner concepts do not classify by sign alone', () => {
+    expect(
+      classifyPartnerMovement({
+        entryAmount: 100,
+        exitAmount: null,
+        classification: 'UNCLASSIFIED',
+        concept: 'ANTICIPO SANTOS',
+      }).classification,
+    ).toBe('UNCLASSIFIED');
+    expect(
+      classifyPartnerMovement({
+        entryAmount: null,
+        exitAmount: 50,
+        classification: 'UNCLASSIFIED',
+        concept: 'PAGO PRESTAMO CESAR',
+      }).classification,
+    ).toBe('UNCLASSIFIED');
+    expect(
+      classifyPartnerMovement({
+        entryAmount: 10,
+        exitAmount: null,
+        classification: 'UNCLASSIFIED',
+        concept: 'UTILIDAD GMT',
+      }).classification,
+    ).toBe('UNCLASSIFIED');
+  });
+
+  it('19c. explicit compra/gasto/venta partner rules', () => {
+    expect(
+      classifyPartnerMovement({
+        entryAmount: null,
+        exitAmount: 100,
+        classification: 'UNCLASSIFIED',
+        concept: 'COMPRA HUBLOT',
+      }).classification,
+    ).toBe('WITHDRAWAL');
+    expect(
+      classifyPartnerMovement({
+        entryAmount: null,
+        exitAmount: 20,
+        classification: 'UNCLASSIFIED',
+        concept: 'gasto miami',
+      }).classification,
+    ).toBe('WITHDRAWAL');
+    expect(
+      classifyPartnerMovement({
+        entryAmount: 42,
+        exitAmount: null,
+        classification: 'UNCLASSIFIED',
+        concept: 'venta de correas',
+      }).classification,
+    ).toBe('CONTRIBUTION');
+  });
+
   it('20. expense label normalize', () => {
     expect(normalizeExpenseLabel('  Gas olina  ')).toBe('gas olina');
+  });
+
+  it('20b. specific category alias reduces OTHER safely', () => {
+    expect(resolveExpenseCategory('correa ap').category).toBe('WATCHMAKER');
+    expect(resolveExpenseCategory('gastos colombia').category).toBe('TRAVEL');
+    expect(resolveExpenseCategory('vegas').category).toBe('TRAVEL');
   });
 
   it('21. polluted serial nullified', () => {

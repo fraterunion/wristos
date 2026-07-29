@@ -43,20 +43,58 @@ export const EXPENSE_ALIAS_TABLE: Record<
   'comisión jaziel': { destinationCategory: 'COMMISSIONS', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'named commission alias' },
   'comision jaziel': { destinationCategory: 'COMMISSIONS', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'named commission alias' },
   internet: { destinationCategory: 'BANK_FEES', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'ops fee treated as bank/ops fee alias in workbook' },
+  'ruben ajuste reloj': {
+    destinationCategory: 'WATCHMAKER',
+    ruleId: 'WC_EXPENSE_ALIAS_MAP',
+    reason: 'watchmaker adjustment label',
+  },
+  'correa ap': {
+    destinationCategory: 'WATCHMAKER',
+    ruleId: 'WC_EXPENSE_ALIAS_MAP',
+    reason: 'watch strap service/parts',
+  },
+  pila: { destinationCategory: 'WATCHMAKER', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'watch battery' },
+  'caja rolex': {
+    destinationCategory: 'WATCHMAKER',
+    ruleId: 'WC_EXPENSE_ALIAS_MAP',
+    reason: 'watch case/box related service',
+  },
+  acapulco: { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'trip location expense' },
+  vegas: { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'trip location expense' },
+  colombia: { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'trip location expense' },
+  'gastos colombia': {
+    destinationCategory: 'TRAVEL',
+    ruleId: 'WC_EXPENSE_ALIAS_MAP',
+    reason: 'trip location expense',
+  },
+  'gasto miami': { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'trip location expense' },
+  'gasto cartagena': {
+    destinationCategory: 'TRAVEL',
+    ruleId: 'WC_EXPENSE_ALIAS_MAP',
+    reason: 'trip location expense',
+  },
+  'gasto qro': { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'trip location expense' },
+  'guia dary': { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'shipping guide expense' },
+  guia: { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'shipping guide expense' },
 };
 
 export const EXPENSE_CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /gasolin|combustible|pemex|^gas$|gas\s+y\s+envio|gasolibna/i, category: 'GASOLINE' },
   { pattern: /caseta|peaje|toll/i, category: 'TOLLS' },
-  { pattern: /relojero|watchmaker|pulida|eslabon|eslabón|servicio reloj|guia reloj|guía reloj/i, category: 'WATCHMAKER' },
+  { pattern: /relojero|watchmaker|pulida|eslabon|eslabón|servicio reloj|guia reloj|guía reloj|ajuste reloj|correa|\bpila\b|caja rolex/i, category: 'WATCHMAKER' },
   { pattern: /estacionamiento|parking/i, category: 'PARKING' },
   { pattern: /comida|cena|almuerzo|desayuno|restaurante|meals?|subway|vino\b/i, category: 'MEALS' },
   { pattern: /vuelo|vuelos|avion|avión|airline|flight/i, category: 'FLIGHTS' },
-  { pattern: /viaje|hotel|uber|taxi|travel|viaticos|viáticos|viatico|chofer|aeropuerto/i, category: 'TRAVEL' },
+  { pattern: /viaje|hotel|uber|taxi|travel|viaticos|viáticos|viatico|chofer|aeropuerto|\bguia\b|\bguía\b/i, category: 'TRAVEL' },
   { pattern: /marketing|publicidad|pauta|instagram|\bads?\b/i, category: 'MARKETING' },
   { pattern: /comision|comisión|commission/i, category: 'COMMISSIONS' },
   { pattern: /banco|comision banc|bank fee|spei|transfer fee/i, category: 'BANK_FEES' },
   { pattern: /dhl|envio|envío|fedex|ups\b/i, category: 'TRAVEL' },
+  {
+    pattern:
+      /gastos?\s+(colombia|miami|qro|gdl|mty|cartagena|angeles|cancun|acapulco|vegas)|^(acapulco|vegas|colombia|miami|cartagena|cancun|los angeles)$/i,
+    category: 'TRAVEL',
+  },
 ];
 
 export function normalizeExpenseLabel(concept: string): string {

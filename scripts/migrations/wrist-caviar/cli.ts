@@ -22,7 +22,9 @@ async function main() {
 
   if (!command || command === 'help') {
     // eslint-disable-next-line no-console
-    console.log(`Commands: analyze | build | validate | dry-run | execute | reconcile`);
+    console.log(
+      `Commands: analyze | build | validate | dry-run | apply-resolutions | execute | reconcile`,
+    );
     process.exit(0);
   }
 
@@ -113,6 +115,22 @@ async function main() {
     if (JSON.stringify(before) !== JSON.stringify(after)) {
       throw new Error('Dry-run mutated operational counts — abort');
     }
+    return;
+  }
+
+  if (command === 'apply-resolutions') {
+    const pkg = requireArg(args, 'package');
+    const resolutions = requireArg(args, 'resolutions');
+    const workbook = requireArg(args, 'workbook');
+    const tenantId = requireArg(args, 'tenant-id');
+    const { applyFinalResolutions } = await import('./apply-resolutions');
+    await applyFinalResolutions({
+      packageDir: pkg,
+      resolutionsPath: resolutions,
+      workbookPath: workbook,
+      tenantId,
+      dryRunTenant: true,
+    });
     return;
   }
 
