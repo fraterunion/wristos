@@ -57,6 +57,16 @@ export type SalesOverTimePoint = {
   count: number;
 };
 
+export type CashFlowSummaryPoint = {
+  period: AnalyticsPeriod;
+  periodLabel: string;
+  periodStart: string;
+  periodEndExclusive: string;
+  inflows: string;
+  outflows: string;
+  net: string;
+};
+
 export type InventoryByBrandPoint = {
   brand: string;
   count: number;

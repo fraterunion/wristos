@@ -35,6 +35,7 @@ import { getFxUsdMxn, type FxRateResult } from '@/lib/fx-api';
 import {
   AnalyticsPeriod,
   AnalyticsSummary,
+  CashFlowSummaryPoint,
   RevenueOverTimePoint,
   SalesOverTimePoint,
 } from '@/types/domain';
@@ -254,17 +255,31 @@ function FinancialPositionHero({
     },
     {
       label: 'Capital invertido',
-      value: capitalContributed !== null ? fmtMxn(investedCapital) : '—',
-      helper: 'Aportado por socios',
+      value:
+        capitalContributed !== null && investedCapital > 0
+          ? fmtMxn(investedCapital)
+          : capitalContributed !== null
+            ? 'Sin aportaciones'
+            : '—',
+      helper:
+        capitalContributed !== null && investedCapital <= 0
+          ? 'Datos de aportaciones pendientes'
+          : 'Aportado por socios',
       group: 'partners',
       iconBubbleClass: 'bg-emerald-500/15 text-emerald-400',
-      tone: capitalContributed !== null && investedCapital > 0 ? 'positive' : 'muted',
+      tone:
+        capitalContributed !== null && investedCapital > 0
+          ? 'positive'
+          : 'muted',
       Icon: TrendingUp,
     },
     {
       label: 'ROI',
-      value: roi !== null ? fmtRoiPct(roi) : '—',
-      helper: 'Retorno sobre capital',
+      value: roi !== null ? fmtRoiPct(roi) : 'No disponible',
+      helper:
+        roi !== null
+          ? 'Retorno sobre capital'
+          : 'Sin aportaciones registradas',
       group: 'performance',
       valueType: 'percentage',
       iconBubbleClass: 'bg-purple-500/15 text-purple-400',
@@ -278,7 +293,10 @@ function FinancialPositionHero({
     {
       label: 'Capital neto',
       value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
-      helper: 'Patrimonio neto',
+      helper:
+        capitalContributed !== null && investedCapital <= 0
+          ? 'Patrimonio · aportaciones pendientes'
+          : 'Patrimonio neto',
       group: 'performance',
       iconBubbleClass: 'bg-cyan-500/15 text-cyan-400',
       tone:
@@ -354,6 +372,14 @@ function FinancialPositionHero({
           />
         ))}
       </div>
+      {capitalContributed !== null && investedCapital <= 0 ? (
+        <div className="relative border-t border-amber-400/15 bg-amber-500/[0.06] px-4 py-2.5 md:px-5">
+          <p className="text-[11px] font-medium text-amber-200/90">
+            Datos de aportaciones pendientes — Capital invertido y ROI no están disponibles hasta
+            registrar aportaciones de socios.
+          </p>
+        </div>
+      ) : null}
 
       <div className="relative border-t border-white/[0.04]">
         <div
@@ -490,32 +516,54 @@ function BusinessSnapshot({
   );
 }
 
-function CashFlowSummary({ summary }: { summary: AnalyticsSummary }) {
-  const entradas =
-    num(summary.cashBalance) + num(summary.bankBalance) + num(summary.cesarBalance);
-  const salidas = num(summary.costOfSoldThisMonth) + num(summary.bankFeesThisMonth);
-  const balance = entradas - salidas;
+function CashFlowSummary({
+  cashFlow,
+  period,
+}: {
+  cashFlow: CashFlowSummaryPoint | null;
+  period: AnalyticsPeriod;
+}) {
+  const periodTitle =
+    period === 'week' ? 'semana actual' : period === 'year' ? 'año actual' : 'mes actual';
+
+  if (!cashFlow) {
+    return (
+      <div className="flex h-full flex-col">
+        <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
+          Flujo de caja — {periodTitle}
+        </h4>
+        <p className="mt-6 text-sm text-white/30">Cargando movimientos de tesorería…</p>
+      </div>
+    );
+  }
+
+  const entradas = num(cashFlow.inflows);
+  const salidas = num(cashFlow.outflows);
+  const balance = num(cashFlow.net);
 
   return (
     <div className="flex h-full flex-col">
       <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
-        Flujo de caja (este mes)
+        Flujo de caja — {cashFlow.periodLabel || periodTitle}
       </h4>
+      <p className="mt-1 text-[10px] text-white/25">
+        Movimientos Treasury (Efectivo + Bancos + César) del periodo — distinto de liquidez actual.
+      </p>
       <div className="mt-5 flex flex-1 flex-col justify-center gap-5">
         <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] pb-4">
-          <span className="text-sm text-white/45">Entradas</span>
+          <span className="text-sm text-white/45">Entradas del periodo</span>
           <span className="text-xl font-semibold tabular-nums text-emerald-400">
             {fmtMxn(entradas)}
           </span>
         </div>
         <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.06] pb-4">
-          <span className="text-sm text-white/45">Salidas</span>
+          <span className="text-sm text-white/45">Salidas del periodo</span>
           <span className="text-xl font-semibold tabular-nums text-rose-400">
             {fmtMxn(salidas)}
           </span>
         </div>
         <div className="flex items-baseline justify-between gap-4">
-          <span className="text-sm font-medium text-white/60">Balance</span>
+          <span className="text-sm font-medium text-white/60">Balance neto del periodo</span>
           <span
             className={`text-2xl font-semibold tabular-nums ${
               balance >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -526,7 +574,7 @@ function CashFlowSummary({ summary }: { summary: AnalyticsSummary }) {
         </div>
       </div>
       <p className="mt-4 text-[10px] leading-relaxed text-white/20">
-        Salidas estimadas: costo vendido + comisiones bancarias del mes.
+        Entradas = Σ amountMxn INFLOW · Salidas = Σ amountMxn OUTFLOW · sin COGS ni saldos actuales.
       </p>
     </div>
   );
@@ -652,6 +700,7 @@ export default function DashboardPage() {
   const [period, setPeriod] = useState<AnalyticsPeriod>('month');
   const [revenueSeries, setRevenueSeries] = useState<RevenueOverTimePoint[]>([]);
   const [salesSeries, setSalesSeries] = useState<SalesOverTimePoint[]>([]);
+  const [cashFlow, setCashFlow] = useState<CashFlowSummaryPoint | null>(null);
   const [chartLoading, setChartLoading] = useState(true);
 
   const [capitalSummary, setCapitalSummary] = useState<CapitalSummary | null>(null);
@@ -708,7 +757,7 @@ export default function DashboardPage() {
     const fetchChartData = async () => {
       setChartLoading(true);
       try {
-        const [revenueData, salesData] = await Promise.all([
+        const [revenueData, salesData, cashFlowData] = await Promise.all([
           apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
             authenticated: true,
             query: { period },
@@ -717,12 +766,18 @@ export default function DashboardPage() {
             authenticated: true,
             query: { period },
           }),
+          apiGet<CashFlowSummaryPoint>('/analytics/cash-flow', {
+            authenticated: true,
+            query: { period },
+          }),
         ]);
         setRevenueSeries(revenueData);
         setSalesSeries(salesData);
+        setCashFlow(cashFlowData);
       } catch {
         setRevenueSeries([]);
         setSalesSeries([]);
+        setCashFlow(null);
       } finally {
         setChartLoading(false);
       }
@@ -839,6 +894,13 @@ export default function DashboardPage() {
             <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
               {chartLoading ? (
                 <div className="h-full animate-pulse rounded-lg bg-white/10" />
+              ) : revenueSeries.every((p) => num(p.revenue) === 0) ? (
+                <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-white/10 px-4 text-center">
+                  <p className="text-sm text-white/45">Sin ventas en el periodo</p>
+                  <p className="mt-1 text-[11px] text-white/25">
+                    No hay deals CLOSED_WON con fecha de venta en este rango.
+                  </p>
+                </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={revenueSeries}>
@@ -919,7 +981,7 @@ export default function DashboardPage() {
           </article>
 
           <article className="ui-card min-h-[320px]">
-            <CashFlowSummary summary={data.summary} />
+            <CashFlowSummary cashFlow={cashFlow} period={period} />
           </article>
         </div>
       </section>

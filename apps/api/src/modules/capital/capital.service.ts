@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { CapitalAccount, DealStage, OperatingExpenseCategory, Prisma } from '@prisma/client';
+import { CapitalAccount, DealStage, Prisma } from '@prisma/client';
 import {
   dealEffectiveSaleDateRangeWhere,
   effectiveSaleDate,
@@ -59,7 +59,7 @@ export class CapitalService {
   // ─── Summary ─────────────────────────────────────────────────────────────────
 
   async getSummary(tenantId: string) {
-    const [soldDeals, bankFeeAgg, investors] = await Promise.all([
+    const [soldDeals, bankCommissionAgg, investors] = await Promise.all([
       this.prisma.deal.findMany({
         where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
         select: {
@@ -68,9 +68,15 @@ export class CapitalService {
           watch: { select: { cost: true, expenses: { select: { amount: true } } } },
         },
       }),
-      this.prisma.operatingExpense.aggregate({
-        where: { tenantId, category: OperatingExpenseCategory.BANK_FEES },
-        _sum: { amount: true },
+      // All-time structured bank commissions (same all-time scope as revenue/COGS).
+      this.prisma.treasuryEntry.aggregate({
+        where: {
+          tenantId,
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+        },
+        _sum: { commission: true },
       }),
       this.prisma.investor.findMany({
         where: { tenantId, deletedAt: null },
@@ -96,7 +102,7 @@ export class CapitalService {
       );
       return sum.plus(d.watch.cost ?? 0).plus(expSum);
     }, new Prisma.Decimal(0));
-    const totalBankFees = bankFeeAgg._sum.amount ?? new Prisma.Decimal(0);
+    const totalBankFees = bankCommissionAgg._sum.commission ?? new Prisma.Decimal(0);
     const totalBusinessProfit = totalRevenue.minus(totalCostOfSold).minus(totalBankFees);
 
     let totalCapitalContributed = new Prisma.Decimal(0);
@@ -137,12 +143,17 @@ export class CapitalService {
       .plus(totalBusinessProfit)
       .minus(totalDistributionsPaid);
 
+    const contributionsIncomplete = totalCapitalContributed.lte(0);
+
     return {
       totalCapitalContributed: totalCapitalContributed.toFixed(2),
       totalBusinessProfit: totalBusinessProfit.toFixed(2),
+      totalBankCommissions: totalBankFees.toFixed(2),
       totalDistributionsPaid: totalDistributionsPaid.toFixed(2),
       totalPendingToPartners: totalPendingToPartners.toFixed(2),
       capitalNeto: capitalNeto.toFixed(2),
+      contributionsIncomplete,
+      roiAvailable: !contributionsIncomplete,
       investors: investorRows,
     };
   }
@@ -151,7 +162,7 @@ export class CapitalService {
     const yearStart = new Date(Date.UTC(year, 0, 1));
     const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
 
-    const [soldDeals, bankFees, distributions, investors] = await Promise.all([
+    const [soldDeals, bankCommissions, distributions, investors] = await Promise.all([
       this.prisma.deal.findMany({
         where: {
           tenantId,
@@ -168,13 +179,15 @@ export class CapitalService {
           watch: { select: { cost: true, expenses: { select: { amount: true } } } },
         },
       }),
-      this.prisma.operatingExpense.findMany({
+      this.prisma.treasuryEntry.findMany({
         where: {
           tenantId,
-          category: OperatingExpenseCategory.BANK_FEES,
-          expenseDate: { gte: yearStart, lt: yearEnd },
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+          transactionDate: { gte: yearStart, lt: yearEnd },
         },
-        select: { amount: true, expenseDate: true },
+        select: { commission: true, transactionDate: true },
       }),
       this.prisma.investorDistribution.findMany({
         where: {
@@ -225,9 +238,9 @@ export class CapitalService {
       }
     }
 
-    for (const fee of bankFees) {
-      const monthIdx = fee.expenseDate.getUTCMonth();
-      buckets[monthIdx].bankFees = buckets[monthIdx].bankFees.plus(fee.amount);
+    for (const fee of bankCommissions) {
+      const monthIdx = fee.transactionDate.getUTCMonth();
+      buckets[monthIdx].bankFees = buckets[monthIdx].bankFees.plus(fee.commission ?? 0);
     }
 
     for (const distribution of distributions) {
@@ -488,7 +501,7 @@ export class CapitalService {
   }
 
   private async computeBusinessProfit(tenantId: string): Promise<Prisma.Decimal> {
-    const [soldDeals, bankFeeAgg] = await Promise.all([
+    const [soldDeals, bankCommissionAgg] = await Promise.all([
       this.prisma.deal.findMany({
         where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON },
         select: {
@@ -497,9 +510,14 @@ export class CapitalService {
           watch: { select: { cost: true, expenses: { select: { amount: true } } } },
         },
       }),
-      this.prisma.operatingExpense.aggregate({
-        where: { tenantId, category: OperatingExpenseCategory.BANK_FEES },
-        _sum: { amount: true },
+      this.prisma.treasuryEntry.aggregate({
+        where: {
+          tenantId,
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+        },
+        _sum: { commission: true },
       }),
     ]);
     const totalRevenue = soldDeals.reduce(
@@ -516,7 +534,7 @@ export class CapitalService {
       );
       return sum.plus(d.watch.cost ?? 0).plus(expSum);
     }, new Prisma.Decimal(0));
-    const totalBankFees = bankFeeAgg._sum.amount ?? new Prisma.Decimal(0);
+    const totalBankFees = bankCommissionAgg._sum.commission ?? new Prisma.Decimal(0);
     return totalRevenue.minus(totalCostOfSold).minus(totalBankFees);
   }
 
