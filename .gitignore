@@ -39,3 +39,4 @@ RELOJES CESAR ADMIN.xlsx
 # Playwright screenshots (optional local artifacts)
 # apps/admin/e2e/screenshots*/
 apps/admin/test-results/
+apps/api/.local/
