@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { OperatingExpense, OperatingExpenseCategory, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { structuredBankCommissionWhere } from '../treasury/migration-bank-commission';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { ListExpensesDto } from './dto/list-expenses.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
@@ -75,16 +76,16 @@ export class ExpensesService {
       select: { category: true, amount: true },
     });
 
+    // Operativos = all non-COMMISSIONS OpEx (includes any residual BANK_FEES OpEx).
+    // Sales commissions = COMMISSIONS only.
+    // Bank commissions = structured TreasuryEntry.commission (Control Bancos) — never OpEx BANK_FEES.
     let totalOperating = 0;
     let totalCommissions = 0;
-    let totalBankFees = 0;
     const byCategory: Record<string, { total: number; count: number }> = {};
 
     for (const row of rows) {
       const amt = Number(row.amount);
-      if (row.category === OperatingExpenseCategory.BANK_FEES) {
-        totalBankFees += amt;
-      } else if (row.category === OperatingExpenseCategory.COMMISSIONS) {
+      if (row.category === OperatingExpenseCategory.COMMISSIONS) {
         totalCommissions += amt;
       } else {
         totalOperating += amt;
@@ -96,19 +97,57 @@ export class ExpensesService {
       byCategory[row.category].count += 1;
     }
 
+    const treasuryDateFilter = this.buildTreasuryDateFilter(query);
+    const bankWhere = structuredBankCommissionWhere(tenantId, treasuryDateFilter);
+    const [bankSum, bankCount] = await Promise.all([
+      this.prisma.treasuryEntry.aggregate({
+        where: bankWhere,
+        _sum: { commission: true },
+      }),
+      this.prisma.treasuryEntry.count({ where: bankWhere }),
+    ]);
+
+    const totalBankFees = Number(bankSum._sum.commission ?? 0);
     const totalSpend = totalOperating + totalCommissions + totalBankFees;
 
     const categorySummary = Object.entries(byCategory)
+      .filter(([cat]) => cat !== OperatingExpenseCategory.BANK_FEES)
       .map(([cat, data]) => ({
         category: cat,
         total: data.total.toFixed(2),
         count: data.count,
         percentage: totalSpend > 0 ? ((data.total / totalSpend) * 100).toFixed(1) : '0.0',
-        isCommission:
-          cat === OperatingExpenseCategory.COMMISSIONS ||
-          cat === OperatingExpenseCategory.BANK_FEES,
-      }))
-      .sort((a, b) => Number(b.total) - Number(a.total));
+        isCommission: cat === OperatingExpenseCategory.COMMISSIONS,
+        sourceLabel: undefined as string | undefined,
+      }));
+
+    // Residual OpEx BANK_FEES (should be 0 after internet reclass) fold into operating bars.
+    const residualBankFees = byCategory[OperatingExpenseCategory.BANK_FEES];
+    if (residualBankFees && residualBankFees.total > 0) {
+      categorySummary.push({
+        category: OperatingExpenseCategory.BANK_FEES,
+        total: residualBankFees.total.toFixed(2),
+        count: residualBankFees.count,
+        percentage:
+          totalSpend > 0 ? ((residualBankFees.total / totalSpend) * 100).toFixed(1) : '0.0',
+        isCommission: false,
+        sourceLabel: undefined,
+      });
+    }
+
+    // Synthetic Bancos row from Treasury structured commissions.
+    if (bankCount > 0 || totalBankFees > 0) {
+      categorySummary.push({
+        category: 'TREASURY_BANK_COMMISSIONS',
+        total: totalBankFees.toFixed(2),
+        count: bankCount,
+        percentage: totalSpend > 0 ? ((totalBankFees / totalSpend) * 100).toFixed(1) : '0.0',
+        isCommission: true,
+        sourceLabel: 'Fuente: Control Bancos',
+      });
+    }
+
+    categorySummary.sort((a, b) => Number(b.total) - Number(a.total));
 
     const biggestCategory =
       categorySummary.length > 0 ? categorySummary[0].category : null;
@@ -117,11 +156,51 @@ export class ExpensesService {
       totalOperatingExpenses: totalOperating.toFixed(2),
       totalCommissions: totalCommissions.toFixed(2),
       totalBankFees: totalBankFees.toFixed(2),
+      bankCommissionsAllTime: totalBankFees.toFixed(2),
+      bankCommissionMovementCountAllTime: bankCount,
       totalSpend: totalSpend.toFixed(2),
       expenseCount: rows.length,
       biggestCategory,
       byCategory: categorySummary,
     };
+  }
+
+  private buildTreasuryDateFilter(
+    query: ListExpensesDto,
+  ): { gte?: Date; lte?: Date } | undefined {
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    let has = false;
+
+    if (query.startDate) {
+      dateFilter.gte = new Date(query.startDate);
+      has = true;
+    }
+    if (query.endDate) {
+      const end = new Date(query.endDate);
+      end.setUTCHours(23, 59, 59, 999);
+      dateFilter.lte = end;
+      has = true;
+    }
+
+    if (query.year && !query.startDate && !query.endDate) {
+      const y = parseInt(query.year, 10);
+      const m = query.month ? parseInt(query.month, 10) - 1 : null;
+      const d = query.day ? parseInt(query.day, 10) : null;
+
+      if (d !== null && m !== null) {
+        dateFilter.gte = new Date(Date.UTC(y, m, d));
+        dateFilter.lte = new Date(Date.UTC(y, m, d, 23, 59, 59, 999));
+      } else if (m !== null) {
+        dateFilter.gte = new Date(Date.UTC(y, m, 1));
+        dateFilter.lte = new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999));
+      } else {
+        dateFilter.gte = new Date(Date.UTC(y, 0, 1));
+        dateFilter.lte = new Date(Date.UTC(y, 11, 31, 23, 59, 59, 999));
+      }
+      has = true;
+    }
+
+    return has ? dateFilter : undefined;
   }
 
   private buildWhere(tenantId: string, query: ListExpensesDto): Prisma.OperatingExpenseWhereInput {

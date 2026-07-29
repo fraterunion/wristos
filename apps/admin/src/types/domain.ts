@@ -22,6 +22,11 @@ export type AnalyticsSummary = {
   salesThisMonthRevenue: string;
   costOfSoldThisMonth: string;
   bankFeesThisMonth: string;
+  /** Structured Treasury bank commissions for the current calendar month. */
+  bankCommissionsThisMonth: string;
+  bankCommissionMovementCountThisMonth: number;
+  bankCommissionsAllTime: string;
+  bankCommissionMovementCountAllTime: number;
   profitThisMonth: string;
 };
 
@@ -329,12 +334,15 @@ export type ExpenseCategorySummary = {
   count: number;
   percentage: string;
   isCommission: boolean;
+  sourceLabel?: string;
 };
 
 export type ExpensesSummary = {
   totalOperatingExpenses: string;
   totalCommissions: string;
   totalBankFees: string;
+  bankCommissionsAllTime?: string;
+  bankCommissionMovementCountAllTime?: number;
   totalSpend: string;
   expenseCount: number;
   biggestCategory: string | null;

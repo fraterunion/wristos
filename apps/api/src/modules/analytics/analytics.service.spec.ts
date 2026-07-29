@@ -84,6 +84,10 @@ function makePrisma(watches: FakeWatch[]) {
       aggregate: jest.fn(async () => ({ _sum: { amount: null } })),
       findMany: jest.fn(async () => []),
     },
+    treasuryEntry: {
+      aggregate: jest.fn(async () => ({ _sum: { commission: null } })),
+      count: jest.fn(async () => 0),
+    },
   };
 }
 

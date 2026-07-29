@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
   DealStage,
-  OperatingExpenseCategory,
   PaymentStatus,
   Prisma,
   WatchOwnershipType,
@@ -125,7 +124,10 @@ export class AnalyticsService {
       salesThisMonthCountAgg,
       salesThisMonthRevenueAgg,
       dealsThisMonth,
-      bankFeesThisMonthAgg,
+      bankCommissionsThisMonthAgg,
+      bankCommissionMovementCountThisMonth,
+      bankCommissionsAllTimeAgg,
+      bankCommissionMovementCountAllTime,
     ] = await Promise.all([
       this.prisma.watch.count({ where: watchWhere }),
       this.prisma.watch.count({ where: { ...watchWhere, status: WatchStatus.AVAILABLE } }),
@@ -199,14 +201,42 @@ export class AnalyticsService {
           },
         },
       }),
-      // ── Bank fees this month ──────────────────────────────────────────────
-      this.prisma.operatingExpense.aggregate({
+      // ── Bank commissions this month (structured TreasuryEntry.commission) ──
+      this.prisma.treasuryEntry.aggregate({
         where: {
           tenantId,
-          category: OperatingExpenseCategory.BANK_FEES,
-          expenseDate: { gte: monthStart },
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+          transactionDate: { gte: monthStart, lt: nextMonthStart },
         },
-        _sum: { amount: true },
+        _sum: { commission: true },
+      }),
+      this.prisma.treasuryEntry.count({
+        where: {
+          tenantId,
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+          transactionDate: { gte: monthStart, lt: nextMonthStart },
+        },
+      }),
+      this.prisma.treasuryEntry.aggregate({
+        where: {
+          tenantId,
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+        },
+        _sum: { commission: true },
+      }),
+      this.prisma.treasuryEntry.count({
+        where: {
+          tenantId,
+          account: 'BANK',
+          deletedAt: null,
+          commission: { gt: 0 },
+        },
       }),
     ]);
 
@@ -261,11 +291,14 @@ export class AnalyticsService {
       return sum + watchCost + expenseSum;
     }, 0);
 
-    const bankFeesThisMonthDecimal = bankFeesThisMonthAgg._sum.amount ?? zero;
+    const bankCommissionsThisMonthDecimal =
+      bankCommissionsThisMonthAgg._sum.commission ?? zero;
+    const bankCommissionsAllTimeDecimal =
+      bankCommissionsAllTimeAgg._sum.commission ?? zero;
 
     const profitThisMonth = salesThisMonthRevenue
       .minus(new Prisma.Decimal(costOfSoldThisMonth))
-      .minus(bankFeesThisMonthDecimal);
+      .minus(bankCommissionsThisMonthDecimal);
 
     return {
       // ── Existing fields (backwards-compatible) ──────────────────────────────
@@ -298,8 +331,13 @@ export class AnalyticsService {
       salesThisMonthCount:   salesThisMonthCountAgg,
       salesThisMonthRevenue: salesThisMonthRevenue.toString(),
       costOfSoldThisMonth:   costOfSoldThisMonth.toFixed(2),
-      bankFeesThisMonth:     bankFeesThisMonthDecimal.toString(),
-      profitThisMonth:       profitThisMonth.toString(),
+      // bankFeesThisMonth kept for backwards compat — now Treasury commissions.
+      bankFeesThisMonth: bankCommissionsThisMonthDecimal.toFixed(2),
+      bankCommissionsThisMonth: bankCommissionsThisMonthDecimal.toFixed(2),
+      bankCommissionMovementCountThisMonth,
+      bankCommissionsAllTime: bankCommissionsAllTimeDecimal.toFixed(2),
+      bankCommissionMovementCountAllTime,
+      profitThisMonth: profitThisMonth.toString(),
     };
   }
 

@@ -473,9 +473,13 @@ function BusinessSnapshot({
           tone={profit >= 0 ? 'positive' : 'negative'}
         />
         <SnapshotCard
-          label="Comisiones bancarias"
-          value={fmtMxn(summary.bankFeesThisMonth)}
-          tone={num(summary.bankFeesThisMonth) > 0 ? 'negative' : 'default'}
+          label="Comisiones bancarias — mes actual"
+          value={fmtMxn(summary.bankCommissionsThisMonth ?? summary.bankFeesThisMonth)}
+          tone={
+            num(summary.bankCommissionsThisMonth ?? summary.bankFeesThisMonth) > 0
+              ? 'negative'
+              : 'default'
+          }
         />
         <SnapshotCard
           label="Relojes disponibles"
