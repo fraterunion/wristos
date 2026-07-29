@@ -32,3 +32,7 @@ coverage/
 # Local Wrist Caviar maestro workbook — never commit
 RELOJES CESAR ADMIN.xlsx
 **/RELOJES CESAR ADMIN.xlsx
+
+# Playwright screenshots (optional local artifacts)
+# apps/admin/e2e/screenshots*/
+apps/admin/test-results/

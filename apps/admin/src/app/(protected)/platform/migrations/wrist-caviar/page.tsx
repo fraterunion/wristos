@@ -5,8 +5,9 @@ import { FormEvent, useMemo, useState } from 'react';
 import { useAuthContext } from '@/lib/auth-context';
 import { getApiBaseUrl } from '@/lib/api-client';
 import { readSession } from '@/lib/auth-storage';
+import { WristCaviarReviewPanel } from './ReviewPanel';
 
-type Step = 'archivo' | 'analisis' | 'validaciones' | 'conciliacion' | 'preview';
+type Step = 'archivo' | 'analisis' | 'validaciones' | 'conciliacion' | 'preview' | 'revision' | 'aprobacion';
 
 type AnalysisSummary = {
   analysisId: string;
@@ -38,6 +39,8 @@ const STEPS: Array<{ id: Step; label: string }> = [
   { id: 'validaciones', label: '3. Validaciones' },
   { id: 'conciliacion', label: '4. Conciliación' },
   { id: 'preview', label: '5. Vista previa' },
+  { id: 'revision', label: '6. Revisión' },
+  { id: 'aprobacion', label: '7. Aprobación' },
 ];
 
 const PREVIEW_TABS = [
@@ -328,7 +331,33 @@ export default function WristCaviarMigrationPage() {
             >
               Vista previa
             </button>
+            <button
+              type="button"
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs text-white"
+              onClick={() => setStep('revision')}
+            >
+              Ir a revisión
+            </button>
           </div>
+        </section>
+      ) : null}
+
+      {summary && (step === 'revision' || step === 'aprobacion') && tenantId ? (
+        <section data-testid="review-section">
+          <WristCaviarReviewPanel
+            analysisId={summary.analysisId}
+            tenantId={tenantId}
+            onReadinessChange={(r) =>
+              setSummary((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      readiness: r as AnalysisSummary['readiness'],
+                    }
+                  : prev,
+              )
+            }
+          />
         </section>
       ) : null}
 
