@@ -521,6 +521,8 @@ async function createOne(
         amount: new Prisma.Decimal(amount || 0),
         currency: 'MXN',
         amountMxn: new Prisma.Decimal(amount || 0),
+        // Structured commission (source of truth). Description retains token for audit.
+        commission: new Prisma.Decimal(commission),
         transactionDate: parseDate(p.entryDate) ?? new Date('1970-01-01'),
         description: `migration:${item.sourceCandidateId}; commission=${commission}; ref=${p.reference ?? ''}`,
       },
