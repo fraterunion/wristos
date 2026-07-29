@@ -7,13 +7,16 @@ import {
   WatchStatus,
 } from '@prisma/client';
 import {
-  dealEffectiveSaleDateInclusiveRangeWhere,
   dealEffectiveSaleDateRangeWhere,
   effectiveSaleDate,
 } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isSettledHistoricalSaleSnapshot } from '../history/historical-watch-snapshot';
 import { TreasuryService } from '../treasury/treasury.service';
+import {
+  buildCalendarPeriodWindow,
+  getCalendarBucketLabel,
+} from './calendar-period';
 import { AnalyticsPeriod } from './dto/analytics-period.dto';
 
 @Injectable()
@@ -23,31 +26,35 @@ export class AnalyticsService {
     private readonly treasuryService: TreasuryService,
   ) {}
 
+  /**
+   * Sales revenue over time — Deal.agreedPrice by effectiveSaleDate.
+   * Does NOT use Payment rows (migrated historical sales have none).
+   */
   async getRevenueOverTime(tenantId: string, period: AnalyticsPeriod) {
-    const { start, end, labels, bucket, weekBuckets } = this.buildSeriesWindow(period);
-    const rows = await this.prisma.payment.findMany({
+    const { start, endExclusive, labels, bucket, weekBuckets } =
+      buildCalendarPeriodWindow(period);
+
+    const rows = await this.prisma.deal.findMany({
       where: {
         tenantId,
         deletedAt: null,
-        status: PaymentStatus.PAID,
-        paidAt: {
-          not: null,
-          gte: start,
-          lte: end,
-        },
+        stage: DealStage.CLOSED_WON,
+        AND: [dealEffectiveSaleDateRangeWhere(start, endExclusive)],
       },
       select: {
-        amount: true,
-        paidAt: true,
+        agreedPrice: true,
+        soldAt: true,
+        updatedAt: true,
+        createdAt: true,
       },
     });
 
     const sums = new Map<string, number>();
     for (const row of rows) {
-      if (!row.paidAt) continue;
-      const key = this.getBucketLabel(row.paidAt, bucket, weekBuckets);
-      const current = sums.get(key) ?? 0;
-      sums.set(key, current + Number(row.amount));
+      const saleDate = effectiveSaleDate(row);
+      if (saleDate < start || saleDate >= endExclusive) continue;
+      const key = getCalendarBucketLabel(saleDate, bucket, weekBuckets);
+      sums.set(key, (sums.get(key) ?? 0) + Number(row.agreedPrice));
     }
 
     return labels.map((label) => ({
@@ -56,14 +63,19 @@ export class AnalyticsService {
     }));
   }
 
+  /**
+   * Sold-watch counts over time — same Deal population / calendar windows as revenue.
+   */
   async getSalesOverTime(tenantId: string, period: AnalyticsPeriod) {
-    const { start, end, labels, bucket, weekBuckets } = this.buildSeriesWindow(period);
+    const { start, endExclusive, labels, bucket, weekBuckets } =
+      buildCalendarPeriodWindow(period);
+
     const rows = await this.prisma.deal.findMany({
       where: {
         tenantId,
         deletedAt: null,
         stage: DealStage.CLOSED_WON,
-        AND: [dealEffectiveSaleDateInclusiveRangeWhere(start, end)],
+        AND: [dealEffectiveSaleDateRangeWhere(start, endExclusive)],
       },
       select: {
         soldAt: true,
@@ -75,8 +87,8 @@ export class AnalyticsService {
     const counts = new Map<string, number>();
     for (const row of rows) {
       const saleDate = effectiveSaleDate(row);
-      if (saleDate < start || saleDate > end) continue;
-      const key = this.getBucketLabel(saleDate, bucket, weekBuckets);
+      if (saleDate < start || saleDate >= endExclusive) continue;
+      const key = getCalendarBucketLabel(saleDate, bucket, weekBuckets);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
@@ -84,6 +96,45 @@ export class AnalyticsService {
       label,
       count: counts.get(label) ?? 0,
     }));
+  }
+
+  /**
+   * Period Treasury cash flow (CASH + BANK + CESAR).
+   * Uses amountMxn only — commission is already embedded in OUTFLOW amounts and
+   * is informational on INFLOW (gross deposit); never added separately.
+   */
+  async getCashFlow(tenantId: string, period: AnalyticsPeriod) {
+    const { start, endExclusive, periodLabel } = buildCalendarPeriodWindow(period);
+
+    const groups = await this.prisma.treasuryEntry.groupBy({
+      by: ['direction'],
+      where: {
+        tenantId,
+        deletedAt: null,
+        account: { in: ['CASH', 'BANK', 'CESAR'] },
+        transactionDate: { gte: start, lt: endExclusive },
+      },
+      _sum: { amountMxn: true },
+    });
+
+    let inflows = new Prisma.Decimal(0);
+    let outflows = new Prisma.Decimal(0);
+    for (const row of groups) {
+      const sum = row._sum.amountMxn ?? new Prisma.Decimal(0);
+      if (row.direction === 'INFLOW') inflows = inflows.plus(sum);
+      else outflows = outflows.plus(sum);
+    }
+    const net = inflows.minus(outflows);
+
+    return {
+      period,
+      periodLabel,
+      periodStart: start.toISOString(),
+      periodEndExclusive: endExclusive.toISOString(),
+      inflows: inflows.toFixed(2),
+      outflows: outflows.toFixed(2),
+      net: net.toFixed(2),
+    };
   }
 
   async getSummary(tenantId: string) {
@@ -528,128 +579,5 @@ export class AnalyticsService {
     }
 
     return base;
-  }
-
-  private buildSeriesWindow(period: AnalyticsPeriod): {
-    start: Date;
-    end: Date;
-    labels: string[];
-    bucket: 'day' | 'week' | 'month';
-    weekBuckets?: Array<{ label: string; from: Date; to: Date }>;
-  } {
-    const now = new Date();
-    const today = this.startOfDayUtc(now);
-
-    if (period === AnalyticsPeriod.YEAR) {
-      const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 11, 1));
-      const labels: string[] = [];
-      for (let i = 0; i < 12; i += 1) {
-        const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1));
-        labels.push(this.formatMonthUtc(d));
-      }
-      return { start, end: now, labels, bucket: 'month' };
-    }
-
-    if (period === AnalyticsPeriod.MONTH) {
-      // 30-day window split into up to 5 weekly buckets
-      const days = 30;
-      const start = new Date(Date.UTC(
-        today.getUTCFullYear(),
-        today.getUTCMonth(),
-        today.getUTCDate() - (days - 1),
-      ));
-
-      const weekBuckets: Array<{ label: string; from: Date; to: Date }> = [];
-      for (let w = 0; w < 5; w++) {
-        const fromDate = new Date(Date.UTC(
-          start.getUTCFullYear(),
-          start.getUTCMonth(),
-          start.getUTCDate() + w * 7,
-        ));
-        // Last week may be shorter than 7 days
-        const toRaw = new Date(Date.UTC(
-          start.getUTCFullYear(),
-          start.getUTCMonth(),
-          start.getUTCDate() + Math.min((w + 1) * 7 - 1, days - 1),
-        ));
-        // Cap to end of that day (inclusive)
-        const toDate = new Date(Date.UTC(
-          toRaw.getUTCFullYear(),
-          toRaw.getUTCMonth(),
-          toRaw.getUTCDate(),
-          23, 59, 59, 999,
-        ));
-
-        weekBuckets.push({
-          label: this.formatWeekLabel(fromDate, toRaw),
-          from: fromDate,
-          to: toDate,
-        });
-      }
-
-      return {
-        start,
-        end: now,
-        labels: weekBuckets.map((w) => w.label),
-        bucket: 'week',
-        weekBuckets,
-      };
-    }
-
-    // WEEK: last 7 days, one bucket per day
-    const start = new Date(Date.UTC(
-      today.getUTCFullYear(),
-      today.getUTCMonth(),
-      today.getUTCDate() - 6,
-    ));
-    const labels: string[] = [];
-    for (let i = 0; i < 7; i += 1) {
-      const d = new Date(Date.UTC(
-        start.getUTCFullYear(),
-        start.getUTCMonth(),
-        start.getUTCDate() + i,
-      ));
-      labels.push(this.formatDayUtc(d));
-    }
-    return { start, end: now, labels, bucket: 'day' };
-  }
-
-  private getBucketLabel(
-    date: Date,
-    bucket: 'day' | 'week' | 'month',
-    weekBuckets?: Array<{ label: string; from: Date; to: Date }>,
-  ): string {
-    if (bucket === 'day') return this.formatDayUtc(date);
-    if (bucket === 'month') return this.formatMonthUtc(date);
-    // week: find which bucket this date falls into
-    const wb = weekBuckets?.find((w) => date >= w.from && date <= w.to);
-    return wb?.label ?? (weekBuckets?.[weekBuckets.length - 1]?.label ?? this.formatDayUtc(date));
-  }
-
-  private formatWeekLabel(from: Date, to: Date): string {
-    const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-                    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    const fromMonth = MONTHS[from.getUTCMonth()];
-    const toMonth   = MONTHS[to.getUTCMonth()];
-    const fromDay   = from.getUTCDate();
-    const toDay     = to.getUTCDate();
-    if (fromMonth === toMonth) {
-      return `${fromMonth} ${fromDay}–${toDay}`;
-    }
-    return `${fromMonth} ${fromDay}–${toMonth} ${toDay}`;
-  }
-
-  private formatDayUtc(date: Date) {
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(
-      date.getUTCDate(),
-    ).padStart(2, '0')}`;
-  }
-
-  private formatMonthUtc(date: Date) {
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-  }
-
-  private startOfDayUtc(date: Date) {
-    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   }
 }

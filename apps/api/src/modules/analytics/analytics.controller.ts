@@ -41,6 +41,14 @@ export class AnalyticsController {
     return this.analyticsService.getSalesOverTime(user.tenantId, query.period);
   }
 
+  @Get('cash-flow')
+  cashFlow(
+    @CurrentUser() user: CurrentUserType,
+    @Query() query: AnalyticsPeriodDto,
+  ) {
+    return this.analyticsService.getCashFlow(user.tenantId, query.period);
+  }
+
   @Get('inventory-by-brand')
   inventoryByBrand(@CurrentUser() user: CurrentUserType) {
     return this.analyticsService.getInventoryByBrand(user.tenantId);
