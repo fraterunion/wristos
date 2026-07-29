@@ -42,7 +42,11 @@ export const EXPENSE_ALIAS_TABLE: Record<
   comisión: { destinationCategory: 'COMMISSIONS', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'commission alias' },
   'comisión jaziel': { destinationCategory: 'COMMISSIONS', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'named commission alias' },
   'comision jaziel': { destinationCategory: 'COMMISSIONS', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'named commission alias' },
-  internet: { destinationCategory: 'BANK_FEES', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'ops fee treated as bank/ops fee alias in workbook' },
+  internet: {
+    destinationCategory: 'OTHER',
+    ruleId: 'WC_EXPENSE_ALIAS_MAP',
+    reason: 'internet/telecom ops spend — never bank commission',
+  },
   'ruben ajuste reloj': {
     destinationCategory: 'WATCHMAKER',
     ruleId: 'WC_EXPENSE_ALIAS_MAP',
@@ -78,6 +82,11 @@ export const EXPENSE_ALIAS_TABLE: Record<
   guia: { destinationCategory: 'TRAVEL', ruleId: 'WC_EXPENSE_ALIAS_MAP', reason: 'shipping guide expense' },
 };
 
+/**
+ * Pattern precedence matters:
+ * 1. Bank-specific commission expressions MUST run before generic commission matching.
+ * 2. Generic /comision|comisión/ must not capture "comisión bancaria", "comisión BBVA", etc.
+ */
 export const EXPENSE_CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /gasolin|combustible|pemex|^gas$|gas\s+y\s+envio|gasolibna/i, category: 'GASOLINE' },
   { pattern: /caseta|peaje|toll/i, category: 'TOLLS' },
@@ -87,8 +96,13 @@ export const EXPENSE_CATEGORY_PATTERNS: Array<{ pattern: RegExp; category: strin
   { pattern: /vuelo|vuelos|avion|avión|airline|flight/i, category: 'FLIGHTS' },
   { pattern: /viaje|hotel|uber|taxi|travel|viaticos|viáticos|viatico|chofer|aeropuerto|\bguia\b|\bguía\b/i, category: 'TRAVEL' },
   { pattern: /marketing|publicidad|pauta|instagram|\bads?\b/i, category: 'MARKETING' },
+  // Bank-specific BEFORE generic sales commissions
+  {
+    pattern:
+      /comisi[oó]n(?:es)?\s+banc\w*|comisi[oó]n(?:es)?\s+(?:bbva|santander|spei)\b|cargo\s+bancario|bank\s+fee|\btransfer\s+fee\b|\bspei\b|\bbanco\b/i,
+    category: 'BANK_FEES',
+  },
   { pattern: /comision|comisión|commission/i, category: 'COMMISSIONS' },
-  { pattern: /banco|comision banc|bank fee|spei|transfer fee/i, category: 'BANK_FEES' },
   { pattern: /dhl|envio|envío|fedex|ups\b/i, category: 'TRAVEL' },
   {
     pattern:

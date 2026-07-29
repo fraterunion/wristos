@@ -22,8 +22,13 @@ export const EXPENSE_CATEGORY_MAP: Array<{ pattern: RegExp; category: string }> 
   { pattern: /vuelo|avion|airline|flight/i, category: 'FLIGHTS' },
   { pattern: /viaje|hotel|uber|taxi|travel|viaticos|viáticos|chofer/i, category: 'TRAVEL' },
   { pattern: /marketing|publicidad|pauta|ads?/i, category: 'MARKETING' },
+  // Bank-specific BEFORE generic sales commissions
+  {
+    pattern:
+      /comisi[oó]n(?:es)?\s+banc\w*|comisi[oó]n(?:es)?\s+(?:bbva|santander|spei)\b|cargo\s+bancario|bank\s+fee|\btransfer\s+fee\b|\bspei\b|\bbanco\b/i,
+    category: 'BANK_FEES',
+  },
   { pattern: /comision|comisión|commission/i, category: 'COMMISSIONS' },
-  { pattern: /banco|comision banc|bank fee/i, category: 'BANK_FEES' },
 ];
 
 export type Disposition =
