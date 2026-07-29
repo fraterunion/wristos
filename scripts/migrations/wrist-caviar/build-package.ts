@@ -26,6 +26,7 @@ import {
 import { generateHumanReview } from './generate-human-review';
 import { generateSalesReconciliation } from './generate-sales-reconciliation';
 import { writeExpenseCategoryAudit, writePartnerClassificationAudit } from './generate-audits';
+import { generateFinalDecisionPacket } from './generate-final-packet';
 
 export type CanonicalCandidate = {
   sourceCandidateId: string;
@@ -58,6 +59,7 @@ function applyResolutions(
       snap.payables = snap.payables.filter((p) => p.id !== res.sourceCandidateId);
       snap.sales = snap.sales.filter((s) => s.id !== res.sourceCandidateId);
       snap.inventory = snap.inventory.filter((i) => i.id !== res.sourceCandidateId);
+      snap.partnerLedger = snap.partnerLedger.filter((p) => p.id !== res.sourceCandidateId);
       continue;
     }
     if (res.resolutionType === 'FORMULA_OVERRIDE' && res.sourceCandidateId) {
@@ -83,6 +85,40 @@ function applyResolutions(
         p.ambiguous = false;
         p.balanceMismatch = false;
         p.formulaErrors = [];
+      }
+      const sale = snap.sales.find((x) => x.id === res.sourceCandidateId);
+      if (sale) {
+        Object.assign(sale, patch);
+        if (patch.declaredProfit != null || patch.cost != null || patch.salePrice != null) {
+          sale.profitMismatch = false;
+        }
+      }
+      const partner = snap.partnerLedger.find((x) => x.id === res.sourceCandidateId);
+      if (partner) {
+        const decisionType = String(patch.decisionType ?? '');
+        if (decisionType === 'CLASSIFY_AS_CONTRIBUTION') {
+          partner.classification = 'CONTRIBUTION';
+        } else if (
+          decisionType === 'CLASSIFY_AS_WITHDRAWAL' ||
+          decisionType === 'CLASSIFY_AS_TRANSFER'
+        ) {
+          // Transfer still needs direction; OUTFLOW/INFLOW implied by amounts at execute
+          partner.classification =
+            (partner.exitAmount ?? 0) !== 0 ? 'WITHDRAWAL' : 'CONTRIBUTION';
+        } else if (decisionType === 'CLASSIFY_AS_PROFIT_DISTRIBUTION') {
+          // Mark as WITHDRAWAL for package disposition; execute notes preserve profit intent
+          partner.classification = 'WITHDRAWAL';
+        } else if (
+          decisionType.startsWith('CLASSIFY_AS_LOAN') ||
+          decisionType.startsWith('CLASSIFY_AS_PARTNER') ||
+          decisionType.startsWith('CLASSIFY_AS_ADVANCE') ||
+          decisionType === 'CLASSIFY_AS_REIMBURSEMENT'
+        ) {
+          // Cannot faithfully map — leave UNCLASSIFIED so package stays CONFLICT unless DEFER used
+          partner.classification = 'UNCLASSIFIED';
+        }
+        if (patch.entryAmount != null) partner.entryAmount = Number(patch.entryAmount);
+        if (patch.exitAmount != null) partner.exitAmount = Number(patch.exitAmount);
       }
       continue;
     }
@@ -881,14 +917,29 @@ export async function buildPackage(params: {
     candidates,
   });
 
+  let finalPacket: { totalDecisions: number; bridgeOk: boolean } | null = null;
+  try {
+    finalPacket = generateFinalDecisionPacket({
+      outDir: baseDir,
+      fingerprintPrefix: fpPrefix,
+      candidates,
+      analysis: reviewed,
+    });
+  } catch {
+    // Synthetic / non-final shapes skip the complete 28-decision packet
+    finalPacket = null;
+  }
+
   safeLog('wrist_caviar_package_built', {
     workbookFingerprintPrefix: fpPrefix,
     packageFingerprintPrefix: prefix(packageFingerprint),
     dispositionCounts,
     conflictCount: dispositionCounts.CONFLICT,
     humanDecisions: human.decisionCount,
+    finalDecisions: finalPacket?.totalDecisions ?? human.decisionCount,
     salesAccounted: salesRecon.allAccounted,
     unmappedConflicts: human.unmappedConflicts.length,
+    partnerBridgeOk: finalPacket?.bridgeOk ?? null,
   });
 
   return {
@@ -896,7 +947,7 @@ export async function buildPackage(params: {
     packageFingerprint,
     analysis: reviewed,
     dispositionCounts,
-    humanDecisionCount: human.decisionCount,
+    humanDecisionCount: finalPacket?.totalDecisions ?? human.decisionCount,
     salesRecon,
   };
 }

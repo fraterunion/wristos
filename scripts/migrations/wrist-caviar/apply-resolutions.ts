@@ -10,6 +10,8 @@ import {
   SALE_RESOLUTION_TYPES,
   type FinalDecisionTemplate,
 } from './generate-human-review';
+import { PARTNER_DECISION_IDS, assertV2DecisionSet } from './generate-final-packet';
+import { PARTNER_SAFE_RESOLUTION_TYPES } from './partner-destination-semantics';
 import { prefix, safeLog } from './hash';
 import { planImport } from './plan-import';
 import type { ResolutionRecord, ResolutionsFile } from './resolutions.schema';
@@ -25,6 +27,7 @@ const REQUIRES_APPROVED_VALUE = new Set([
   'CORRECT_SALE_PRICE',
   'CORRECT_EXTRAS',
   'CORRECT_UNDERLYING_RECORDS',
+  'CORRECT_AMOUNT',
 ]);
 
 function mapToInternalType(decisionType: string): ResolutionType {
@@ -42,14 +45,28 @@ function mapToInternalType(decisionType: string): ResolutionType {
     case 'CORRECT_SALE_PRICE':
     case 'CORRECT_EXTRAS':
     case 'CORRECT_UNDERLYING_RECORDS':
+    case 'CORRECT_AMOUNT':
       return 'CORRECT_VALUE';
     case 'EXCLUDE_INVALID_CARD':
     case 'EXCLUDE_INVALID_SALE':
+    case 'EXCLUDE_SUMMARY_OR_INVALID_ROW':
       return 'EXCLUDE_INVALID_SOURCE_BLOCK';
     case 'ACKNOWLEDGE_SCOPE_DIFFERENCE':
       return 'ACKNOWLEDGE_SCOPE_DIFFERENCE';
     case 'KEEP_BLOCKED':
+    case 'DEFER_FOR_LATER':
       return 'DEFER';
+    case 'CLASSIFY_AS_CONTRIBUTION':
+    case 'CLASSIFY_AS_WITHDRAWAL':
+    case 'CLASSIFY_AS_PROFIT_DISTRIBUTION':
+    case 'CLASSIFY_AS_TRANSFER':
+    case 'CLASSIFY_AS_LOAN_TO_BUSINESS':
+    case 'CLASSIFY_AS_LOAN_REPAYMENT':
+    case 'CLASSIFY_AS_PARTNER_ADVANCE':
+    case 'CLASSIFY_AS_ADVANCE_REPAYMENT':
+    case 'CLASSIFY_AS_REIMBURSEMENT':
+      // Stored as CORRECT_VALUE patch on partner classification until execute wiring expands
+      return 'CORRECT_VALUE';
     default:
       throw new Error(`Unknown resolution type: ${decisionType}`);
   }
@@ -82,6 +99,23 @@ function resolvedValueFor(
   if (decisionType === 'CORRECT_COST') return { cost: approvedValue };
   if (decisionType === 'CORRECT_SALE_PRICE') return { salePrice: approvedValue };
   if (decisionType === 'CORRECT_EXTRAS') return { extras: approvedValue };
+  if (decisionType === 'CORRECT_AMOUNT') {
+    return typeof approvedValue === 'object' && approvedValue
+      ? (approvedValue as Record<string, unknown>)
+      : { value: approvedValue };
+  }
+  if (decisionType.startsWith('CLASSIFY_AS_')) {
+    return {
+      decisionType,
+      classificationHint: decisionType,
+      ...(typeof approvedValue === 'object' && approvedValue
+        ? (approvedValue as Record<string, unknown>)
+        : {}),
+    };
+  }
+  if (decisionType === 'DEFER_FOR_LATER') {
+    return { defer: true };
+  }
   if (typeof approvedValue === 'object' && approvedValue) {
     return approvedValue as Record<string, unknown>;
   }
@@ -89,28 +123,41 @@ function resolvedValueFor(
 }
 
 export type FinalResolutionsFile = {
-  version: 1;
+  version: 1 | 2;
   migrationSource: string;
   workbookFingerprintPrefix?: string;
   notes?: string;
-  decisions: FinalDecisionTemplate[];
+  decisions: Array<FinalDecisionTemplate & { area?: string; allowedResolutionTypes?: string[] }>;
 };
 
 export function validateFinalResolutions(raw: unknown): FinalResolutionsFile {
   if (!raw || typeof raw !== 'object') throw new Error('FINAL_RESOLUTIONS must be an object');
   const file = raw as FinalResolutionsFile;
-  if (file.version !== 1) throw new Error('version must be 1');
+  if (file.version !== 1 && file.version !== 2) throw new Error('version must be 1 or 2');
   if (!Array.isArray(file.decisions)) throw new Error('decisions must be an array');
-  if (file.decisions.length !== 15) {
-    throw new Error(`Expected exactly 15 decisions, got ${file.decisions.length}`);
+
+  const expectedIds =
+    file.version === 2
+      ? ([...FINAL_DECISION_IDS, ...PARTNER_DECISION_IDS] as string[])
+      : ([...FINAL_DECISION_IDS] as string[]);
+
+  if (file.decisions.length !== expectedIds.length) {
+    throw new Error(`Expected exactly ${expectedIds.length} decisions, got ${file.decisions.length}`);
+  }
+
+  if (file.version === 2) {
+    assertV2DecisionSet(file.decisions.map((d) => d.decisionId));
   }
 
   const seen = new Set<string>();
   const issueOwner = new Map<string, string>();
 
   for (const d of file.decisions) {
-    if (!FINAL_DECISION_IDS.includes(d.decisionId as (typeof FINAL_DECISION_IDS)[number])) {
-      throw new Error(`Unknown decisionId: ${d.decisionId}`);
+    if (!expectedIds.includes(d.decisionId)) {
+      throw new Error(`Unknown or obsolete decisionId: ${d.decisionId}`);
+    }
+    if (d.decisionId.startsWith('HC-')) {
+      throw new Error(`Obsolete decision id rejected: ${d.decisionId}`);
     }
     if (seen.has(d.decisionId)) throw new Error(`Duplicate decisionId: ${d.decisionId}`);
     seen.add(d.decisionId);
@@ -122,12 +169,26 @@ export function validateFinalResolutions(raw: unknown): FinalResolutionsFile {
       throw new Error(`Decision ${d.decisionId}: actor still PENDING_HUMAN`);
     }
 
+    const area = String(
+      d.area ??
+        (d.decisionId.startsWith('PARTNER')
+          ? 'PARTNER'
+          : d.decisionId.startsWith('SALE')
+            ? 'SALE'
+            : d.decisionId.startsWith('REPORT')
+              ? 'REPORTE'
+              : d.decisionId.startsWith('CXP')
+                ? 'CXP'
+                : 'CXC'),
+    );
     const allowed =
-      d.area === 'SALE'
+      area === 'SALE'
         ? SALE_RESOLUTION_TYPES
-        : d.area === 'REPORTE'
+        : area === 'REPORTE'
           ? REPORT_RESOLUTION_TYPES
-          : CXC_CXP_RESOLUTION_TYPES;
+          : area === 'PARTNER'
+            ? PARTNER_SAFE_RESOLUTION_TYPES
+            : CXC_CXP_RESOLUTION_TYPES;
     if (!(allowed as readonly string[]).includes(d.resolutionType)) {
       throw new Error(
         `Decision ${d.decisionId}: invalid resolutionType ${d.resolutionType}; allowed: ${allowed.join(', ')}`,
@@ -149,7 +210,7 @@ export function validateFinalResolutions(raw: unknown): FinalResolutionsFile {
     }
   }
 
-  for (const id of FINAL_DECISION_IDS) {
+  for (const id of expectedIds) {
     if (!seen.has(id)) throw new Error(`Missing decisionId: ${id}`);
   }
 
@@ -189,27 +250,29 @@ export function mergeFinalIntoResolutions(
 
     const parents = (d.issueIds ?? []).filter((id) => !id.includes('pay_') && !id.startsWith('reporte:'));
     const primary = parents[0] ?? d.issueIds[0] ?? null;
+    const decisionId = d.decisionId;
     const internal = mapToInternalType(d.resolutionType);
     const rec: ResolutionRecord = {
-      id: `res_${d.decisionId.toLowerCase()}`,
-      entityType:
-        d.area === 'CXC'
-          ? 'receivable'
-          : d.area === 'CXP'
-            ? 'payable'
-            : d.area === 'SALE'
-              ? 'sale'
+      id: `res_${decisionId.toLowerCase()}`,
+      entityType: decisionId.startsWith('CXC')
+        ? 'receivable'
+        : decisionId.startsWith('CXP')
+          ? 'payable'
+          : decisionId.startsWith('SALE')
+            ? 'sale'
+            : decisionId.startsWith('PARTNER')
+              ? 'partner'
               : 'reconciliation',
       sourceCandidateId: primary?.startsWith('reporte:') ? null : primary,
-      issueCode: d.decisionId,
+      issueCode: decisionId,
       resolutionType: internal,
       reason: d.reason,
       actor: d.actor,
       date: d.date,
       resolvedValue: {
-        decisionId: d.decisionId,
+        decisionId,
         decisionType: d.resolutionType,
-        ...resolvedValueFor(d.resolutionType, d.approvedValue, d.area),
+        ...resolvedValueFor(d.resolutionType, d.approvedValue, String(d.area ?? '')),
         issueIds: d.issueIds,
       },
       acknowledgedWarning: d.resolutionType === 'ACKNOWLEDGE_SCOPE_DIFFERENCE',
