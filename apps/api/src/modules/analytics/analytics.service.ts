@@ -22,8 +22,18 @@ import { TreasuryService } from '../treasury/treasury.service';
 import {
   buildCalendarPeriodWindow,
   getCalendarBucketLabel,
+  startOfDayUtc,
 } from './calendar-period';
 import { AnalyticsPeriod } from './dto/analytics-period.dto';
+import { TimelineGranularityParam } from './dto/sales-timeline.dto';
+import {
+  aggregateSalesTimeline,
+  alignRangeForGranularity,
+  bucketContaining,
+  parseUtcDateOnly,
+  shiftBucketStart,
+  type TimelineGranularity,
+} from './sales-timeline';
 
 @Injectable()
 export class AnalyticsService {
@@ -31,6 +41,109 @@ export class AnalyticsService {
     private readonly prisma: PrismaService,
     private readonly treasuryService: TreasuryService,
   ) {}
+
+  /**
+   * Shared sales timeline for revenue + sold-watch charts.
+   * CLOSED_WON deals only; buckets by effectiveSaleDate (UTC). No Payment dependency.
+   *
+   * Complexity: O(D + B) where D = deals in range, B = buckets.
+   * Single tenant-scoped findMany — acceptable for current migrated volume (~469).
+   */
+  async getSalesTimeline(
+    tenantId: string,
+    granularity: TimelineGranularityParam | TimelineGranularity,
+    from?: string,
+    to?: string,
+  ) {
+    const g = granularity as TimelineGranularity;
+    const now = new Date();
+    const today = startOfDayUtc(now);
+    const tomorrow = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1),
+    );
+
+    const parsedFrom = from ? parseUtcDateOnly(from) : null;
+    const parsedToInclusive = to ? parseUtcDateOnly(to) : null;
+
+    // Load CLOSED_WON deals once (full history when range omitted; filtered when provided).
+    const rangeStartHint = parsedFrom ?? new Date(Date.UTC(2000, 0, 1));
+    const rangeEndHint = parsedToInclusive
+      ? new Date(
+          Date.UTC(
+            parsedToInclusive.getUTCFullYear(),
+            parsedToInclusive.getUTCMonth(),
+            parsedToInclusive.getUTCDate() + 1,
+          ),
+        )
+      : tomorrow;
+
+    const rows = await this.prisma.deal.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        stage: DealStage.CLOSED_WON,
+        AND: [dealEffectiveSaleDateRangeWhere(rangeStartHint, rangeEndHint)],
+      },
+      select: {
+        agreedPrice: true,
+        soldAt: true,
+        updatedAt: true,
+        createdAt: true,
+      },
+    });
+
+    const deals = rows.map((row) => ({
+      agreedPrice: row.agreedPrice,
+      saleDate: effectiveSaleDate(row),
+    }));
+
+    let fromInclusive: Date;
+    let toExclusive: Date;
+
+    if (parsedFrom && parsedToInclusive) {
+      const aligned = alignRangeForGranularity(
+        g,
+        parsedFrom,
+        new Date(
+          Date.UTC(
+            parsedToInclusive.getUTCFullYear(),
+            parsedToInclusive.getUTCMonth(),
+            parsedToInclusive.getUTCDate() + 1,
+          ),
+        ),
+      );
+      fromInclusive = aligned.fromInclusive;
+      toExclusive = aligned.toExclusive;
+    } else if (deals.length === 0) {
+      // Empty tenant — return a default recent window of empty buckets
+      const latest = bucketContaining(today, g);
+      const defaultCount =
+        g === 'day' ? 30 : g === 'week' ? 16 : g === 'month' ? 12 : 6;
+      fromInclusive = shiftBucketStart(latest.startDate, g, -(defaultCount - 1));
+      toExclusive = latest.endExclusive;
+    } else {
+      let minDate = deals[0]!.saleDate;
+      let maxDate = deals[0]!.saleDate;
+      for (const d of deals) {
+        if (d.saleDate < minDate) minDate = d.saleDate;
+        if (d.saleDate > maxDate) maxDate = d.saleDate;
+      }
+      const earliest = bucketContaining(minDate, g).startDate;
+      const latestEnd = bucketContaining(
+        maxDate > today ? maxDate : today,
+        g,
+      ).endExclusive;
+      fromInclusive = earliest;
+      toExclusive = latestEnd;
+    }
+
+    return aggregateSalesTimeline({
+      granularity: g,
+      fromInclusive,
+      toExclusive,
+      deals,
+    });
+  }
 
   /**
    * Sales revenue over time — Deal.agreedPrice by effectiveSaleDate.

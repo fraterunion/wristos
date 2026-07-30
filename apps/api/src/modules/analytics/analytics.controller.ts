@@ -3,6 +3,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { AnalyticsPeriodDto } from './dto/analytics-period.dto';
+import { SalesTimelineQueryDto } from './dto/sales-timeline.dto';
 import { AnalyticsService } from './analytics.service';
 
 @Controller('analytics')
@@ -23,6 +24,19 @@ export class AnalyticsController {
   @Get('pipeline')
   pipeline(@CurrentUser() user: CurrentUserType) {
     return this.analyticsService.getPipeline(user.tenantId);
+  }
+
+  @Get('sales-timeline')
+  salesTimeline(
+    @CurrentUser() user: CurrentUserType,
+    @Query() query: SalesTimelineQueryDto,
+  ) {
+    return this.analyticsService.getSalesTimeline(
+      user.tenantId,
+      query.granularity,
+      query.from,
+      query.to,
+    );
   }
 
   @Get('revenue-over-time')
