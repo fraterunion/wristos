@@ -82,6 +82,8 @@ export type SalesByBrandPoint = {
 export type TopModelPoint = {
   model: string;
   count: number;
+  percentage?: number;
+  totalSales?: number;
 };
 
 export type WatchStatus =
