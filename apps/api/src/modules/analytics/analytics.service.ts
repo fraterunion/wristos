@@ -12,6 +12,12 @@ import {
 } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isSettledHistoricalSaleSnapshot } from '../history/historical-watch-snapshot';
+import {
+  resolveBrandAggregationLabel,
+  resolveDealWatchIdentity,
+  resolveModelAggregationLabel,
+  watchLabelGroupKey,
+} from '../history/historical-watch-snapshot';
 import { TreasuryService } from '../treasury/treasury.service';
 import {
   buildCalendarPeriodWindow,
@@ -426,6 +432,11 @@ export class AnalyticsService {
       .sort((a, b) => Number(b.inventoryValue) - Number(a.inventoryValue));
   }
 
+  /**
+   * All-time CLOSED_WON sales by brand (accumulated histórico).
+   * Uses linked Watch brand when present; otherwise historical notes snapshot.
+   * Never emits "Histórico" as a brand.
+   */
   async getSalesByBrand(tenantId: string) {
     const deals = await this.prisma.deal.findMany({
       where: {
@@ -435,30 +446,38 @@ export class AnalyticsService {
       },
       select: {
         agreedPrice: true,
-        watch: { select: { brand: true } },
+        notes: true,
+        watch: { select: { brand: true, model: true } },
       },
     });
 
-    const byBrand = new Map<string, { count: number; revenue: Prisma.Decimal }>();
+    type Bucket = { count: number; revenue: Prisma.Decimal; label: string };
+    const byBrand = new Map<string, Bucket>();
     const zero = new Prisma.Decimal(0);
 
     for (const deal of deals) {
-      const brand = deal.watch?.brand ?? 'Histórico';
-      const current = byBrand.get(brand) ?? { count: 0, revenue: zero };
+      const identity = resolveDealWatchIdentity(deal);
+      const label = resolveBrandAggregationLabel(identity);
+      const key = watchLabelGroupKey(label);
+      const current = byBrand.get(key) ?? { count: 0, revenue: zero, label };
       current.count += 1;
       current.revenue = current.revenue.plus(deal.agreedPrice);
-      byBrand.set(brand, current);
+      byBrand.set(key, current);
     }
 
-    return Array.from(byBrand.entries())
-      .map(([brand, { count, revenue }]) => ({
-        brand,
+    return Array.from(byBrand.values())
+      .map(({ label, count, revenue }) => ({
+        brand: label,
         count,
         revenue: revenue.toString(),
       }))
       .sort((a, b) => b.count - a.count);
   }
 
+  /**
+   * All-time top models sold (accumulated histórico).
+   * Linked Watch model first; historical snapshot second; else "Sin modelo".
+   */
   async getTopModels(tenantId: string) {
     const deals = await this.prisma.deal.findMany({
       where: {
@@ -467,18 +486,29 @@ export class AnalyticsService {
         stage: DealStage.CLOSED_WON,
       },
       select: {
-        watch: { select: { model: true } },
+        notes: true,
+        watch: { select: { brand: true, model: true } },
       },
     });
 
-    const byModel = new Map<string, number>();
+    const byModel = new Map<string, { count: number; label: string }>();
     for (const deal of deals) {
-      const model = deal.watch?.model ?? '—';
-      byModel.set(model, (byModel.get(model) ?? 0) + 1);
+      const identity = resolveDealWatchIdentity(deal);
+      const label = resolveModelAggregationLabel(identity);
+      const key = watchLabelGroupKey(label);
+      const current = byModel.get(key) ?? { count: 0, label };
+      current.count += 1;
+      byModel.set(key, current);
     }
 
-    return Array.from(byModel.entries())
-      .map(([model, count]) => ({ model, count }))
+    const total = deals.length;
+    return Array.from(byModel.values())
+      .map(({ label, count }) => ({
+        model: label,
+        count,
+        percentage: total > 0 ? Number(((count / total) * 100).toFixed(1)) : 0,
+        totalSales: total,
+      }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
   }

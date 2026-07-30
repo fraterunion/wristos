@@ -216,7 +216,7 @@ function SalesByBrandPanel({
       <SideKpiCard
         label="Relojes vendidos"
         primary={String(totalSold)}
-        secondary="Histórico acumulado"
+        secondary="Histórico acumulado (todas las ventas)"
       />
 
       <div className="min-h-[300px] min-w-0 flex-1 lg:min-h-[340px]">

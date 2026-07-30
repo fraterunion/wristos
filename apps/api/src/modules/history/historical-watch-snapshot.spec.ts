@@ -2,6 +2,10 @@ import {
   isSettledHistoricalSaleSnapshot,
   isWorkbookHistoricalSaleSourceTag,
   parseHistoricalWatchSnapshotFromNotes,
+  resolveBrandAggregationLabel,
+  resolveDealWatchIdentity,
+  resolveModelAggregationLabel,
+  watchLabelGroupKey,
 } from './historical-watch-snapshot';
 
 describe('parseHistoricalWatchSnapshotFromNotes', () => {
@@ -41,6 +45,50 @@ describe('parseHistoricalWatchSnapshotFromNotes', () => {
       reference: '5711',
       serial: 'ABC',
     });
+  });
+});
+
+describe('resolveDealWatchIdentity', () => {
+  it('prefers linked watch over notes snapshot', () => {
+    const identity = resolveDealWatchIdentity({
+      notes: 'brand=Rolex; model=Sub; ref=; serial=; migration=sale_1',
+      watch: { brand: 'Omega', model: 'Seamaster' },
+    });
+    expect(identity).toEqual({
+      brand: 'Omega',
+      model: 'Seamaster',
+      reference: null,
+      serial: null,
+      source: 'LINKED_WATCH',
+    });
+  });
+
+  it('uses historical snapshot when watch is null', () => {
+    const identity = resolveDealWatchIdentity({
+      notes: 'brand=AP; model=Royal Oak; ref=15400; serial=; migration=sale_2',
+      watch: null,
+    });
+    expect(identity.source).toBe('HISTORICAL_SNAPSHOT');
+    expect(identity.brand).toBe('AP');
+    expect(identity.model).toBe('Royal Oak');
+  });
+
+  it('never emits Histórico / em-dash as aggregation labels', () => {
+    const linked = resolveDealWatchIdentity({
+      watch: { brand: 'Rolex', model: 'DJ' },
+    });
+    expect(resolveBrandAggregationLabel(linked)).not.toBe('Histórico');
+    expect(resolveModelAggregationLabel(linked)).not.toBe('—');
+
+    const empty = resolveDealWatchIdentity({ notes: null, watch: null });
+    expect(resolveBrandAggregationLabel(empty)).toBe('Sin marca');
+    expect(resolveModelAggregationLabel(empty)).toBe('Sin modelo');
+  });
+
+  it('groups case/whitespace variants deterministically without fuzzy model merge', () => {
+    expect(watchLabelGroupKey(' ROLEX ')).toBe(watchLabelGroupKey('rolex'));
+    expect(watchLabelGroupKey('AP')).not.toBe(watchLabelGroupKey('AP PINK'));
+    expect(watchLabelGroupKey('Submariner')).not.toBe(watchLabelGroupKey('Submariner Date'));
   });
 });
 
