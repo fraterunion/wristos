@@ -47,6 +47,30 @@ export type PipelineSummary = {
 
 export type AnalyticsPeriod = 'week' | 'month' | 'year';
 
+export type TimelineGranularity = 'day' | 'week' | 'month' | 'year';
+
+export type SalesTimelineBucket = {
+  key: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  revenue: number;
+  salesCount: number;
+  averageTicket: number;
+};
+
+export type SalesTimelineResponse = {
+  granularity: TimelineGranularity;
+  from: string;
+  to: string;
+  buckets: SalesTimelineBucket[];
+  totals: {
+    revenue: number;
+    salesCount: number;
+    averageTicket: number;
+  };
+};
+
 export type RevenueOverTimePoint = {
   label: string;
   revenue: number;
