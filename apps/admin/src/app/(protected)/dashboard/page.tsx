@@ -15,10 +15,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -28,6 +24,7 @@ import {
   YAxis,
 } from 'recharts';
 import { CommercialIntelligenceSection } from '@/components/dashboard/CommercialIntelligenceSection';
+import { SalesTimelineSection } from '@/components/dashboard/timeline/SalesTimelineSection';
 import { apiGet } from '@/lib/api-client';
 import { getCapitalSummary, type CapitalSummary } from '@/lib/capital-api';
 import { getCuentasSummary, type CuentasSummary } from '@/lib/cuentas-api';
@@ -37,7 +34,6 @@ import {
   AnalyticsSummary,
   CashFlowSummaryPoint,
   RevenueOverTimePoint,
-  SalesOverTimePoint,
 } from '@/types/domain';
 
 type DashboardData = {
@@ -697,12 +693,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState<AnalyticsPeriod>('month');
   const [revenueSeries, setRevenueSeries] = useState<RevenueOverTimePoint[]>([]);
-  const [salesSeries, setSalesSeries] = useState<SalesOverTimePoint[]>([]);
-  const [cashFlow, setCashFlow] = useState<CashFlowSummaryPoint | null>(null);
-  const [chartLoading, setChartLoading] = useState(true);
-
   const [capitalSummary, setCapitalSummary] = useState<CapitalSummary | null>(null);
   const [cuentasSummary, setCuentasSummary] = useState<CuentasSummary | null>(null);
 
@@ -754,37 +745,14 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    const fetchChartData = async () => {
-      setChartLoading(true);
-      try {
-        const [revenueData, salesData, cashFlowData] = await Promise.all([
-          apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
-            authenticated: true,
-            query: { period },
-          }),
-          apiGet<SalesOverTimePoint[]>('/analytics/sales-over-time', {
-            authenticated: true,
-            query: { period },
-          }),
-          apiGet<CashFlowSummaryPoint>('/analytics/cash-flow', {
-            authenticated: true,
-            query: { period },
-          }),
-        ]);
-        setRevenueSeries(revenueData);
-        setSalesSeries(salesData);
-        setCashFlow(cashFlowData);
-      } catch {
-        setRevenueSeries([]);
-        setSalesSeries([]);
-        setCashFlow(null);
-      } finally {
-        setChartLoading(false);
-      }
-    };
-
-    void fetchChartData();
-  }, [period]);
+    // Sparkline for Business Snapshot — fixed calendar-month buckets (independent of timeline).
+    apiGet<RevenueOverTimePoint[]>('/analytics/revenue-over-time', {
+      authenticated: true,
+      query: { period: 'month' },
+    })
+      .then(setRevenueSeries)
+      .catch(() => setRevenueSeries([]));
+  }, []);
 
   if (isLoading) {
     return <DashboardSkeleton />;
@@ -862,129 +830,11 @@ export default function DashboardPage() {
         revenueSparkline={revenueSeries}
       />
 
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <ExecutiveSectionTitle
-            title="Analytics"
-            subtitle="Tendencias de ingresos, ventas y flujo de caja."
-          />
-          <div className="rounded-lg border border-white/10 bg-panel p-1">
-            {(['week', 'month', 'year'] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => setPeriod(option)}
-                className={`rounded-md px-3 py-1.5 text-sm transition ${
-                  period === option
-                    ? 'bg-accent text-black font-semibold'
-                    : 'text-muted hover:bg-white/5 hover:text-white'
-                }`}
-              >
-                {{ week: 'Semana', month: 'Mes', year: 'Año' }[option]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-          <article className="ui-card min-h-[320px]">
-            <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
-              Ventas en el tiempo
-            </h4>
-            <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
-              {chartLoading ? (
-                <div className="h-full animate-pulse rounded-lg bg-white/10" />
-              ) : revenueSeries.every((p) => num(p.revenue) === 0) ? (
-                <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-white/10 px-4 text-center">
-                  <p className="text-sm text-white/45">Sin ventas en el periodo</p>
-                  <p className="mt-1 text-[11px] text-white/25">
-                    No hay deals CLOSED_WON con fecha de venta en este rango.
-                  </p>
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={revenueSeries}>
-                    <defs>
-                      <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#FFFFFF" stopOpacity={0.20} />
-                        <stop offset="95%" stopColor="#FFFFFF" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                    <XAxis
-                      dataKey="label"
-                      stroke="#737373"
-                      tickLine={false}
-                      axisLine={false}
-                      minTickGap={24}
-                    />
-                    <YAxis
-                      stroke="#737373"
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(value) => `$${Number(value) / 1000}k`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: '#171717',
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        borderRadius: 8,
-                        color: '#FAFAFA',
-                      }}
-                      formatter={(value) => fmtMxn(Number(value))}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="revenue"
-                      stroke="#FFFFFF"
-                      strokeWidth={1.5}
-                      fill="url(#revenueGradient)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </article>
-
-          <article className="ui-card min-h-[320px]">
-            <h4 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
-              Relojes vendidos en el tiempo
-            </h4>
-            <div className="mt-4 h-64 min-w-0 transition-opacity duration-200">
-              {chartLoading ? (
-                <div className="h-full animate-pulse rounded-lg bg-white/10" />
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={salesSeries}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                    <XAxis
-                      dataKey="label"
-                      stroke="#737373"
-                      tickLine={false}
-                      axisLine={false}
-                      minTickGap={24}
-                    />
-                    <YAxis stroke="#737373" tickLine={false} axisLine={false} allowDecimals={false} />
-                    <Tooltip
-                      contentStyle={{
-                        background: '#171717',
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        borderRadius: 8,
-                        color: '#FAFAFA',
-                      }}
-                    />
-                    <Bar dataKey="count" fill="#34d399" radius={[8, 8, 0, 0]} barSize={22} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </article>
-
-          <article className="ui-card min-h-[320px]">
-            <CashFlowSummary cashFlow={cashFlow} period={period} />
-          </article>
-        </div>
-      </section>
+      <SalesTimelineSection
+        cashFlowSlot={({ period: cashPeriod, cashFlow }) => (
+          <CashFlowSummary cashFlow={cashFlow} period={cashPeriod} />
+        )}
+      />
 
       <CommercialIntelligenceSection />
     </section>
