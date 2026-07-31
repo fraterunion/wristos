@@ -27,6 +27,8 @@ export type AnalyticsSummary = {
   bankCommissionMovementCountThisMonth: number;
   bankCommissionsAllTime: string;
   bankCommissionMovementCountAllTime: number;
+  /** Operating expenses (GASTOS) in the current UTC calendar month — all categories. */
+  operatingExpensesThisMonth: string;
   profitThisMonth: string;
 };
 

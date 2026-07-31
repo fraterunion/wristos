@@ -298,6 +298,7 @@ export class AnalyticsService {
       bankCommissionMovementCountThisMonth,
       bankCommissionsAllTimeAgg,
       bankCommissionMovementCountAllTime,
+      operatingExpensesThisMonthAgg,
     ] = await Promise.all([
       this.prisma.watch.count({ where: watchWhere }),
       this.prisma.watch.count({ where: { ...watchWhere, status: WatchStatus.AVAILABLE } }),
@@ -408,6 +409,16 @@ export class AnalyticsService {
           commission: { gt: 0 },
         },
       }),
+      // ── Operating expenses this month (GASTOS) — all categories by expenseDate ──
+      // Includes OpEx COMMISSIONS (e.g. agent/Lafaurie). Distinct from Treasury
+      // bank commissions (CONTROL BANCOS), which are subtracted separately above.
+      this.prisma.operatingExpense.aggregate({
+        where: {
+          tenantId,
+          expenseDate: { gte: monthStart, lt: nextMonthStart },
+        },
+        _sum: { amount: true },
+      }),
     ]);
 
     // ── Accounts receivable: pending balance across all real-receivable deals ──
@@ -465,10 +476,14 @@ export class AnalyticsService {
       bankCommissionsThisMonthAgg._sum.commission ?? zero;
     const bankCommissionsAllTimeDecimal =
       bankCommissionsAllTimeAgg._sum.commission ?? zero;
+    const operatingExpensesThisMonthDecimal =
+      operatingExpensesThisMonthAgg._sum.amount ?? zero;
 
+    // Utilidad del mes = revenue − COGS − treasury bank commissions − OpEx (same UTC month).
     const profitThisMonth = salesThisMonthRevenue
       .minus(new Prisma.Decimal(costOfSoldThisMonth))
-      .minus(bankCommissionsThisMonthDecimal);
+      .minus(bankCommissionsThisMonthDecimal)
+      .minus(operatingExpensesThisMonthDecimal);
 
     return {
       // ── Existing fields (backwards-compatible) ──────────────────────────────
@@ -507,6 +522,7 @@ export class AnalyticsService {
       bankCommissionMovementCountThisMonth,
       bankCommissionsAllTime: bankCommissionsAllTimeDecimal.toFixed(2),
       bankCommissionMovementCountAllTime,
+      operatingExpensesThisMonth: operatingExpensesThisMonthDecimal.toFixed(2),
       profitThisMonth: profitThisMonth.toString(),
     };
   }

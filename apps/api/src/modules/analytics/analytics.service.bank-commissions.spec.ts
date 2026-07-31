@@ -30,9 +30,7 @@ describe('AnalyticsService — structured bank commissions', () => {
         groupBy: jest.fn(async () => []),
       },
       operatingExpense: {
-        aggregate: jest.fn(async () => {
-          throw new Error('must not query OperatingExpense.BANK_FEES for bank commissions');
-        }),
+        aggregate: jest.fn(async () => ({ _sum: { amount: new Prisma.Decimal(0) } })),
       },
       treasuryEntry,
     };
