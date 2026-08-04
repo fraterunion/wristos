@@ -36,6 +36,17 @@ export type UpdateFromAccountPaymentArgs = {
   description?: string | null;
 };
 
+export type RecordPhysicalCashBalanceAdjustmentArgs = {
+  tenantId: string;
+  resultingBalance: CoercibleDecimal;
+  reason: string;
+  source: string;
+  actor: string;
+  effectiveDate: Date;
+  /** Optional override; defaults to current Dashboard CASH KPI before this adjustment. */
+  previousBalance?: CoercibleDecimal;
+};
+
 export type TreasuryAccountBalances = {
   CASH: string;
   BANK: string;
@@ -172,6 +183,14 @@ export class TreasuryService {
     });
   }
 
+  /**
+   * Official balances:
+   * - BANK / CESAR: Σ amountMxn(INFLOW) − Σ amountMxn(OUTFLOW)
+   * - CASH (physical MXN): latest PhysicalCashBalanceAdjustment.resultingBalance
+   *   + subsequent MXN CASH movements after effectiveDate.
+   *   USD CASH rows never enter the physical MXN KPI.
+   *   If no adjustment exists yet, falls back to MXN-only movement net.
+   */
   async getAccountBalances(tenantId: string): Promise<TreasuryAccountBalances> {
     const groups = await this.prisma.treasuryEntry.groupBy({
       by: ['account', 'direction'],
@@ -184,6 +203,10 @@ export class TreasuryService {
     );
 
     for (const row of groups) {
+      if (row.account === TreasuryAccount.CASH) {
+        // CASH handled separately (MXN physical + optional snapshot).
+        continue;
+      }
       const sum = row._sum.amountMxn ?? new Prisma.Decimal(0);
       const current = balances.get(row.account) ?? new Prisma.Decimal(0);
       const next =
@@ -193,11 +216,93 @@ export class TreasuryService {
       balances.set(row.account, next);
     }
 
+    const cash = await this.getPhysicalCashBalanceMxn(tenantId);
+    balances.set(TreasuryAccount.CASH, cash);
+
     return {
       CASH: (balances.get(TreasuryAccount.CASH) ?? new Prisma.Decimal(0)).toFixed(2),
       BANK: (balances.get(TreasuryAccount.BANK) ?? new Prisma.Decimal(0)).toFixed(2),
       CESAR: (balances.get(TreasuryAccount.CESAR) ?? new Prisma.Decimal(0)).toFixed(2),
     };
+  }
+
+  async getPhysicalCashBalanceMxn(tenantId: string): Promise<Prisma.Decimal> {
+    const latest = await this.prisma.physicalCashBalanceAdjustment.findFirst({
+      where: { tenantId, deletedAt: null, currency: Currency.MXN },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    if (!latest) {
+      return this.sumMxnCashMovements(tenantId, null);
+    }
+
+    const after = await this.sumMxnCashMovements(tenantId, latest.effectiveDate);
+    return new Prisma.Decimal(latest.resultingBalance.toString()).plus(after);
+  }
+
+  /**
+   * Records an auditable physical MXN cash balance set (manual count).
+   * Does not rewrite historical CASH movements. Does not touch USD.
+   */
+  async recordPhysicalCashBalanceAdjustment(
+    args: RecordPhysicalCashBalanceAdjustmentArgs,
+  ) {
+    const resulting = new Prisma.Decimal(args.resultingBalance.toString());
+    if (!resulting.isFinite()) {
+      throw new BadRequestException('resultingBalance must be a finite number');
+    }
+
+    const previous =
+      args.previousBalance !== undefined
+        ? new Prisma.Decimal(args.previousBalance.toString())
+        : await this.getPhysicalCashBalanceMxn(args.tenantId);
+
+    const adjustmentAmount = resulting.minus(previous);
+
+    return this.prisma.physicalCashBalanceAdjustment.create({
+      data: {
+        tenantId: args.tenantId,
+        currency: Currency.MXN,
+        previousBalance: previous.toDecimalPlaces(2),
+        adjustmentAmount: adjustmentAmount.toDecimalPlaces(2),
+        resultingBalance: resulting.toDecimalPlaces(2),
+        reason: args.reason,
+        source: args.source,
+        actor: args.actor,
+        effectiveDate: args.effectiveDate,
+      },
+    });
+  }
+
+  private async sumMxnCashMovements(
+    tenantId: string,
+    afterExclusive: Date | null,
+  ): Promise<Prisma.Decimal> {
+    const where: Prisma.TreasuryEntryWhereInput = {
+      tenantId,
+      account: TreasuryAccount.CASH,
+      currency: Currency.MXN,
+      deletedAt: null,
+      ...(afterExclusive
+        ? { transactionDate: { gt: afterExclusive } }
+        : {}),
+    };
+
+    const groups = await this.prisma.treasuryEntry.groupBy({
+      by: ['direction'],
+      where,
+      _sum: { amountMxn: true },
+    });
+
+    let net = new Prisma.Decimal(0);
+    for (const row of groups) {
+      const sum = row._sum.amountMxn ?? new Prisma.Decimal(0);
+      net =
+        row.direction === TreasuryDirection.INFLOW
+          ? net.plus(sum)
+          : net.minus(sum);
+    }
+    return net;
   }
 
   private resolveAmounts(

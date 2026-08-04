@@ -381,6 +381,7 @@ model Tenant {
   accountEntries               AccountEntry[]
   accountPayments              AccountPayment[]
   treasuryEntries              TreasuryEntry[]
+  physicalCashBalanceAdjustments PhysicalCashBalanceAdjustment[]
   storefrontReservations       StorefrontReservation[]
   dataImportSessions           DataImportSession[]
   dataImportFiles              DataImportFile[]
@@ -1162,6 +1163,7 @@ model TreasuryEntry {
   dealPayment    Payment?              @relation(fields: [dealPaymentId], references: [id], onDelete: SetNull)
   contribution   InvestorContribution? @relation(fields: [contributionId], references: [id], onDelete: SetNull)
   distribution   InvestorDistribution? @relation(fields: [distributionId], references: [id], onDelete: SetNull)
+  physicalCashBalanceAdjustment PhysicalCashBalanceAdjustment?
 
   @@index([tenantId])
   @@index([tenantId, account])
@@ -1169,6 +1171,36 @@ model TreasuryEntry {
   @@index([tenantId, transactionDate])
   @@index([tenantId, deletedAt])
   @@map("treasury_entries")
+}
+
+/// Auditable physical MXN cash balance set (manual count / César correction).
+/// Official Dashboard CASH KPI uses the latest row + subsequent MXN CASH movements.
+/// USD cash is intentionally excluded from the physical MXN KPI.
+model PhysicalCashBalanceAdjustment {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  /// Always MXN for physical-cash KPI.
+  currency           Currency @default(MXN)
+  previousBalance    Decimal  @db.Decimal(14, 2)
+  adjustmentAmount   Decimal  @db.Decimal(14, 2)
+  resultingBalance   Decimal  @db.Decimal(14, 2)
+  reason             String
+  source             String
+  actor              String
+  effectiveDate      DateTime
+  /// Optional link if a companion treasury row was also written (not required).
+  treasuryEntryId    String?  @unique
+  deletedAt          DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  treasuryEntry TreasuryEntry? @relation(fields: [treasuryEntryId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, effectiveDate])
+  @@index([tenantId, deletedAt])
+  @@map("physical_cash_balance_adjustments")
 }
 
 // --- Cuentas (AR/AP) ---
