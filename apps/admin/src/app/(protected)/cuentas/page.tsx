@@ -3,13 +3,14 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiError, apiGet } from '@/lib/api-client';
+import { ApiError } from '@/lib/api-client';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import {
   createAccountEntry,
   createAccountPayment,
   deleteAccountEntry,
   getCuentasSummary,
+  getTopDebtors,
   listAccountEntries,
   listClients,
   updateAccountEntry,
@@ -23,6 +24,7 @@ import {
   type CounterpartyType,
   type Currency,
   type CuentasSummary,
+  type TopDebtor,
   type TreasuryAccount,
 } from '@/lib/cuentas-api';
 import { getFxUsdMxn } from '@/lib/fx-api';
@@ -310,20 +312,36 @@ function currencyBreakdownLines(totals: { MXN: string; USD: string }) {
 }
 
 function SummaryStrip({ summary }: { summary: CuentasSummary }) {
-  const netFlow = Number(summary.totalReceivable) - Number(summary.totalPayable);
+  const netFlow = Number(summary.expectedNetFlow ?? Number(summary.totalReceivable) - Number(summary.totalPayable));
+  const rx = summary.receivableStatusCounts;
+  const px = summary.payableStatusCounts;
 
   const cells = [
     {
       label: 'Por cobrar total',
       value: fmtSummaryAmount(summary.totalReceivable),
       tone: amountToneClass(summary.totalReceivable, 'emerald'),
-      subLines: currencyBreakdownLines(summary.totalReceivableByCurrency),
+      subLines: [
+        ...currencyBreakdownLines(summary.totalReceivableByCurrency),
+        ...(rx
+          ? [
+              `Abiertas ${rx.OPEN} · Parciales ${rx.PARTIAL} · Pagadas ${rx.PAID}`,
+            ]
+          : []),
+      ],
     },
     {
       label: 'Por pagar total',
       value: fmtSummaryAmount(summary.totalPayable),
       tone: amountToneClass(summary.totalPayable, 'amber'),
-      subLines: currencyBreakdownLines(summary.totalPayableByCurrency),
+      subLines: [
+        ...currencyBreakdownLines(summary.totalPayableByCurrency),
+        ...(px
+          ? [
+              `Abiertas ${px.OPEN} · Parciales ${px.PARTIAL} · Pagadas ${px.PAID}`,
+            ]
+          : []),
+      ],
     },
     {
       label: 'Vencido por cobrar',
@@ -377,6 +395,58 @@ function SummaryStrip({ summary }: { summary: CuentasSummary }) {
             ))}
           </div>
         ))}
+      </div>
+    </article>
+  );
+}
+
+function TopDebtorsSection({ debtors }: { debtors: TopDebtor[] }) {
+  if (debtors.length === 0) return null;
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/20">
+      <div className="border-b border-white/[0.06] px-5 py-3 md:px-6">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+          Principales deudores
+        </p>
+        <p className="mt-1 text-xs text-white/35">
+          Saldos por cobrar abiertos — MXN y USD se muestran por separado.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-white/[0.06] text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
+              <th className="px-5 py-2.5">Cliente</th>
+              <th className="px-4 py-2.5 text-right">Saldo</th>
+              <th className="px-4 py-2.5">Moneda</th>
+              <th className="px-4 py-2.5 text-right">Cuentas</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/[0.04]">
+            {debtors.map((row) => (
+              <tr key={`${row.currency}:${row.clientId ?? row.counterpartyName}`}>
+                <td className="px-5 py-3 font-medium text-white/85">
+                  {row.clientId ? (
+                    <Link
+                      href={`/cuentas/clients/${row.clientId}`}
+                      className="underline-offset-4 transition hover:text-white hover:underline"
+                    >
+                      {row.counterpartyName}
+                    </Link>
+                  ) : (
+                    row.counterpartyName
+                  )}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-emerald-300">
+                  {fmtEntryMoney(row.outstanding, row.currency)}
+                </td>
+                <td className="px-4 py-3 text-white/50">{row.currency}</td>
+                <td className="px-4 py-3 text-right text-white/50">{row.openAccounts}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </article>
   );
@@ -1077,10 +1147,10 @@ function EntryDrawer({
             <p className="mt-0.5 truncate text-sm text-white/40">{entry.concept}</p>
             {entry.clientId ? (
               <Link
-                href={`/crm/${entry.clientId}`}
+                href={`/cuentas/clients/${entry.clientId}`}
                 className="mt-2 inline-flex text-xs font-medium text-emerald-400 underline-offset-4 transition hover:text-white hover:underline"
               >
-                Abrir cliente →
+                Ver ledger del cliente →
               </Link>
             ) : null}
           </div>
@@ -1224,13 +1294,17 @@ export default function CuentasPage() {
   const router = useRouter();
   const pathname = usePathname();
   const clientIdFilter = searchParams.get('clientId')?.trim() || null;
+  const typeParam = searchParams.get('type');
 
-  const [tab, setTab] = useState<AccountEntryType>('RECEIVABLE');
+  const initialTab: AccountEntryType =
+    typeParam === 'PAYABLE' ? 'PAYABLE' : 'RECEIVABLE';
+
+  const [tab, setTab] = useState<AccountEntryType>(initialTab);
   const [summary, setSummary] = useState<CuentasSummary | null>(null);
+  const [topDebtors, setTopDebtors] = useState<TopDebtor[]>([]);
   const [entries, setEntries] = useState<AccountEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [clientFilterName, setClientFilterName] = useState<string | null>(null);
 
   const [drawerEntry, setDrawerEntry] = useState<AccountEntry | null>(null);
   const [entryModal, setEntryModal] = useState<{ open: boolean; editing: AccountEntry | null }>({
@@ -1245,12 +1319,23 @@ export default function CuentasPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [filters, setFilters] = useState<EntryFilters>(EMPTY_ENTRY_FILTERS);
 
+  // Legacy ?clientId= → canonical customer ledger
+  useEffect(() => {
+    if (!clientIdFilter) return;
+    router.replace(`/cuentas/clients/${clientIdFilter}`);
+  }, [clientIdFilter, router]);
+
+  useEffect(() => {
+    if (typeParam === 'PAYABLE' || typeParam === 'RECEIVABLE') {
+      setTab(typeParam);
+    }
+  }, [typeParam]);
+
   const entriesQuery = useMemo(
     () => ({
       type: tab,
-      ...(clientIdFilter ? { clientId: clientIdFilter } : {}),
     }),
-    [tab, clientIdFilter],
+    [tab],
   );
 
   const filteredEntries = useMemo(
@@ -1260,16 +1345,18 @@ export default function CuentasPage() {
 
   const activeFilters = hasActiveEntryFilters(filters);
 
-  const loadData = useCallback(async (query: { type: AccountEntryType; clientId?: string }) => {
+  const loadData = useCallback(async (query: { type: AccountEntryType }) => {
     setLoading(true);
     setError(null);
     try {
-      const [sum, list] = await Promise.all([
+      const [sum, list, debtors] = await Promise.all([
         getCuentasSummary(),
         listAccountEntries(query),
+        getTopDebtors(10).catch(() => [] as TopDebtor[]),
       ]);
       setSummary(sum);
       setEntries(list);
+      setTopDebtors(debtors);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron cargar las cuentas.');
     } finally {
@@ -1281,26 +1368,12 @@ export default function CuentasPage() {
     void loadData(entriesQuery);
   }, [entriesQuery, loadData]);
 
-  useEffect(() => {
-    if (!clientIdFilter) {
-      setClientFilterName(null);
-      return;
-    }
-    let cancelled = false;
-    void apiGet<Client>(`/crm/clients/${clientIdFilter}`, { authenticated: true })
-      .then((client) => {
-        if (!cancelled) setClientFilterName(client.name);
-      })
-      .catch(() => {
-        if (!cancelled) setClientFilterName(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientIdFilter]);
-
-  function clearClientFilter() {
-    router.replace(pathname, { scroll: false });
+  function setTabAndUrl(next: AccountEntryType) {
+    setTab(next);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('type', next);
+    params.delete('clientId');
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
   function resetFilters() {
@@ -1514,26 +1587,7 @@ export default function CuentasPage() {
 
       {summary ? <SummaryStrip summary={summary} /> : null}
 
-      {clientIdFilter ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-1.5 text-sm text-white/70">
-            <span>
-              Cliente:{' '}
-              <span className="font-medium text-white">
-                {clientFilterName ?? 'Cargando…'}
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={clearClientFilter}
-              className="rounded-md px-1.5 py-0.5 text-xs text-white/45 transition hover:bg-white/10 hover:text-white"
-              aria-label="Quitar filtro de cliente"
-            >
-              ✕
-            </button>
-          </span>
-        </div>
-      ) : null}
+      {topDebtors.length > 0 ? <TopDebtorsSection debtors={topDebtors} /> : null}
 
       {actionError ? (
         <div className="flex items-center justify-between rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
@@ -1550,10 +1604,10 @@ export default function CuentasPage() {
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <PillBtn active={tab === 'RECEIVABLE'} onClick={() => setTab('RECEIVABLE')}>
+          <PillBtn active={tab === 'RECEIVABLE'} onClick={() => setTabAndUrl('RECEIVABLE')}>
             Por cobrar
           </PillBtn>
-          <PillBtn active={tab === 'PAYABLE'} onClick={() => setTab('PAYABLE')}>
+          <PillBtn active={tab === 'PAYABLE'} onClick={() => setTabAndUrl('PAYABLE')}>
             Por pagar
           </PillBtn>
         </div>
@@ -1689,7 +1743,7 @@ export default function CuentasPage() {
                     <td className="sticky left-0 z-10 bg-panel/95 px-4 py-3 font-medium text-white shadow-[4px_0_10px_-6px_rgba(0,0,0,0.65)] group-hover:bg-[#141414]">
                       {entry.clientId ? (
                         <Link
-                          href={`/crm/${entry.clientId}`}
+                          href={`/cuentas/clients/${entry.clientId}`}
                           onClick={(e) => e.stopPropagation()}
                           className="text-white/80 underline-offset-4 transition hover:text-white hover:underline"
                         >
