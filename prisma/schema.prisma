@@ -1826,8 +1826,9 @@ model AssetHolding {
   name           String
   /// Coin/token units — high precision for fractional crypto.
   quantity       Decimal   @db.Decimal(28, 18)
-  /// MXN cost per unit (average). Prefer computing cost basis = quantity × averageCostMxn.
-  averageCostMxn Decimal   @db.Decimal(18, 8)
+  /// MXN cost per unit (average). Null = opening position with unknown historical cost.
+  /// Prefer computing cost basis = quantity × averageCostMxn when present.
+  averageCostMxn Decimal?  @db.Decimal(18, 8)
   /// Exchange or wallet location, e.g. Binance, Ledger, cold wallet.
   location       String
   /// Person who administers/safeguards the asset — does NOT imply personal ownership.

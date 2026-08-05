@@ -211,6 +211,8 @@ function FinancialPositionHero({
   const cryptoHelperParts: string[] = [];
   if (cryptoHoldings === 0) {
     cryptoHelperParts.push('Sin posiciones');
+  } else if (summary.cryptoUnrealizedPnlMxn == null && cryptoHoldings > 0) {
+    cryptoHelperParts.push('Costo base no disponible');
   } else if (summary.cryptoUnrealizedPnlMxn != null) {
     cryptoHelperParts.push(
       `P&L ${cryptoPnl >= 0 ? '+' : ''}${fmtMxn(cryptoPnl)} vs costo`,

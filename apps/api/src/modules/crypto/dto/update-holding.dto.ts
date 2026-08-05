@@ -35,7 +35,7 @@ export class UpdateHoldingDto {
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 8 })
   @Min(0)
-  averageCostMxn?: number;
+  averageCostMxn?: number | null;
 
   @IsOptional()
   @IsString()
