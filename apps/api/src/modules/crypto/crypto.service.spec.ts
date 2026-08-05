@@ -48,7 +48,7 @@ describe('crypto-math', () => {
     const cost = holdingCostBasis(
       new Prisma.Decimal('0.12345678'),
       new Prisma.Decimal('1800000.50'),
-    );
+    )!;
     expect(cost.toFixed(8)).toBe('222222.26572839');
   });
 
@@ -56,7 +56,7 @@ describe('crypto-math', () => {
     const qty = new Prisma.Decimal('2');
     const avg = new Prisma.Decimal('100');
     const price = new Prisma.Decimal('150');
-    const cost = holdingCostBasis(qty, avg);
+    const cost = holdingCostBasis(qty, avg)!;
     const value = holdingCurrentValue(qty, price)!;
     const pnl = unrealizedPnl(value, cost)!;
     expect(cost.toFixed(2)).toBe('200.00');
@@ -69,6 +69,11 @@ describe('crypto-math', () => {
     expect(holdingCurrentValue(new Prisma.Decimal('1'), null)).toBeNull();
     expect(unrealizedPnl(null, new Prisma.Decimal('10'))).toBeNull();
   });
+
+  it('returns null cost basis when averageCostMxn is null', () => {
+    expect(holdingCostBasis(new Prisma.Decimal('10'), null)).toBeNull();
+    expect(unrealizedPnl(new Prisma.Decimal('100'), null)).toBeNull();
+  });
 });
 
 type HoldingRow = {
@@ -78,7 +83,7 @@ type HoldingRow = {
   ticker: string;
   name: string;
   quantity: Prisma.Decimal;
-  averageCostMxn: Prisma.Decimal;
+  averageCostMxn: Prisma.Decimal | null;
   location: string;
   custodian: string | null;
   notes: string | null;
@@ -138,7 +143,7 @@ function makeService(state: {
           ticker: data.ticker as string,
           name: data.name as string,
           quantity: data.quantity as Prisma.Decimal,
-          averageCostMxn: data.averageCostMxn as Prisma.Decimal,
+          averageCostMxn: (data.averageCostMxn as Prisma.Decimal | null) ?? null,
           location: data.location as string,
           custodian: (data.custodian as string | null) ?? null,
           notes: (data.notes as string | null) ?? null,
@@ -494,6 +499,36 @@ describe('CryptoService', () => {
       unpricedHoldingCount: 0,
       missingPriceTickers: [],
     });
+  });
+
+  it('allows opening holding with null averageCostMxn without fabricating P&L', async () => {
+    const { service } = makeService({
+      snapshots: [
+        snap({
+          id: 'p1',
+          tenantId: 't',
+          ticker: 'USDT',
+          priceMxn: new Prisma.Decimal('18'),
+          capturedAt: now,
+        }),
+      ],
+    });
+    const created = await service.createHolding('t', {
+      ticker: 'USDT',
+      name: 'Tether',
+      quantity: 170949.66,
+      location: 'Cuenta Crypto César',
+      custodian: 'César',
+    });
+    expect(created.averageCostMxn).toBeNull();
+    expect(created.costBasisMxn).toBeNull();
+    expect(created.unrealizedPnlMxn).toBeNull();
+    expect(created.currentValueMxn).toBe('3077093.88');
+
+    const summary = await service.getSummary('t');
+    expect(summary.totalCurrentValueMxn).toBe('3077093.88');
+    expect(summary.totalCostBasisMxn).toBeNull();
+    expect(summary.unrealizedPnlMxn).toBeNull();
   });
 
   it('does not create Treasury entries when creating holdings or prices', async () => {

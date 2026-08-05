@@ -19,8 +19,8 @@ export type AnalyticsSummary = {
   cesarBalance: string;
   /** Mark-to-market crypto value (priced holdings only). */
   cryptoValueMxn?: string;
-  cryptoCostBasisMxn?: string;
-  cryptoUnrealizedPnlMxn?: string;
+  cryptoCostBasisMxn?: string | null;
+  cryptoUnrealizedPnlMxn?: string | null;
   cryptoUnrealizedPnlPercent?: string | null;
   cryptoPriceStatus?: 'FRESH' | 'STALE' | 'VERY_STALE' | 'MISSING';
   cryptoOldestPriceCapturedAt?: string | null;

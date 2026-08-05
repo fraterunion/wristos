@@ -92,7 +92,9 @@ export class CryptoService {
 
     for (const h of holdings) {
       const cost = holdingCostBasis(h.quantity, h.averageCostMxn);
-      totalCostBasis = totalCostBasis.plus(cost);
+      if (cost != null) {
+        totalCostBasis = totalCostBasis.plus(cost);
+      }
 
       const price = latest.get(h.ticker);
       if (!price) {
@@ -112,7 +114,14 @@ export class CryptoService {
       if (!newest || price.capturedAt > newest) newest = price.capturedAt;
     }
 
-    const pnl = totalCurrentValue.minus(totalCostBasis);
+    const allHaveCost =
+      holdings.length === 0 || holdings.every((h) => h.averageCostMxn != null);
+    const pnl =
+      allHaveCost && holdings.length > 0
+        ? totalCurrentValue.minus(totalCostBasis)
+        : holdings.length === 0
+          ? totalCurrentValue.minus(totalCostBasis)
+          : null;
     const unpricedHoldingCount = holdings.length - pricedHoldingCount;
     const portfolioStatus =
       holdings.length === 0
@@ -121,9 +130,9 @@ export class CryptoService {
 
     return {
       totalCurrentValueMxn: money2(totalCurrentValue),
-      totalCostBasisMxn: money2(totalCostBasis),
-      unrealizedPnlMxn: money2(pnl),
-      unrealizedPnlPercent: unrealizedPnlPercent(pnl, totalCostBasis),
+      totalCostBasisMxn: allHaveCost ? money2(totalCostBasis) : null,
+      unrealizedPnlMxn: pnl != null ? money2(pnl) : null,
+      unrealizedPnlPercent: unrealizedPnlPercent(pnl, allHaveCost ? totalCostBasis : null),
       activeHoldingCount: holdings.length,
       pricedHoldingCount,
       unpricedHoldingCount,
@@ -178,7 +187,7 @@ export class CryptoService {
     if (dto.quantity < 0) {
       throw new BadRequestException('quantity must be non-negative');
     }
-    if (dto.averageCostMxn < 0) {
+    if (dto.averageCostMxn != null && dto.averageCostMxn < 0) {
       throw new BadRequestException('averageCostMxn must be non-negative');
     }
 
@@ -189,7 +198,10 @@ export class CryptoService {
         ticker,
         name: dto.name.trim(),
         quantity: new Prisma.Decimal(dto.quantity),
-        averageCostMxn: new Prisma.Decimal(dto.averageCostMxn),
+        averageCostMxn:
+          dto.averageCostMxn == null || dto.averageCostMxn === undefined
+            ? null
+            : new Prisma.Decimal(dto.averageCostMxn),
         location: dto.location.trim(),
         custodian: dto.custodian?.trim() || null,
         notes: dto.notes?.trim() || null,
@@ -211,10 +223,11 @@ export class CryptoService {
       data.quantity = new Prisma.Decimal(dto.quantity);
     }
     if (dto.averageCostMxn !== undefined) {
-      if (dto.averageCostMxn < 0) {
+      if (dto.averageCostMxn !== null && dto.averageCostMxn < 0) {
         throw new BadRequestException('averageCostMxn must be non-negative');
       }
-      data.averageCostMxn = new Prisma.Decimal(dto.averageCostMxn);
+      data.averageCostMxn =
+        dto.averageCostMxn === null ? null : new Prisma.Decimal(dto.averageCostMxn);
     }
     if (dto.location !== undefined) data.location = dto.location.trim();
     if (dto.custodian !== undefined) {
@@ -343,7 +356,7 @@ export class CryptoService {
       ticker: h.ticker,
       name: h.name,
       quantity: h.quantity.toString(),
-      averageCostMxn: h.averageCostMxn.toFixed(8),
+      averageCostMxn: h.averageCostMxn != null ? h.averageCostMxn.toFixed(8) : null,
       location: h.location,
       custodian: h.custodian,
       notes: h.notes,
@@ -353,7 +366,7 @@ export class CryptoService {
       priceCapturedAt: price?.capturedAt.toISOString() ?? null,
       priceSource: price?.source ?? null,
       currentValueMxn: currentValue != null ? money2(currentValue) : null,
-      costBasisMxn: money2(costBasis),
+      costBasisMxn: costBasis != null ? money2(costBasis) : null,
       unrealizedPnlMxn: pnl != null ? money2(pnl) : null,
       unrealizedPnlPercent: unrealizedPnlPercent(pnl, costBasis),
       priceStatus,

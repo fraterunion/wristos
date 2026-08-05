@@ -13,8 +13,9 @@ export function money2(value: Prisma.Decimal): string {
 
 export function holdingCostBasis(
   quantity: Prisma.Decimal,
-  averageCostMxn: Prisma.Decimal,
-): Prisma.Decimal {
+  averageCostMxn: Prisma.Decimal | null | undefined,
+): Prisma.Decimal | null {
+  if (averageCostMxn == null) return null;
   return quantity.mul(averageCostMxn);
 }
 
@@ -28,17 +29,17 @@ export function holdingCurrentValue(
 
 export function unrealizedPnl(
   currentValue: Prisma.Decimal | null,
-  costBasis: Prisma.Decimal,
+  costBasis: Prisma.Decimal | null,
 ): Prisma.Decimal | null {
-  if (currentValue == null) return null;
+  if (currentValue == null || costBasis == null) return null;
   return currentValue.minus(costBasis);
 }
 
 export function unrealizedPnlPercent(
   pnl: Prisma.Decimal | null,
-  costBasis: Prisma.Decimal,
+  costBasis: Prisma.Decimal | null,
 ): string | null {
-  if (pnl == null) return null;
+  if (pnl == null || costBasis == null) return null;
   if (costBasis.equals(ZERO)) return null;
   return pnl.div(costBasis).mul(HUNDRED).toFixed(2);
 }

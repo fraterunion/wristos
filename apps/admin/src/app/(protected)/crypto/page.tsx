@@ -171,14 +171,15 @@ export default function CryptoPage() {
 
   const preview = useMemo(() => {
     const qty = Number(holdingForm.quantity);
-    const avg = Number(holdingForm.averageCostMxn);
+    const avgRaw = holdingForm.averageCostMxn.trim();
+    const avg = avgRaw === '' ? null : Number(avgRaw);
     const cost =
-      Number.isFinite(qty) && Number.isFinite(avg) ? qty * avg : null;
+      Number.isFinite(qty) && avg != null && Number.isFinite(avg) ? qty * avg : null;
     const ticker = holdingForm.ticker.trim().toUpperCase();
     const match = holdings.find((h) => h.ticker === ticker && h.latestPriceMxn);
     const price = match?.latestPriceMxn ? Number(match.latestPriceMxn) : null;
     const value =
-      cost != null && price != null && Number.isFinite(qty) ? qty * price : null;
+      Number.isFinite(qty) && price != null ? qty * price : null;
     const pnl = value != null && cost != null ? value - cost : null;
     return { cost, value, pnl, price };
   }, [holdingForm, holdings]);
@@ -195,7 +196,7 @@ export default function CryptoPage() {
       ticker: h.ticker,
       name: h.name,
       quantity: h.quantity,
-      averageCostMxn: h.averageCostMxn,
+      averageCostMxn: h.averageCostMxn ?? '',
       location: h.location,
       custodian: h.custodian ?? '',
       notes: h.notes ?? '',
@@ -217,7 +218,10 @@ export default function CryptoPage() {
         ticker: holdingForm.ticker.trim(),
         name: holdingForm.name.trim(),
         quantity: Number(holdingForm.quantity),
-        averageCostMxn: Number(holdingForm.averageCostMxn),
+        averageCostMxn:
+          holdingForm.averageCostMxn.trim() === ''
+            ? null
+            : Number(holdingForm.averageCostMxn),
         location: holdingForm.location.trim(),
         custodian: holdingForm.custodian.trim() || undefined,
         notes: holdingForm.notes.trim() || undefined,
@@ -286,17 +290,25 @@ export default function CryptoPage() {
     },
     {
       label: 'Costo base',
-      value: summary ? fmtMxn(summary.totalCostBasisMxn) : '—',
+      value: summary
+        ? summary.totalCostBasisMxn == null
+          ? 'No disponible'
+          : fmtMxn(summary.totalCostBasisMxn)
+        : '—',
       tone: 'text-white',
     },
     {
       label: 'P&L no realizado',
       value: summary
-        ? `${Number(summary.unrealizedPnlMxn) >= 0 ? '+' : ''}${fmtMxn(summary.unrealizedPnlMxn)}${
-            summary.unrealizedPnlPercent != null
-              ? ` (${summary.unrealizedPnlPercent}%)`
-              : ''
-          }`
+        ? summary.unrealizedPnlMxn == null
+          ? summary.activeHoldingCount > 0
+            ? 'No disponible'
+            : fmtMxn(0)
+          : `${Number(summary.unrealizedPnlMxn) >= 0 ? '+' : ''}${fmtMxn(summary.unrealizedPnlMxn)}${
+              summary.unrealizedPnlPercent != null
+                ? ` (${summary.unrealizedPnlPercent}%)`
+                : ''
+            }`
         : '—',
       tone: summary ? pnlClass(summary.unrealizedPnlMxn) : 'text-white/50',
     },
@@ -429,9 +441,11 @@ export default function CryptoPage() {
                     <td className="px-3 py-2.5">{h.name}</td>
                     <td className="px-3 py-2.5 tabular-nums">{fmtQty(h.quantity)}</td>
                     <td className="px-3 py-2.5 tabular-nums">
-                      {fmtMxn(h.averageCostMxn, 2)}
+                      {h.averageCostMxn != null ? fmtMxn(h.averageCostMxn, 2) : 'No disponible'}
                     </td>
-                    <td className="px-3 py-2.5 tabular-nums">{fmtMxn(h.costBasisMxn)}</td>
+                    <td className="px-3 py-2.5 tabular-nums">
+                      {h.costBasisMxn != null ? fmtMxn(h.costBasisMxn) : 'No disponible'}
+                    </td>
                     <td className="px-3 py-2.5 tabular-nums">
                       {h.latestPriceMxn != null ? fmtMxn(h.latestPriceMxn) : '—'}
                     </td>
@@ -441,7 +455,7 @@ export default function CryptoPage() {
                     <td className={`px-3 py-2.5 tabular-nums ${pnlClass(h.unrealizedPnlMxn)}`}>
                       {h.unrealizedPnlMxn != null
                         ? `${Number(h.unrealizedPnlMxn) >= 0 ? '+' : ''}${fmtMxn(h.unrealizedPnlMxn)}`
-                        : '—'}
+                        : 'No disponible'}
                     </td>
                     <td className="px-3 py-2.5">{h.location}</td>
                     <td className="px-3 py-2.5">{h.custodian ?? '—'}</td>
@@ -540,7 +554,6 @@ export default function CryptoPage() {
               <label className="space-y-1 text-xs text-white/50">
                 Costo promedio (MXN / unidad)
                 <input
-                  required
                   type="number"
                   step="any"
                   min="0"
@@ -549,7 +562,12 @@ export default function CryptoPage() {
                     setHoldingForm((f) => ({ ...f, averageCostMxn: e.target.value }))
                   }
                   className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white"
+                  placeholder="Opcional si el costo histórico es desconocido"
                 />
+                <span className="block text-[11px] leading-snug text-white/35">
+                  Déjalo vacío para posiciones de apertura sin costo histórico. El P&L
+                  mostrará “No disponible”.
+                </span>
               </label>
               <label className="col-span-2 space-y-1 text-xs text-white/50">
                 Exchange / Wallet
@@ -593,7 +611,7 @@ export default function CryptoPage() {
               <p>
                 Costo base:{' '}
                 <span className="tabular-nums text-white">
-                  {preview.cost != null ? fmtMxn(preview.cost) : '—'}
+                  {preview.cost != null ? fmtMxn(preview.cost) : 'No disponible'}
                 </span>
               </p>
               <p>
@@ -608,7 +626,7 @@ export default function CryptoPage() {
               <p>
                 P&L no realizado:{' '}
                 <span className={`tabular-nums ${pnlClass(preview.pnl?.toFixed(2) ?? null)}`}>
-                  {preview.pnl != null ? fmtMxn(preview.pnl) : '—'}
+                  {preview.pnl != null ? fmtMxn(preview.pnl) : 'No disponible'}
                 </span>
               </p>
             </div>

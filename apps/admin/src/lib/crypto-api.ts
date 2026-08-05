@@ -4,8 +4,8 @@ export type CryptoPriceStatus = 'FRESH' | 'STALE' | 'VERY_STALE' | 'MISSING';
 
 export type CryptoSummary = {
   totalCurrentValueMxn: string;
-  totalCostBasisMxn: string;
-  unrealizedPnlMxn: string;
+  totalCostBasisMxn: string | null;
+  unrealizedPnlMxn: string | null;
   unrealizedPnlPercent: string | null;
   activeHoldingCount: number;
   pricedHoldingCount: number;
@@ -23,7 +23,8 @@ export type CryptoHolding = {
   ticker: string;
   name: string;
   quantity: string;
-  averageCostMxn: string;
+  /** Null when historical average cost is unknown (opening balance). */
+  averageCostMxn: string | null;
   location: string;
   custodian: string | null;
   notes: string | null;
@@ -33,7 +34,7 @@ export type CryptoHolding = {
   priceCapturedAt: string | null;
   priceSource: string | null;
   currentValueMxn: string | null;
-  costBasisMxn: string;
+  costBasisMxn: string | null;
   unrealizedPnlMxn: string | null;
   unrealizedPnlPercent: string | null;
   priceStatus: CryptoPriceStatus;
@@ -65,7 +66,8 @@ export type CreateHoldingInput = {
   ticker: string;
   name: string;
   quantity: number;
-  averageCostMxn: number;
+  /** Omit or null for opening positions with unknown historical cost. */
+  averageCostMxn?: number | null;
   location: string;
   custodian?: string;
   notes?: string;
@@ -74,6 +76,7 @@ export type CreateHoldingInput = {
 export type UpdateHoldingInput = Partial<CreateHoldingInput> & {
   custodian?: string | null;
   notes?: string | null;
+  averageCostMxn?: number | null;
 };
 
 export type CreatePriceInput = {
@@ -84,37 +87,40 @@ export type CreatePriceInput = {
   notes?: string;
 };
 
+/** Same JWT session policy as Capital / Inventory / Cuentas. */
+const AUTH = { authenticated: true } as const;
+
 export function getCryptoSummary() {
-  return apiGet<CryptoSummary>('/crypto/summary');
+  return apiGet<CryptoSummary>('/crypto/summary', AUTH);
 }
 
 export function listCryptoHoldings() {
-  return apiGet<CryptoHolding[]>('/crypto/holdings');
+  return apiGet<CryptoHolding[]>('/crypto/holdings', AUTH);
 }
 
 export function createCryptoHolding(body: CreateHoldingInput) {
-  return apiPost<CryptoHolding>('/crypto/holdings', body);
+  return apiPost<CryptoHolding>('/crypto/holdings', body, AUTH);
 }
 
 export function updateCryptoHolding(id: string, body: UpdateHoldingInput) {
-  return apiPatch<CryptoHolding>(`/crypto/holdings/${id}`, body);
+  return apiPatch<CryptoHolding>(`/crypto/holdings/${id}`, body, AUTH);
 }
 
 export function deleteCryptoHolding(id: string) {
-  return apiDelete<void>(`/crypto/holdings/${id}`);
+  return apiDelete<void>(`/crypto/holdings/${id}`, AUTH);
 }
 
 export function listCryptoPrices() {
-  return apiGet<CryptoLatestPrice[]>('/crypto/prices');
+  return apiGet<CryptoLatestPrice[]>('/crypto/prices', AUTH);
 }
 
 export function createCryptoPrice(body: CreatePriceInput) {
-  return apiPost<CryptoPriceSnapshot>('/crypto/prices', body);
+  return apiPost<CryptoPriceSnapshot>('/crypto/prices', body, AUTH);
 }
 
 export function getCryptoPriceHistory(ticker: string, limit = 50) {
   return apiGet<{ ticker: string; items: CryptoPriceSnapshot[] }>(
     `/crypto/prices/${encodeURIComponent(ticker)}/history`,
-    { query: { limit } },
+    { ...AUTH, query: { limit } },
   );
 }
