@@ -143,27 +143,27 @@ function FinancialKpiCard({
 }) {
   const valueClass =
     valueType === 'percentage'
-      ? 'text-base font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.2rem]'
-      : 'text-lg font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.35rem]';
+      ? 'text-[0.95rem] font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.1rem]'
+      : 'text-base font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.2rem]';
 
   const body = (
     <>
       <div
-        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-lg ${iconBubbleClass}`}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${iconBubbleClass}`}
       >
-        <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+        <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
       </div>
-      <p className="mt-3 text-[11px] font-medium uppercase tracking-[0.16em] text-white/50">
+      <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.14em] text-white/50">
         {label}
       </p>
-      <p className={`mt-2 ${valueClass} ${financialToneClass(tone)}`}>
+      <p className={`mt-1.5 ${valueClass} ${financialToneClass(tone)}`}>
         {value}
       </p>
-      <p className="mt-2 text-xs text-white/35">{helper}</p>
+      <p className="mt-1.5 text-[11px] text-white/35">{helper}</p>
     </>
   );
 
-  const className = `flex min-h-[145px] min-w-0 flex-col rounded-xl border border-white/[0.04] bg-gradient-to-b from-white/[0.03] to-transparent p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`;
+  const className = `flex min-h-[118px] min-w-0 flex-col rounded-xl border border-white/[0.04] bg-gradient-to-b from-white/[0.03] to-transparent p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`;
 
   if (href) {
     return (
@@ -399,7 +399,7 @@ function FinancialPositionHero({
   ];
 
   return (
-    <div className="space-y-10 md:space-y-12">
+    <div className="space-y-7 md:space-y-8">
       {/* ── Posición de liquidez ─────────────────────────────────────────── */}
       <article className="relative overflow-hidden rounded-[24px] border border-white/[0.04] bg-gradient-to-b from-white/[0.04] to-white/[0.012] shadow-2xl shadow-black/40">
         <div
@@ -415,26 +415,26 @@ function FinancialPositionHero({
           aria-hidden
         />
 
-        <div className="relative border-b border-white/[0.04] px-4 py-3 md:px-5">
+        <div className="relative border-b border-white/[0.04] px-4 py-2.5 md:px-5">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/15 to-transparent" />
-          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/90">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/90">
                   <Wallet className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                 </div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/50">
                   Posición de liquidez
                 </p>
               </div>
-              <p className="mt-0.5 pl-9 text-xs text-white/35">
+              <p className="mt-0.5 pl-8 text-[11px] text-white/35">
                 Dinero disponible de Wrist Caviar.
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
               <Link
                 href="/crypto"
-                className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+                className="text-[10px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
               >
                 Ver crypto →
               </Link>
@@ -442,7 +442,7 @@ function FinancialPositionHero({
           </div>
         </div>
 
-        <div className="relative grid grid-cols-1 gap-2 p-3 pb-2 sm:grid-cols-2 sm:p-4 sm:pb-3 lg:grid-cols-4 md:p-5 md:pb-4">
+        <div className="relative grid grid-cols-1 gap-1.5 p-2.5 pb-1.5 sm:grid-cols-2 sm:gap-2 sm:p-3 sm:pb-2 lg:grid-cols-4 md:p-4 md:pb-3">
           {liquidityCards.map((item) => (
             <FinancialKpiCard
               key={item.label}
@@ -459,7 +459,7 @@ function FinancialPositionHero({
           ))}
         </div>
 
-        <div className="relative mt-2 border-t border-white/[0.06] sm:mt-3 md:mt-4">
+        <div className="relative mt-1 border-t border-white/[0.06] sm:mt-1.5 md:mt-2">
           <div
             className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_120%_at_85%_50%,rgba(16,185,129,0.18),transparent_62%)]"
             aria-hidden
@@ -476,26 +476,26 @@ function FinancialPositionHero({
             className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent"
             aria-hidden
           />
-          <div className="relative flex flex-col gap-4 px-4 py-8 sm:flex-row sm:items-center sm:justify-between md:px-6 md:py-10">
+          <div className="relative flex flex-col gap-3 px-4 py-6 sm:flex-row sm:items-center sm:justify-between md:px-5 md:py-7">
             <div className="min-w-0">
-              <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-white/50">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">
                 Liquidez total
               </p>
-              <p className="mt-1.5 text-sm text-white/40">
+              <p className="mt-1 text-xs text-white/40">
                 Efectivo + Bancos + Crypto + Cuenta César
               </p>
               {liquidityWarnings.length > 0 ? (
-                <p className="mt-2 text-[11px] font-medium text-amber-200/90">
+                <p className="mt-1.5 text-[10px] font-medium text-amber-200/90">
                   {liquidityWarnings.join(' ')}
                 </p>
               ) : null}
             </div>
-            <div className="flex items-center gap-3 sm:gap-5">
-              <p className="text-5xl font-semibold tabular-nums tracking-tight text-emerald-400 sm:text-6xl xl:text-7xl">
+            <div className="flex items-center gap-2.5 sm:gap-4">
+              <p className="text-4xl font-semibold tabular-nums tracking-tight text-emerald-400 sm:text-5xl xl:text-6xl">
                 {fmtMxn(liquidityTotal)}
               </p>
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
-                <TrendingUp className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
+                <TrendingUp className="h-4 w-4" strokeWidth={1.75} aria-hidden />
               </div>
             </div>
           </div>
@@ -509,25 +509,25 @@ function FinancialPositionHero({
           aria-hidden
         />
 
-        <div className="relative border-b border-white/[0.04] px-4 py-3 md:px-5">
-          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative border-b border-white/[0.04] px-4 py-2.5 md:px-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400/90">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400/90">
                   <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                 </div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/50">
                   Posición financiera
                 </p>
               </div>
-              <p className="mt-0.5 pl-9 text-xs text-white/35">
+              <p className="mt-0.5 pl-8 text-[11px] text-white/35">
                 Salud financiera del negocio.
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
               <Link
                 href="/cuentas"
-                className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+                className="text-[10px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
               >
                 Ver cuentas →
               </Link>
@@ -536,7 +536,7 @@ function FinancialPositionHero({
               </span>
               <Link
                 href="/capital"
-                className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+                className="text-[10px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
               >
                 Ver capital →
               </Link>
@@ -544,7 +544,7 @@ function FinancialPositionHero({
           </div>
         </div>
 
-        <div className="relative grid grid-cols-1 gap-2 p-3 pt-4 sm:grid-cols-2 sm:p-4 sm:pt-5 lg:grid-cols-3 md:p-5 md:pt-6">
+        <div className="relative grid grid-cols-1 gap-1.5 p-2.5 pt-3 sm:grid-cols-2 sm:gap-2 sm:p-3 sm:pt-3.5 lg:grid-cols-3 md:p-4 md:pt-4">
           {financialCards.map((item) => (
             <FinancialKpiCard
               key={item.label}
@@ -562,8 +562,8 @@ function FinancialPositionHero({
         </div>
 
         {capitalContributed !== null && investedCapital <= 0 ? (
-          <div className="relative border-t border-amber-400/15 bg-amber-500/[0.06] px-4 py-2.5 md:px-5">
-            <p className="text-[11px] font-medium text-amber-200/90">
+          <div className="relative border-t border-amber-400/15 bg-amber-500/[0.06] px-4 py-2 md:px-5">
+            <p className="text-[10px] font-medium text-amber-200/90">
               Datos de aportaciones pendientes — Capital invertido y ROI no están disponibles hasta
               registrar aportaciones de socios.
             </p>
