@@ -27,6 +27,16 @@ export type UpdateWatchImagePayload = {
 
 const AUTH = { authenticated: true } as const;
 
+export type InventorySummary = {
+  totalInventoryValue: string;
+  activeItemCount: number;
+  averageCost: string;
+};
+
+export function getInventorySummary() {
+  return apiGet<InventorySummary>('/inventory/summary', AUTH);
+}
+
 export function listWatchImages(watchId: string) {
   return apiGet<WatchImage[]>(`/inventory/${watchId}/images`, AUTH);
 }
