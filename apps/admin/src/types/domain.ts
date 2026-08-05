@@ -17,6 +17,17 @@ export type AnalyticsSummary = {
   cashBalance: string;
   bankBalance: string;
   cesarBalance: string;
+  /** Mark-to-market crypto value (priced holdings only). */
+  cryptoValueMxn?: string;
+  cryptoCostBasisMxn?: string;
+  cryptoUnrealizedPnlMxn?: string;
+  cryptoUnrealizedPnlPercent?: string | null;
+  cryptoPriceStatus?: 'FRESH' | 'STALE' | 'VERY_STALE' | 'MISSING';
+  cryptoOldestPriceCapturedAt?: string | null;
+  cryptoNewestPriceCapturedAt?: string | null;
+  cryptoMissingPriceTickers?: string[];
+  cryptoActiveHoldingCount?: number;
+  cryptoUnpricedHoldingCount?: number;
   accountsPayable: string;
   salesThisMonthCount: number;
   salesThisMonthRevenue: string;

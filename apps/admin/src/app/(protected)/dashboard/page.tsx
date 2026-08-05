@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import {
+  Bitcoin,
   Landmark,
   PieChart,
   Receipt,
@@ -65,6 +66,16 @@ function calcRoi(capitalNeto: string | null, totalCapitalContributed: string | n
 
 function fmtRoiPct(roi: number) {
   return `${Math.round(roi)}%`;
+}
+
+function relativeAge(iso: string, now = new Date()): string {
+  const ms = now.getTime() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return 'recién';
+  const hours = Math.floor(ms / (60 * 60 * 1000));
+  if (hours < 1) return 'menos de 1 h';
+  if (hours < 48) return `${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `${days} d`;
 }
 
 function ExecutiveSectionTitle({
@@ -183,13 +194,49 @@ function FinancialPositionHero({
   const cash = num(summary.cashBalance);
   const bank = num(summary.bankBalance);
   const cesar = num(summary.cesarBalance);
+  const cryptoValue = num(summary.cryptoValueMxn ?? 0);
+  const cryptoPnl = num(summary.cryptoUnrealizedPnlMxn ?? 0);
+  const cryptoMissing = summary.cryptoMissingPriceTickers ?? [];
+  const cryptoUnpriced = summary.cryptoUnpricedHoldingCount ?? cryptoMissing.length;
+  const cryptoStatus = summary.cryptoPriceStatus ?? 'MISSING';
+  const cryptoHoldings = summary.cryptoActiveHoldingCount ?? 0;
   const receivable = cuentasReceivable !== null ? num(cuentasReceivable) : null;
   const payable = cuentasPayable !== null ? num(cuentasPayable) : null;
-  const liquidityTotal = cash + bank + cesar;
+  const liquidityTotal = cash + bank + cryptoValue + cesar;
   const pendingPartners = num(pendingToPartners);
   const investedCapital = num(capitalContributed);
   const netCapital = num(capitalNeto);
   const roi = calcRoi(capitalNeto, capitalContributed);
+
+  const cryptoHelperParts: string[] = [];
+  if (cryptoHoldings === 0) {
+    cryptoHelperParts.push('Sin posiciones');
+  } else if (summary.cryptoUnrealizedPnlMxn != null) {
+    cryptoHelperParts.push(
+      `P&L ${cryptoPnl >= 0 ? '+' : ''}${fmtMxn(cryptoPnl)} vs costo`,
+    );
+  }
+  if (summary.cryptoNewestPriceCapturedAt) {
+    cryptoHelperParts.push(
+      `Actualizado hace ${relativeAge(summary.cryptoNewestPriceCapturedAt)}`,
+    );
+  }
+  if (cryptoStatus === 'STALE' || cryptoStatus === 'VERY_STALE') {
+    cryptoHelperParts.push('Precios desactualizados');
+  }
+  if (cryptoUnpriced > 0) {
+    cryptoHelperParts.push(`${cryptoUnpriced} sin precio`);
+  }
+
+  const liquidityWarnings: string[] = [];
+  if (cryptoStatus === 'STALE' || cryptoStatus === 'VERY_STALE') {
+    liquidityWarnings.push('Crypto valuado con precios desactualizados.');
+  }
+  if (cryptoUnpriced > 0) {
+    liquidityWarnings.push(
+      `Liquidez parcial: ${cryptoUnpriced} activo${cryptoUnpriced === 1 ? '' : 's'} sin precio.`,
+    );
+  }
 
   const positions: Array<{
     label: string;
@@ -219,6 +266,23 @@ function FinancialPositionHero({
       group: 'liquidity',
       iconBubbleClass: 'bg-violet-500/15 text-violet-400',
       Icon: Landmark,
+    },
+    {
+      label: 'Crypto',
+      value: cryptoHoldings === 0 ? fmtMxn(0) : fmtMxn(cryptoValue),
+      helper: cryptoHelperParts.join(' · ') || 'Activo digital Wrist Caviar',
+      tone:
+        cryptoUnpriced > 0 || cryptoStatus === 'VERY_STALE'
+          ? 'warning'
+          : cryptoPnl > 0
+            ? 'positive'
+            : cryptoPnl < 0
+              ? 'negative'
+              : 'default',
+      group: 'liquidity',
+      iconBubbleClass: 'bg-amber-500/15 text-amber-400',
+      Icon: Bitcoin,
+      href: '/crypto',
     },
     {
       label: 'Cuenta César',
@@ -364,11 +428,20 @@ function FinancialPositionHero({
             >
               Ver capital →
             </Link>
+            <span className="hidden text-white/12 sm:inline" aria-hidden>
+              ·
+            </span>
+            <Link
+              href="/crypto"
+              className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+            >
+              Ver crypto →
+            </Link>
           </div>
         </div>
       </div>
 
-      <div className="relative grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-9 md:p-5">
+      <div className="relative grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-10 md:p-5">
         {positions.map((item) => (
           <FinancialKpiCard
             key={item.label}
@@ -411,7 +484,14 @@ function FinancialPositionHero({
             <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
               Liquidez total
             </p>
-            <p className="mt-1 text-xs text-white/35">Efectivo + Bancos + César</p>
+            <p className="mt-1 text-xs text-white/35">
+              Incluye efectivo, bancos, crypto valuado y Cuenta César.
+            </p>
+            {liquidityWarnings.length > 0 ? (
+              <p className="mt-2 text-[11px] font-medium text-amber-200/90">
+                {liquidityWarnings.join(' ')}
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3 sm:gap-4">
             <p className="text-4xl font-semibold tabular-nums tracking-tight text-emerald-400 xl:text-5xl">
