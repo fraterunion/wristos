@@ -26,6 +26,7 @@ import { CreateAccountPaymentDto } from './dto/create-account-payment.dto';
 import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto';
 import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
+import { isHistoricalDealSourceTag } from './historical-ar-exclusion';
 
 type EntryWithPayments = AccountEntry & { payments: AccountPayment[] };
 
@@ -122,7 +123,29 @@ export class CuentasService {
       overdueReceivableByCurrency: this.formatCurrencyBreakdown(overdueReceivableByCurrency),
       overduePayableByCurrency: this.formatCurrencyBreakdown(overduePayableByCurrency),
       exchangeRateUsed,
+      receivableStatusCounts: this.countStatuses(computed, AccountEntryType.RECEIVABLE),
+      payableStatusCounts: this.countStatuses(computed, AccountEntryType.PAYABLE),
+      expectedNetFlow: totalReceivable.minus(totalPayable).toFixed(2),
     };
+  }
+
+  private countStatuses(
+    rows: Array<{ type: string; status: string }>,
+    type: AccountEntryType,
+  ): Record<AccountEntryStatus, number> {
+    const counts: Record<AccountEntryStatus, number> = {
+      OPEN: 0,
+      PARTIAL: 0,
+      PAID: 0,
+      OVERDUE: 0,
+      CANCELLED: 0,
+    };
+    for (const row of rows) {
+      if (row.type !== type) continue;
+      const status = row.status as AccountEntryStatus;
+      if (status in counts) counts[status] += 1;
+    }
+    return counts;
   }
 
   private emptyCurrencyBreakdown(): CurrencyBreakdown {
@@ -177,8 +200,157 @@ export class CuentasService {
       orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
     });
 
-    const computed = await this.computeEntries(entries, tenantId, true);
+    let computed = await this.computeEntries(entries, tenantId, true);
+
+    const q = query.q?.trim().toLowerCase();
+    if (q) {
+      computed = computed.filter((row) => {
+        const haystack = [
+          row.counterpartyName,
+          row.concept,
+          row.notes ?? '',
+          row.reference ?? '',
+        ]
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+
+    const page = query.page;
+    const pageSize = query.pageSize ?? 50;
+    if (page !== undefined) {
+      const total = computed.length;
+      const start = (page - 1) * pageSize;
+      return {
+        items: computed.slice(start, start + pageSize),
+        total,
+        page,
+        pageSize,
+      };
+    }
+
     return computed;
+  }
+
+  /**
+   * Top debtors by outstanding RECEIVABLE balance.
+   * MXN and USD are returned separately — never silently converted.
+   */
+  async getTopDebtors(tenantId: string, limit = 10) {
+    const entries = await this.prisma.accountEntry.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        type: AccountEntryType.RECEIVABLE,
+      },
+      include: {
+        payments: { where: { deletedAt: null } },
+        client: { select: { id: true, name: true } },
+      },
+    });
+
+    const computed = await this.computeEntries(entries, tenantId, false);
+    type Acc = {
+      clientId: string | null;
+      counterpartyName: string;
+      currency: Currency;
+      outstanding: Prisma.Decimal;
+      openAccounts: number;
+    };
+    const map = new Map<string, Acc>();
+
+    for (const row of computed) {
+      const balance = new Prisma.Decimal(row.balance);
+      if (balance.lte(0)) continue;
+      if (
+        row.status === AccountEntryStatus.PAID ||
+        row.status === AccountEntryStatus.CANCELLED
+      ) {
+        continue;
+      }
+      const key = `${row.currency}::${row.clientId ?? row.counterpartyName}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.outstanding = existing.outstanding.plus(balance);
+        existing.openAccounts += 1;
+      } else {
+        map.set(key, {
+          clientId: row.clientId,
+          counterpartyName: row.counterpartyName,
+          currency: row.currency as Currency,
+          outstanding: balance,
+          openAccounts: 1,
+        });
+      }
+    }
+
+    return [...map.values()]
+      .sort((a, b) => b.outstanding.comparedTo(a.outstanding))
+      .slice(0, Math.max(1, Math.min(limit, 50)))
+      .map((row) => ({
+        clientId: row.clientId,
+        counterpartyName: row.counterpartyName,
+        currency: row.currency,
+        outstanding: row.outstanding.toFixed(2),
+        openAccounts: row.openAccounts,
+      }));
+  }
+
+  async getCustomerLedger(tenantId: string, clientId: string) {
+    const client = await this.prisma.client.findFirst({
+      where: { id: clientId, tenantId, deletedAt: null },
+      select: { id: true, name: true, email: true, phone: true },
+    });
+    if (!client) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    const entries = await this.prisma.accountEntry.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        OR: [
+          { clientId },
+          {
+            clientId: null,
+            counterpartyName: { equals: client.name, mode: 'insensitive' },
+          },
+        ],
+      },
+      include: {
+        payments: { where: { deletedAt: null }, orderBy: { paidAt: 'asc' } },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+    });
+
+    const computed = await this.computeEntries(entries, tenantId, true);
+    const receivables = computed.filter((e) => e.type === AccountEntryType.RECEIVABLE);
+    const payables = computed.filter((e) => e.type === AccountEntryType.PAYABLE);
+
+    const byCurrency = (rows: typeof computed) => {
+      const out = this.emptyCurrencyBreakdown();
+      for (const row of rows) {
+        const bal = new Prisma.Decimal(row.balance);
+        if (bal.lte(0)) continue;
+        if (
+          row.status === AccountEntryStatus.PAID ||
+          row.status === AccountEntryStatus.CANCELLED
+        ) {
+          continue;
+        }
+        this.addToCurrencyBreakdown(out, row.currency as Currency, bal);
+      }
+      return this.formatCurrencyBreakdown(out);
+    };
+
+    return {
+      customer: client,
+      receivables,
+      payables,
+      receivableOutstandingByCurrency: byCurrency(receivables),
+      payableOutstandingByCurrency: byCurrency(payables),
+    };
   }
 
   async findEntry(id: string, tenantId: string) {
@@ -485,6 +657,11 @@ export class CuentasService {
 
     if (!deal) {
       await this.cancelDealEntries(dealId, tenantId);
+      return;
+    }
+
+    // Completed historical sales snapshots must never become live AR.
+    if (isHistoricalDealSourceTag(deal.sourceTag)) {
       return;
     }
 

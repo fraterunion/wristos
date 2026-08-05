@@ -31,6 +31,26 @@ export class CuentasController {
     return this.cuentasService.getSummary(user.tenantId);
   }
 
+  @Get('top-debtors')
+  topDebtors(
+    @CurrentUser() user: CurrentUserType,
+    @Query('limit') limit?: string,
+  ) {
+    const parsed = limit ? Number(limit) : 10;
+    return this.cuentasService.getTopDebtors(
+      user.tenantId,
+      Number.isFinite(parsed) ? parsed : 10,
+    );
+  }
+
+  @Get('clients/:clientId/ledger')
+  customerLedger(
+    @CurrentUser() user: CurrentUserType,
+    @Param('clientId') clientId: string,
+  ) {
+    return this.cuentasService.getCustomerLedger(user.tenantId, clientId);
+  }
+
   @Get('entries')
   listEntries(
     @CurrentUser() user: CurrentUserType,
