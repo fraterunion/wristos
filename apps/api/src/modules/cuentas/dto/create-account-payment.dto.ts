@@ -7,7 +7,15 @@ import {
   IsOptional,
   IsString,
   Min,
+  ValidateIf,
 } from 'class-validator';
+
+export enum AccountPaymentDestination {
+  CASH = 'CASH',
+  BANK = 'BANK',
+  CESAR = 'CESAR',
+  APPLY_TO_PAYABLE = 'APPLY_TO_PAYABLE',
+}
 
 export class CreateAccountPaymentDto {
   @Type(() => Number)
@@ -19,8 +27,16 @@ export class CreateAccountPaymentDto {
   @IsEnum(Currency)
   currency?: Currency;
 
+  /**
+   * Required for treasury destinations. For APPLY_TO_PAYABLE the service
+   * forces PaymentMethod.SETTLEMENT regardless of this field.
+   */
+  @ValidateIf(
+    (o: CreateAccountPaymentDto) =>
+      o.destination !== AccountPaymentDestination.APPLY_TO_PAYABLE,
+  )
   @IsEnum(PaymentMethod)
-  method!: PaymentMethod;
+  method?: PaymentMethod;
 
   @IsDateString()
   paidAt!: string;
@@ -29,8 +45,31 @@ export class CreateAccountPaymentDto {
   @IsString()
   notes?: string;
 
+  /**
+   * Preferred payment destination. When omitted, `cashAccount` preserves
+   * the previous CASH/BANK/CESAR behavior.
+   */
+  @IsOptional()
+  @IsEnum(AccountPaymentDestination)
+  destination?: AccountPaymentDestination;
+
+  @ValidateIf(
+    (o: CreateAccountPaymentDto) =>
+      o.destination !== AccountPaymentDestination.APPLY_TO_PAYABLE,
+  )
   @IsEnum(TreasuryAccount)
-  cashAccount!: TreasuryAccount;
+  cashAccount?: TreasuryAccount;
+
+  @ValidateIf(
+    (o: CreateAccountPaymentDto) =>
+      o.destination === AccountPaymentDestination.APPLY_TO_PAYABLE,
+  )
+  @IsString()
+  payableEntryId?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 
   @IsOptional()
   @Type(() => Number)

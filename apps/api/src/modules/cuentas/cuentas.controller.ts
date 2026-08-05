@@ -93,7 +93,15 @@ export class CuentasController {
     @Param('id') id: string,
     @Body() dto: CreateAccountPaymentDto,
   ) {
-    return this.cuentasService.createPayment(id, user.tenantId, dto);
+    return this.cuentasService.createPayment(id, user.tenantId, dto, user.userId);
+  }
+
+  @Delete('settlements/:id')
+  reverseSettlement(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') id: string,
+  ) {
+    return this.cuentasService.reverseSettlement(id, user.tenantId);
   }
 
   @Patch('entries/:id/payments/:paymentId')

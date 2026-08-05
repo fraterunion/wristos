@@ -249,7 +249,7 @@ export type PaymentSummary = {
   pendingBalance: string;
 };
 
-export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CARD' | 'OTHER' | 'BANCOS' | 'CESAR';
+export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CARD' | 'OTHER' | 'BANCOS' | 'CESAR' | 'SETTLEMENT';
 export type PaymentStatus = 'PENDING' | 'PAID' | 'OVERDUE';
 
 export type Payment = {

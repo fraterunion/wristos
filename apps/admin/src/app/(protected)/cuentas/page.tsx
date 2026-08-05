@@ -21,6 +21,7 @@ import {
   type AccountEntryStatus,
   type AccountEntryType,
   type AccountPayment,
+  type AccountPaymentDestination,
   type CounterpartyType,
   type Currency,
   type CuentasSummary,
@@ -67,12 +68,14 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   OTHER: 'Otro',
   BANCOS: 'Bancos',
   CESAR: 'César',
+  SETTLEMENT: 'Compensación',
 };
 
-const TREASURY_ACCOUNT_OPTIONS: { value: TreasuryAccount; label: string }[] = [
+const PAYMENT_DESTINATION_OPTIONS: { value: AccountPaymentDestination; label: string }[] = [
   { value: 'CASH', label: 'Efectivo' },
   { value: 'BANK', label: 'Bancos' },
   { value: 'CESAR', label: 'Cuenta César' },
+  { value: 'APPLY_TO_PAYABLE', label: 'Aplicar a cuenta por pagar' },
 ];
 
 const TREASURY_ACCOUNT_LABELS: Record<TreasuryAccount, string> = {
@@ -92,7 +95,18 @@ function treasuryAccountToPaymentMethod(account: TreasuryAccount): PaymentMethod
   }
 }
 
-function paymentSourceLabel(payment: AccountPayment): string {
+function paymentSourceLabel(payment: AccountPayment, entryType: AccountEntryType): string {
+  if (payment.settlement) {
+    if (entryType === 'RECEIVABLE' || payment.settlement.role === 'RECEIVABLE_SIDE') {
+      return `Aplicado a cuenta por pagar · ${payment.settlement.counterpartName}`;
+    }
+    return `Pago recibido por compensación · Origen: ${payment.settlement.counterpartName}`;
+  }
+  if (payment.method === 'SETTLEMENT') {
+    return entryType === 'RECEIVABLE'
+      ? 'Aplicado a cuenta por pagar'
+      : 'Pago recibido por compensación';
+  }
   if (payment.cashAccount) {
     return TREASURY_ACCOUNT_LABELS[payment.cashAccount];
   }
@@ -872,16 +886,24 @@ type PaymentForm = {
   amount: string;
   paidAt: string;
   notes: string;
+  destination: AccountPaymentDestination;
   cashAccount: TreasuryAccount;
+  payableEntryId: string;
   exchangeRateUsed: string;
+  confirmedSettlement: boolean;
+  idempotencyKey: string;
 };
 
 const EMPTY_PAYMENT_FORM: PaymentForm = {
   amount: '',
   paidAt: todayIso(),
   notes: '',
+  destination: 'BANK',
   cashAccount: 'BANK',
+  payableEntryId: '',
   exchangeRateUsed: '',
+  confirmedSettlement: false,
+  idempotencyKey: '',
 };
 
 function PaymentModal({
@@ -901,23 +923,41 @@ function PaymentModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [fxLoading, setFxLoading] = useState(false);
+  const [payableOptions, setPayableOptions] = useState<AccountEntry[]>([]);
+  const [payableSearch, setPayableSearch] = useState('');
+  const [payableLoading, setPayableLoading] = useState(false);
+
+  const isSettlement =
+    entry?.type === 'RECEIVABLE' && form.destination === 'APPLY_TO_PAYABLE';
+  const selectedPayable = payableOptions.find((p) => p.id === form.payableEntryId) ?? null;
 
   useEffect(() => {
     if (!open) {
       setForm(EMPTY_PAYMENT_FORM);
       setError(null);
+      setPayableOptions([]);
+      setPayableSearch('');
       return;
     }
+    const key =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `stl-${Date.now()}`;
     if (editing) {
+      const cashAccount = editing.cashAccount ?? 'BANK';
       setForm({
         amount: editing.amount,
         paidAt: isoToDateInput(editing.paidAt),
         notes: editing.notes ?? '',
-        cashAccount: editing.cashAccount ?? 'BANK',
+        destination: cashAccount,
+        cashAccount,
+        payableEntryId: '',
         exchangeRateUsed: editing.exchangeRateUsed ?? '',
+        confirmedSettlement: false,
+        idempotencyKey: key,
       });
     } else {
-      setForm(EMPTY_PAYMENT_FORM);
+      setForm({ ...EMPTY_PAYMENT_FORM, idempotencyKey: key });
     }
   }, [open, editing]);
 
@@ -935,6 +975,45 @@ function PaymentModal({
       .finally(() => setFxLoading(false));
   }, [open, entry]);
 
+  useEffect(() => {
+    if (!open || !entry || !isSettlement) return;
+    let cancelled = false;
+    setPayableLoading(true);
+    listAccountEntries({ type: 'PAYABLE', q: payableSearch || undefined, pageSize: 50 })
+      .then((rows) => {
+        if (cancelled) return;
+        const filtered = rows.filter(
+          (row) =>
+            row.currency === entry.currency &&
+            row.status !== 'PAID' &&
+            row.status !== 'CANCELLED' &&
+            Number(row.balance) > 0,
+        );
+        setPayableOptions(filtered);
+      })
+      .catch(() => {
+        if (!cancelled) setPayableOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPayableLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, entry, isSettlement, payableSearch]);
+
+  useEffect(() => {
+    if (!isSettlement || !entry || !selectedPayable) return;
+    const recvBal = Number(entry.balance);
+    const payBal = Number(selectedPayable.balance);
+    if (!Number.isFinite(recvBal) || !Number.isFinite(payBal)) return;
+    const suggested = Math.min(recvBal, payBal);
+    setForm((current) => ({
+      ...current,
+      amount: current.amount || String(suggested),
+    }));
+  }, [isSettlement, entry, selectedPayable?.id]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const amount = Number(form.amount);
@@ -946,11 +1025,20 @@ function PaymentModal({
       setError('Selecciona una fecha.');
       return;
     }
-    if (!form.cashAccount) {
-      setError('Selecciona la cuenta de tesorería afectada.');
+    if (isSettlement) {
+      if (!form.payableEntryId) {
+        setError('Selecciona la cuenta por pagar a compensar.');
+        return;
+      }
+      if (!form.confirmedSettlement) {
+        setError('Confirma la compensación para continuar.');
+        return;
+      }
+    } else if (!form.cashAccount) {
+      setError('Selecciona el destino del pago.');
       return;
     }
-    if (entry?.currency === 'USD') {
+    if (entry?.currency === 'USD' && !isSettlement) {
       const rate = Number(form.exchangeRateUsed);
       if (!form.exchangeRateUsed || !Number.isFinite(rate) || rate <= 0) {
         setError('Ingresa un tipo de cambio válido para pagos en USD.');
@@ -970,6 +1058,19 @@ function PaymentModal({
   if (!open || !entry) return null;
 
   const isEdit = editing !== null;
+  const destinationOptions =
+    entry.type === 'RECEIVABLE'
+      ? PAYMENT_DESTINATION_OPTIONS
+      : PAYMENT_DESTINATION_OPTIONS.filter((o) => o.value !== 'APPLY_TO_PAYABLE');
+
+  const recvAfter =
+    isSettlement && selectedPayable
+      ? Math.max(0, Number(entry.balance) - Number(form.amount || 0))
+      : null;
+  const payAfter =
+    isSettlement && selectedPayable
+      ? Math.max(0, Number(selectedPayable.balance) - Number(form.amount || 0))
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4">
@@ -1017,23 +1118,130 @@ function PaymentModal({
           </div>
           <div>
             <label className="ui-field-label">
-              {entry.type === 'RECEIVABLE'
-                ? '¿Dónde recibiste el dinero?'
-                : '¿De dónde salió el dinero?'}
+              {entry.type === 'RECEIVABLE' ? 'Destino del pago' : '¿De dónde salió el dinero?'}
             </label>
-            <div className="mt-1.5 grid grid-cols-3 gap-2">
-              {TREASURY_ACCOUNT_OPTIONS.map((option) => (
+            <div
+              className={`mt-1.5 grid gap-2 ${
+                entry.type === 'RECEIVABLE' ? 'grid-cols-2' : 'grid-cols-3'
+              }`}
+            >
+              {destinationOptions.map((option) => (
                 <PillBtn
                   key={option.value}
-                  active={form.cashAccount === option.value}
-                  onClick={() => setForm({ ...form, cashAccount: option.value })}
+                  active={form.destination === option.value}
+                  onClick={() => {
+                    if (option.value === 'APPLY_TO_PAYABLE') {
+                      setForm({
+                        ...form,
+                        destination: option.value,
+                        payableEntryId: '',
+                        confirmedSettlement: false,
+                        amount: '',
+                      });
+                    } else {
+                      setForm({
+                        ...form,
+                        destination: option.value,
+                        cashAccount: option.value,
+                        payableEntryId: '',
+                        confirmedSettlement: false,
+                      });
+                    }
+                  }}
                 >
                   {option.label}
                 </PillBtn>
               ))}
             </div>
           </div>
-          {entry.currency === 'USD' && (
+
+          {isSettlement ? (
+            <div className="space-y-3 rounded-xl border border-white/[0.08] bg-black/20 p-3">
+              <div>
+                <label className="ui-field-label">Cuenta por pagar</label>
+                <input
+                  type="search"
+                  className="ui-input mt-1.5 w-full"
+                  placeholder="Buscar contraparte o concepto…"
+                  value={payableSearch}
+                  onChange={(e) => setPayableSearch(e.target.value)}
+                />
+                <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                  {payableLoading ? (
+                    <p className="px-1 py-2 text-xs text-white/35">Buscando…</p>
+                  ) : payableOptions.length === 0 ? (
+                    <p className="px-1 py-2 text-xs text-white/35">
+                      No hay cuentas por pagar abiertas en {entry.currency}.
+                    </p>
+                  ) : (
+                    payableOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() =>
+                          setForm({
+                            ...form,
+                            payableEntryId: option.id,
+                            confirmedSettlement: false,
+                            amount: '',
+                          })
+                        }
+                        className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+                          form.payableEntryId === option.id
+                            ? 'border-emerald-400/40 bg-emerald-500/10'
+                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-white/85">{option.counterpartyName}</p>
+                        <p className="mt-0.5 truncate text-xs text-white/40">{option.concept}</p>
+                        <p className="mt-1 text-xs tabular-nums text-white/55">
+                          Pendiente {fmtEntryMoney(option.balance, option.currency)} ·{' '}
+                          {STATUS_LABELS[option.status]}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {selectedPayable ? (
+                <div className="rounded-lg border border-amber-400/20 bg-amber-500/[0.07] px-3 py-2.5">
+                  <p className="text-[11px] font-medium text-amber-100/90">
+                    Se reducirán ambas cuentas sin mover efectivo, bancos ni Cuenta César.
+                  </p>
+                  <div className="mt-2 space-y-1 text-xs text-white/60">
+                    <p>
+                      {entry.counterpartyName}:{' '}
+                      <span className="tabular-nums text-white/80">
+                        {fmtEntryMoney(entry.balance, entry.currency)} →{' '}
+                        {fmtEntryMoney(String(recvAfter ?? 0), entry.currency)}
+                      </span>
+                    </p>
+                    <p>
+                      {selectedPayable.counterpartyName}:{' '}
+                      <span className="tabular-nums text-white/80">
+                        {fmtEntryMoney(selectedPayable.balance, selectedPayable.currency)} →{' '}
+                        {fmtEntryMoney(String(payAfter ?? 0), selectedPayable.currency)}
+                      </span>
+                    </p>
+                  </div>
+                  <label className="mt-3 flex items-start gap-2 text-xs text-white/70">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={form.confirmedSettlement}
+                      onChange={(e) =>
+                        setForm({ ...form, confirmedSettlement: e.target.checked })
+                      }
+                    />
+                    Confirmo aplicar esta compensación entre ambas cuentas.
+                  </label>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {entry.currency === 'USD' && !isSettlement && (
             <div>
               <label className="ui-field-label">Tipo de cambio MXN/USD</label>
               <input
@@ -1074,7 +1282,13 @@ function PaymentModal({
               Cancelar
             </button>
             <button type="submit" className="ui-btn-primary px-4 py-2" disabled={saving}>
-              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Registrar pago'}
+              {saving
+                ? 'Guardando…'
+                : isEdit
+                  ? 'Guardar cambios'
+                  : isSettlement
+                    ? 'Aplicar compensación'
+                    : 'Registrar pago'}
             </button>
           </div>
         </form>
@@ -1267,7 +1481,28 @@ function EntryDrawer({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-xs tabular-nums text-white/35">{fmtDate(payment.paidAt)}</p>
-                        <p className="mt-1 text-xs text-white/40">{paymentSourceLabel(payment)}</p>
+                        <p className="mt-1 text-xs text-white/40">
+                          {paymentSourceLabel(payment, entry.type)}
+                        </p>
+                        {payment.settlementId ? (
+                          <p className="mt-0.5 text-[10px] tabular-nums text-white/25">
+                            Settlement ID: {payment.settlementId}
+                          </p>
+                        ) : null}
+                        {payment.settlement ? (
+                          <button
+                            type="button"
+                            className="mt-1 text-[11px] font-medium text-emerald-400/90 underline-offset-2 hover:underline"
+                            onClick={() => {
+                              // Navigate by selecting counterpart in list via soft hint — open same drawer refresh path
+                              window.location.href = `/cuentas?type=${
+                                payment.settlement?.role === 'RECEIVABLE_SIDE' ? 'PAYABLE' : 'RECEIVABLE'
+                              }`;
+                            }}
+                          >
+                            Ver contraparte: {payment.settlement.counterpartName} →
+                          </button>
+                        ) : null}
                         {payment.notes ? (
                           <p className="mt-1 truncate text-sm text-white/40">{payment.notes}</p>
                         ) : null}
@@ -1478,21 +1713,44 @@ export default function CuentasPage() {
     const entry = paymentModal.entry;
     if (!entry) return;
 
-    const body = {
-      amount: Number(form.amount),
-      method: treasuryAccountToPaymentMethod(form.cashAccount),
-      paidAt: form.paidAt,
-      notes: form.notes.trim() || undefined,
-      cashAccount: form.cashAccount,
-      ...(entry.currency === 'USD'
-        ? { exchangeRateUsed: Number(form.exchangeRateUsed) }
-        : {}),
-    };
+    const isSettlement =
+      entry.type === 'RECEIVABLE' && form.destination === 'APPLY_TO_PAYABLE';
 
     if (paymentModal.editing) {
-      await updateAccountPayment(entry.id, paymentModal.editing.id, body);
+      if (isSettlement || paymentModal.editing.settlementId) {
+        throw new Error('Las compensaciones no se editan; reviértelas desde el pago.');
+      }
+      await updateAccountPayment(entry.id, paymentModal.editing.id, {
+        amount: Number(form.amount),
+        method: treasuryAccountToPaymentMethod(form.cashAccount),
+        paidAt: form.paidAt,
+        notes: form.notes.trim() || undefined,
+        cashAccount: form.cashAccount,
+        ...(entry.currency === 'USD'
+          ? { exchangeRateUsed: Number(form.exchangeRateUsed) }
+          : {}),
+      });
+    } else if (isSettlement) {
+      await createAccountPayment(entry.id, {
+        amount: Number(form.amount),
+        paidAt: form.paidAt,
+        notes: form.notes.trim() || undefined,
+        destination: 'APPLY_TO_PAYABLE',
+        payableEntryId: form.payableEntryId,
+        idempotencyKey: form.idempotencyKey || undefined,
+      });
     } else {
-      await createAccountPayment(entry.id, body);
+      await createAccountPayment(entry.id, {
+        amount: Number(form.amount),
+        method: treasuryAccountToPaymentMethod(form.cashAccount),
+        paidAt: form.paidAt,
+        notes: form.notes.trim() || undefined,
+        cashAccount: form.cashAccount,
+        destination: form.destination as TreasuryAccount,
+        ...(entry.currency === 'USD'
+          ? { exchangeRateUsed: Number(form.exchangeRateUsed) }
+          : {}),
+      });
     }
 
     const entryId = entry.id;

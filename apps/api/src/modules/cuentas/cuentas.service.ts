@@ -11,24 +11,58 @@ import {
   AccountEntryStatus,
   AccountEntryType,
   AccountPayment,
+  AccountSettlement,
   CounterpartyType,
   Currency,
   DealStage,
+  PaymentMethod,
   PaymentStatus,
   Prisma,
+  TreasuryAccount,
   TreasuryDirection,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FxService } from '../fx/fx.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { CreateAccountEntryDto } from './dto/create-account-entry.dto';
-import { CreateAccountPaymentDto } from './dto/create-account-payment.dto';
+import {
+  AccountPaymentDestination,
+  CreateAccountPaymentDto,
+} from './dto/create-account-payment.dto';
 import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto';
 import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
 import { isHistoricalDealSourceTag } from './historical-ar-exclusion';
 
-type EntryWithPayments = AccountEntry & { payments: AccountPayment[] };
+type SettlementPaymentLinks = {
+  settlementAsReceivablePayment: (AccountSettlement & {
+    payableEntry: Pick<AccountEntry, 'id' | 'counterpartyName' | 'concept' | 'type'>;
+  }) | null;
+  settlementAsPayablePayment: (AccountSettlement & {
+    receivableEntry: Pick<AccountEntry, 'id' | 'counterpartyName' | 'concept' | 'type'>;
+  }) | null;
+};
+
+type PaymentWithSettlement = AccountPayment & Partial<SettlementPaymentLinks>;
+
+type EntryWithPayments = AccountEntry & { payments: PaymentWithSettlement[] };
+
+const paymentIncludeSettlement = {
+  settlementAsReceivablePayment: {
+    include: {
+      payableEntry: {
+        select: { id: true, counterpartyName: true, concept: true, type: true },
+      },
+    },
+  },
+  settlementAsPayablePayment: {
+    include: {
+      receivableEntry: {
+        select: { id: true, counterpartyName: true, concept: true, type: true },
+      },
+    },
+  },
+} satisfies Prisma.AccountPaymentInclude;
 
 type CurrencyBreakdown = {
   MXN: Prisma.Decimal;
@@ -195,12 +229,16 @@ export class CuentasService {
     const entries = await this.prisma.accountEntry.findMany({
       where,
       include: {
-        payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
+        payments: {
+          where: { deletedAt: null },
+          orderBy: { paidAt: 'desc' },
+          include: paymentIncludeSettlement,
+        },
       },
       orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
     });
 
-    let computed = await this.computeEntries(entries, tenantId, true);
+    let computed = await this.computeEntries(entries as EntryWithPayments[], tenantId, true);
 
     const q = query.q?.trim().toLowerCase();
     if (q) {
@@ -496,11 +534,19 @@ export class CuentasService {
       where: { id },
       data,
       include: {
-        payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
+        payments: {
+          where: { deletedAt: null },
+          orderBy: { paidAt: 'desc' },
+          include: paymentIncludeSettlement,
+        },
       },
     });
 
-    const [serialized] = await this.computeEntries([updated], tenantId, true);
+    const [serialized] = await this.computeEntries(
+      [updated as EntryWithPayments],
+      tenantId,
+      true,
+    );
     return serialized;
   }
 
@@ -521,7 +567,17 @@ export class CuentasService {
 
   // ─── Payments ────────────────────────────────────────────────────────────────
 
-  async createPayment(entryId: string, tenantId: string, dto: CreateAccountPaymentDto) {
+  async createPayment(
+    entryId: string,
+    tenantId: string,
+    dto: CreateAccountPaymentDto,
+    actorUserId?: string,
+  ) {
+    const destination = this.resolvePaymentDestination(dto);
+    if (destination === AccountPaymentDestination.APPLY_TO_PAYABLE) {
+      return this.createPayableSettlement(entryId, tenantId, dto, actorUserId);
+    }
+
     const entry = await this.findEntryOrThrow(entryId, tenantId);
     this.assertManualEntry(entry);
 
@@ -530,18 +586,28 @@ export class CuentasService {
       throw new BadRequestException('Payment currency must match entry currency');
     }
 
+    const cashAccount = this.resolveTreasuryAccount(dto, destination);
+    const method = this.resolveTreasuryPaymentMethod(dto, cashAccount);
     this.assertExchangeRateForCurrency(currency, dto.exchangeRateUsed);
+
+    const amount = new Prisma.Decimal(dto.amount);
+    const outstanding = await this.getEntryOutstanding(entry);
+    if (amount.greaterThan(outstanding)) {
+      throw new BadRequestException(
+        `El monto excede el saldo pendiente (${outstanding.toFixed(2)} ${entry.currency}).`,
+      );
+    }
 
     const payment = await this.prisma.accountPayment.create({
       data: {
         tenant: { connect: { id: tenantId } },
         entry: { connect: { id: entryId } },
-        amount: new Prisma.Decimal(dto.amount),
+        amount,
         currency,
-        method: dto.method,
+        method,
         paidAt: new Date(dto.paidAt),
         notes: dto.notes,
-        cashAccount: dto.cashAccount,
+        cashAccount,
         exchangeRateUsed:
           currency === Currency.USD && dto.exchangeRateUsed !== undefined
             ? new Prisma.Decimal(dto.exchangeRateUsed)
@@ -552,7 +618,7 @@ export class CuentasService {
     await this.treasuryService.createFromAccountPayment({
       tenantId,
       accountPaymentId: payment.id,
-      account: payment.cashAccount!,
+      account: cashAccount,
       direction: this.treasuryDirectionForEntry(entry.type),
       amount: payment.amount,
       currency: payment.currency,
@@ -562,6 +628,43 @@ export class CuentasService {
     });
 
     return this.findEntry(entryId, tenantId);
+  }
+
+  async reverseSettlement(settlementId: string, tenantId: string) {
+    const settlement = await this.prisma.accountSettlement.findFirst({
+      where: { id: settlementId, tenantId, deletedAt: null },
+    });
+    if (!settlement) {
+      throw new NotFoundException('Settlement not found');
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.accountSettlement.update({
+        where: { id: settlement.id },
+        data: { deletedAt: now },
+      });
+      await tx.accountPayment.updateMany({
+        where: {
+          id: { in: [settlement.receivablePaymentId, settlement.payablePaymentId] },
+          tenantId,
+          deletedAt: null,
+        },
+        data: { deletedAt: now },
+      });
+    });
+
+    const [receivable, payable] = await Promise.all([
+      this.findEntry(settlement.receivableEntryId, tenantId),
+      this.findEntry(settlement.payableEntryId, tenantId),
+    ]);
+
+    return {
+      settlementId: settlement.id,
+      reversed: true,
+      receivable,
+      payable,
+    };
   }
 
   async updatePayment(
@@ -574,6 +677,7 @@ export class CuentasService {
     this.assertManualEntry(entry);
 
     const payment = await this.findPaymentOrThrow(paymentId, entryId, tenantId);
+    await this.assertPaymentNotSettlementLinked(paymentId);
 
     const nextCurrency = dto.currency ?? payment.currency;
     if (nextCurrency !== entry.currency) {
@@ -634,6 +738,11 @@ export class CuentasService {
     this.assertManualEntry(entry);
     await this.findPaymentOrThrow(paymentId, entryId, tenantId);
 
+    const linkedSettlement = await this.findActiveSettlementForPayment(paymentId, tenantId);
+    if (linkedSettlement) {
+      return this.reverseSettlement(linkedSettlement.id, tenantId);
+    }
+
     await this.prisma.accountPayment.update({
       where: { id: paymentId },
       data: { deletedAt: new Date() },
@@ -642,6 +751,287 @@ export class CuentasService {
     await this.treasuryService.deleteByAccountPaymentId(paymentId);
 
     return this.findEntry(entryId, tenantId);
+  }
+
+  // ─── Deal sync ───────────────────────────────────────────────────────────────
+
+  private async createPayableSettlement(
+    receivableEntryId: string,
+    tenantId: string,
+    dto: CreateAccountPaymentDto,
+    actorUserId?: string,
+  ) {
+    if (!dto.payableEntryId?.trim()) {
+      throw new BadRequestException('payableEntryId is required for APPLY_TO_PAYABLE');
+    }
+
+    const payableEntryId = dto.payableEntryId.trim();
+    const amount = new Prisma.Decimal(dto.amount);
+    if (!amount.isFinite() || amount.lessThanOrEqualTo(0)) {
+      throw new BadRequestException('Settlement amount must be greater than 0');
+    }
+
+    const idempotencyKey = dto.idempotencyKey?.trim() || null;
+    if (idempotencyKey) {
+      const existing = await this.prisma.accountSettlement.findFirst({
+        where: { tenantId, idempotencyKey },
+      });
+      if (existing && !existing.deletedAt) {
+        return this.buildSettlementResponse(existing.id, tenantId);
+      }
+      if (existing?.deletedAt) {
+        throw new ConflictException(
+          'idempotencyKey already used by a reversed settlement; use a new key',
+        );
+      }
+    }
+
+    let settlementId: string;
+    try {
+      settlementId = await this.prisma.$transaction(
+        async (tx) => {
+          const receivable = await tx.accountEntry.findFirst({
+            where: { id: receivableEntryId, tenantId, deletedAt: null },
+            include: {
+              payments: { where: { deletedAt: null } },
+            },
+          });
+          if (!receivable) {
+            throw new NotFoundException('Account entry not found');
+          }
+          this.assertManualEntry(receivable);
+          if (receivable.type !== AccountEntryType.RECEIVABLE) {
+            throw new BadRequestException(
+              'APPLY_TO_PAYABLE only applies when registering a payment on a RECEIVABLE',
+            );
+          }
+          if (receivable.status === AccountEntryStatus.CANCELLED) {
+            throw new BadRequestException('Cannot settle a cancelled receivable');
+          }
+          if (receivable.status === AccountEntryStatus.PAID) {
+            throw new BadRequestException('Cannot settle a fully paid receivable');
+          }
+
+          const payable = await tx.accountEntry.findFirst({
+            where: { id: payableEntryId, tenantId, deletedAt: null },
+            include: {
+              payments: { where: { deletedAt: null } },
+            },
+          });
+          if (!payable) {
+            throw new NotFoundException('Payable account entry not found');
+          }
+          if (payable.type !== AccountEntryType.PAYABLE) {
+            throw new BadRequestException('Target must be a PAYABLE account entry');
+          }
+          if (payable.status === AccountEntryStatus.CANCELLED) {
+            throw new BadRequestException('Cannot settle against a cancelled payable');
+          }
+          if (payable.status === AccountEntryStatus.PAID) {
+            throw new BadRequestException('Cannot settle against a fully paid payable');
+          }
+
+          this.assertManualEntry(payable);
+
+          if (receivable.currency !== payable.currency) {
+            throw new BadRequestException(
+              'Las cuentas deben estar en la misma moneda para aplicar una compensación.',
+            );
+          }
+
+          const currency = dto.currency ?? receivable.currency;
+          if (currency !== receivable.currency) {
+            throw new BadRequestException('Payment currency must match entry currency');
+          }
+
+          const receivableOutstanding = this.outstandingFromPayments(
+            receivable.totalAmount,
+            receivable.payments,
+          );
+          const payableOutstanding = this.outstandingFromPayments(
+            payable.totalAmount,
+            payable.payments,
+          );
+
+          if (amount.greaterThan(receivableOutstanding)) {
+            throw new BadRequestException(
+              `El monto excede el saldo pendiente del cobro (${receivableOutstanding.toFixed(2)} ${currency}).`,
+            );
+          }
+          if (amount.greaterThan(payableOutstanding)) {
+            throw new BadRequestException(
+              `El monto excede el saldo pendiente de la cuenta por pagar (${payableOutstanding.toFixed(2)} ${currency}).`,
+            );
+          }
+
+          const paidAt = new Date(dto.paidAt);
+          const receivablePayment = await tx.accountPayment.create({
+            data: {
+              tenantId,
+              entryId: receivable.id,
+              amount,
+              currency,
+              method: PaymentMethod.SETTLEMENT,
+              paidAt,
+              notes: dto.notes ?? null,
+              cashAccount: null,
+              exchangeRateUsed: null,
+            },
+          });
+          const payablePayment = await tx.accountPayment.create({
+            data: {
+              tenantId,
+              entryId: payable.id,
+              amount,
+              currency,
+              method: PaymentMethod.SETTLEMENT,
+              paidAt,
+              notes: dto.notes ?? null,
+              cashAccount: null,
+              exchangeRateUsed: null,
+            },
+          });
+
+          const settlement = await tx.accountSettlement.create({
+            data: {
+              tenantId,
+              receivableEntryId: receivable.id,
+              payableEntryId: payable.id,
+              receivablePaymentId: receivablePayment.id,
+              payablePaymentId: payablePayment.id,
+              amount,
+              currency,
+              effectiveDate: paidAt,
+              notes: dto.notes ?? null,
+              createdByUserId: actorUserId ?? null,
+              idempotencyKey,
+            },
+          });
+
+          return settlement.id;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        idempotencyKey
+      ) {
+        const existing = await this.prisma.accountSettlement.findFirst({
+          where: { tenantId, idempotencyKey, deletedAt: null },
+        });
+        if (existing) {
+          return this.buildSettlementResponse(existing.id, tenantId);
+        }
+      }
+      throw error;
+    }
+
+    return this.buildSettlementResponse(settlementId, tenantId);
+  }
+
+  private async buildSettlementResponse(settlementId: string, tenantId: string) {
+    const settlement = await this.prisma.accountSettlement.findFirst({
+      where: { id: settlementId, tenantId },
+      include: {
+        receivablePayment: { include: paymentIncludeSettlement },
+        payablePayment: { include: paymentIncludeSettlement },
+      },
+    });
+    if (!settlement) {
+      throw new NotFoundException('Settlement not found');
+    }
+
+    const [receivable, payable] = await Promise.all([
+      this.findEntry(settlement.receivableEntryId, tenantId),
+      this.findEntry(settlement.payableEntryId, tenantId),
+    ]);
+
+    return {
+      settlementId: settlement.id,
+      receivablePayment: this.serializePayment(
+        settlement.receivablePayment as PaymentWithSettlement,
+      ),
+      payablePayment: this.serializePayment(
+        settlement.payablePayment as PaymentWithSettlement,
+      ),
+      receivable,
+      payable,
+    };
+  }
+
+  private resolvePaymentDestination(
+    dto: CreateAccountPaymentDto,
+  ): AccountPaymentDestination {
+    if (dto.destination) return dto.destination;
+    if (dto.cashAccount === TreasuryAccount.CASH) return AccountPaymentDestination.CASH;
+    if (dto.cashAccount === TreasuryAccount.BANK) return AccountPaymentDestination.BANK;
+    if (dto.cashAccount === TreasuryAccount.CESAR) return AccountPaymentDestination.CESAR;
+    throw new BadRequestException(
+      'destination or cashAccount is required (CASH, BANK, CESAR, or APPLY_TO_PAYABLE)',
+    );
+  }
+
+  private resolveTreasuryAccount(
+    dto: CreateAccountPaymentDto,
+    destination: AccountPaymentDestination,
+  ): TreasuryAccount {
+    if (destination === AccountPaymentDestination.CASH) return TreasuryAccount.CASH;
+    if (destination === AccountPaymentDestination.BANK) return TreasuryAccount.BANK;
+    if (destination === AccountPaymentDestination.CESAR) return TreasuryAccount.CESAR;
+    if (dto.cashAccount) return dto.cashAccount;
+    throw new BadRequestException('cashAccount is required for treasury destinations');
+  }
+
+  private resolveTreasuryPaymentMethod(
+    dto: CreateAccountPaymentDto,
+    cashAccount: TreasuryAccount,
+  ): PaymentMethod {
+    if (dto.method) return dto.method;
+    if (cashAccount === TreasuryAccount.CASH) return PaymentMethod.CASH;
+    if (cashAccount === TreasuryAccount.BANK) return PaymentMethod.BANCOS;
+    return PaymentMethod.CESAR;
+  }
+
+  private outstandingFromPayments(
+    totalAmount: Prisma.Decimal,
+    payments: Array<{ amount: Prisma.Decimal }>,
+  ): Prisma.Decimal {
+    const paid = payments.reduce(
+      (sum, p) => sum.plus(p.amount),
+      new Prisma.Decimal(0),
+    );
+    return totalAmount.minus(paid);
+  }
+
+  private async getEntryOutstanding(entry: EntryWithPayments): Promise<Prisma.Decimal> {
+    return this.outstandingFromPayments(entry.totalAmount, entry.payments);
+  }
+
+  private async findActiveSettlementForPayment(paymentId: string, tenantId: string) {
+    return this.prisma.accountSettlement.findFirst({
+      where: {
+        tenantId,
+        deletedAt: null,
+        OR: [{ receivablePaymentId: paymentId }, { payablePaymentId: paymentId }],
+      },
+    });
+  }
+
+  private async assertPaymentNotSettlementLinked(paymentId: string) {
+    const linked = await this.prisma.accountSettlement.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [{ receivablePaymentId: paymentId }, { payablePaymentId: paymentId }],
+      },
+      select: { id: true },
+    });
+    if (linked) {
+      throw new BadRequestException(
+        'Settlement payments cannot be edited in place. Reverse the settlement instead.',
+      );
+    }
   }
 
   // ─── Deal sync ───────────────────────────────────────────────────────────────
@@ -928,7 +1318,12 @@ export class CuentasService {
     return base;
   }
 
-  private serializePayment(payment: AccountPayment) {
+  private serializePayment(payment: PaymentWithSettlement | AccountPayment) {
+    const withLinks = payment as PaymentWithSettlement;
+    const asReceivable = withLinks.settlementAsReceivablePayment ?? null;
+    const asPayable = withLinks.settlementAsPayablePayment ?? null;
+    const settlement = asReceivable ?? asPayable;
+
     return {
       id: payment.id,
       tenantId: payment.tenantId,
@@ -943,6 +1338,26 @@ export class CuentasService {
       deletedAt: payment.deletedAt?.toISOString() ?? null,
       createdAt: payment.createdAt.toISOString(),
       updatedAt: payment.updatedAt.toISOString(),
+      settlementId: settlement?.id ?? null,
+      settlement:
+        settlement == null
+          ? null
+          : {
+              id: settlement.id,
+              amount: settlement.amount.toFixed(2),
+              currency: settlement.currency,
+              effectiveDate: settlement.effectiveDate.toISOString(),
+              role: asReceivable ? 'RECEIVABLE_SIDE' : 'PAYABLE_SIDE',
+              counterpartEntryId: asReceivable
+                ? asReceivable.payableEntry.id
+                : asPayable!.receivableEntry.id,
+              counterpartName: asReceivable
+                ? asReceivable.payableEntry.counterpartyName
+                : asPayable!.receivableEntry.counterpartyName,
+              counterpartConcept: asReceivable
+                ? asReceivable.payableEntry.concept
+                : asPayable!.receivableEntry.concept,
+            },
     };
   }
 
@@ -1006,11 +1421,15 @@ export class CuentasService {
     const entry = await this.prisma.accountEntry.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: {
-        payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
+        payments: {
+          where: { deletedAt: null },
+          orderBy: { paidAt: 'desc' },
+          include: paymentIncludeSettlement,
+        },
       },
     });
     if (!entry) throw new NotFoundException('Account entry not found');
-    return entry;
+    return entry as EntryWithPayments;
   }
 
   private async findPaymentOrThrow(

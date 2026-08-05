@@ -22,8 +22,20 @@ export type CounterpartyType =
   | 'LOGISTICS'
   | 'OTHER';
 export type Currency = 'MXN' | 'USD';
-export type TreasuryAccount = 'CASH' | 'BANK' | 'CESAR';
 export type AccountEntrySource = 'MANUAL' | 'DEAL_AUTO';
+export type TreasuryAccount = 'CASH' | 'BANK' | 'CESAR';
+export type AccountPaymentDestination = TreasuryAccount | 'APPLY_TO_PAYABLE';
+
+export type AccountPaymentSettlement = {
+  id: string;
+  amount: string;
+  currency: Currency;
+  effectiveDate: string;
+  role: 'RECEIVABLE_SIDE' | 'PAYABLE_SIDE';
+  counterpartEntryId: string;
+  counterpartName: string;
+  counterpartConcept: string;
+};
 
 export type AccountPayment = {
   id: string;
@@ -39,6 +51,8 @@ export type AccountPayment = {
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  settlementId?: string | null;
+  settlement?: AccountPaymentSettlement | null;
 };
 
 export type AccountEntry = {
@@ -69,6 +83,14 @@ export type AccountEntry = {
   paidTotal: string;
   balance: string;
   payments: AccountPayment[];
+};
+
+export type AccountSettlementResult = {
+  settlementId: string;
+  receivablePayment: AccountPayment;
+  payablePayment: AccountPayment;
+  receivable: AccountEntry;
+  payable: AccountEntry;
 };
 
 export type CurrencyTotals = {
@@ -198,14 +220,30 @@ export function createAccountPayment(
   entryId: string,
   payload: {
     amount: number;
-    method: PaymentMethod;
+    method?: PaymentMethod;
     paidAt: string;
     notes?: string;
-    cashAccount: TreasuryAccount;
+    cashAccount?: TreasuryAccount;
+    destination?: AccountPaymentDestination;
+    payableEntryId?: string;
+    idempotencyKey?: string;
     exchangeRateUsed?: number;
   },
 ) {
-  return apiPost<AccountPayment>(`/cuentas/entries/${entryId}/payments`, payload, AUTH);
+  return apiPost<AccountEntry | AccountSettlementResult>(
+    `/cuentas/entries/${entryId}/payments`,
+    payload,
+    AUTH,
+  );
+}
+
+export function reverseAccountSettlement(settlementId: string) {
+  return apiDelete<{
+    settlementId: string;
+    reversed: boolean;
+    receivable: AccountEntry;
+    payable: AccountEntry;
+  }>(`/cuentas/settlements/${settlementId}`, AUTH);
 }
 
 export function updateAccountPayment(

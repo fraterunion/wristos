@@ -55,6 +55,8 @@ enum PaymentMethod {
   OTHER
   BANCOS
   CESAR
+  /// Account-to-account compensation (no Treasury movement).
+  SETTLEMENT
 }
 
 enum CapitalAccount {
@@ -386,6 +388,7 @@ model Tenant {
   investorOpeningBalances      InvestorOpeningBalance[]
   accountEntries               AccountEntry[]
   accountPayments              AccountPayment[]
+  accountSettlements           AccountSettlement[]
   treasuryEntries              TreasuryEntry[]
   physicalCashBalanceAdjustments PhysicalCashBalanceAdjustment[]
   storefrontReservations       StorefrontReservation[]
@@ -423,6 +426,7 @@ model User {
   wristCaviarMigrationEntityApprovals WristCaviarMigrationEntityApproval[]  @relation("WristCaviarMigrationEntityApprovedBy")
   wristCaviarMigrationDatasets        WristCaviarMigrationReviewedDataset[] @relation("WristCaviarMigrationDatasetFrozenBy")
   assetPriceSnapshotsCreated          AssetPriceSnapshot[]                  @relation("AssetPriceSnapshotCreatedBy")
+  accountSettlementsCreated           AccountSettlement[]                   @relation("AccountSettlementCreatedBy")
 
   @@map("users")
 }
@@ -1278,6 +1282,8 @@ model AccountEntry {
   watch    Watch?            @relation(fields: [watchId], references: [id], onDelete: SetNull)
   expense  OperatingExpense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
   payments AccountPayment[]
+  settlementsAsReceivable AccountSettlement[] @relation("AccountSettlementReceivable")
+  settlementsAsPayable    AccountSettlement[] @relation("AccountSettlementPayable")
 
   @@index([tenantId])
   @@index([tenantId, type])
@@ -1310,6 +1316,8 @@ model AccountPayment {
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entry         AccountEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
   treasuryEntry TreasuryEntry?
+  settlementAsReceivablePayment AccountSettlement? @relation("AccountSettlementReceivablePayment")
+  settlementAsPayablePayment    AccountSettlement? @relation("AccountSettlementPayablePayment")
 
   @@index([tenantId])
   @@index([entryId])
@@ -1317,6 +1325,41 @@ model AccountPayment {
   @@index([tenantId, paidAt])
   @@index([tenantId, deletedAt])
   @@map("account_payments")
+}
+
+/// Direct AR↔AP compensation: reduces both outstanding balances without Treasury/liquidity movement.
+model AccountSettlement {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  receivableEntryId   String
+  payableEntryId      String
+  receivablePaymentId String    @unique
+  payablePaymentId    String    @unique
+  amount              Decimal   @db.Decimal(12, 2)
+  currency            Currency
+  effectiveDate       DateTime
+  notes               String?
+  createdByUserId     String?
+  /// Optional client-supplied key to make settlement creation idempotent per tenant.
+  idempotencyKey      String?
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  receivableEntry   AccountEntry   @relation("AccountSettlementReceivable", fields: [receivableEntryId], references: [id], onDelete: Restrict)
+  payableEntry      AccountEntry   @relation("AccountSettlementPayable", fields: [payableEntryId], references: [id], onDelete: Restrict)
+  receivablePayment AccountPayment @relation("AccountSettlementReceivablePayment", fields: [receivablePaymentId], references: [id], onDelete: Restrict)
+  payablePayment    AccountPayment @relation("AccountSettlementPayablePayment", fields: [payablePaymentId], references: [id], onDelete: Restrict)
+  createdBy         User?          @relation("AccountSettlementCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId])
+  @@index([tenantId, receivableEntryId])
+  @@index([tenantId, payableEntryId])
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, effectiveDate])
+  @@map("account_settlements")
 }
 
 // --- Storefront ---
