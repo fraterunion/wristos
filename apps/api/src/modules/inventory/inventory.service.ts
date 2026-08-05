@@ -114,6 +114,38 @@ export class InventoryService {
     return watches.map((w) => this.serializeWatch(w));
   }
 
+  /**
+   * Tenant-scoped active inventory aggregates.
+   * Active = deletedAt null AND status != SOLD (includes AVAILABLE, RESERVED, straps, Centenarios, etc.).
+   */
+  async getSummary(tenantId: string) {
+    const activeWhere: Prisma.WatchWhereInput = {
+      tenantId,
+      deletedAt: null,
+      status: { not: WatchStatus.SOLD },
+    };
+
+    const [activeItemCount, sums] = await Promise.all([
+      this.prisma.watch.count({ where: activeWhere }),
+      this.prisma.watch.aggregate({
+        where: activeWhere,
+        _sum: { cost: true },
+      }),
+    ]);
+
+    const totalInventoryValue = sums._sum.cost ?? new Prisma.Decimal(0);
+    const averageCost =
+      activeItemCount === 0
+        ? new Prisma.Decimal(0)
+        : totalInventoryValue.dividedBy(activeItemCount).toDecimalPlaces(2);
+
+    return {
+      totalInventoryValue: totalInventoryValue.toFixed(2),
+      activeItemCount,
+      averageCost: averageCost.toFixed(2),
+    };
+  }
+
   async findOne(id: string, tenantId: string) {
     const watch = await this.prisma.watch.findFirst({
       where: { id, tenantId, deletedAt: null },

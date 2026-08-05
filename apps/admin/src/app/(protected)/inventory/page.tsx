@@ -8,6 +8,7 @@ import { StatusBadge } from '@/components/inventory/StatusBadge';
 import { WatchFormModal } from '@/components/inventory/WatchFormModal';
 import { WatchImageLightbox } from '@/components/inventory/WatchImageLightbox';
 import { apiDelete, apiGet, ApiError } from '@/lib/api-client';
+import { getInventorySummary, type InventorySummary } from '@/lib/inventory-api';
 import { queryKeys } from '@/lib/query-keys';
 import type { Watch, WatchStatus } from '@/types/domain';
 
@@ -28,9 +29,10 @@ const INVENTORY_STATUS_FILTER_OPTIONS = [
 function formatMoney(value: string | null | undefined) {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('es-MX', {
     style: 'currency',
     currency: 'MXN',
+    currencyDisplay: 'narrowSymbol',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(n) ? n : 0);
 }
@@ -40,12 +42,67 @@ function dash(value: string | null | undefined) {
   return value;
 }
 
+function InventorySummaryStrip({
+  summary,
+  loading,
+}: {
+  summary: InventorySummary | null;
+  loading: boolean;
+}) {
+  const cells = [
+    {
+      label: 'Capital en inventario',
+      value: summary ? formatMoney(summary.totalInventoryValue) : '—',
+      helper: 'Costo de adquisición activo',
+    },
+    {
+      label: 'Artículos disponibles',
+      value: summary ? String(summary.activeItemCount) : '—',
+      helper: 'Inventario activo (no vendido)',
+    },
+    {
+      label: 'Costo promedio',
+      value: summary ? formatMoney(summary.averageCost) : '—',
+      helper: 'Capital ÷ artículos activos',
+    },
+  ];
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/30">
+      <div className="border-b border-white/[0.06] px-5 py-3 md:px-6">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+          Resumen de inventario
+        </p>
+      </div>
+      <div className="grid grid-cols-1 divide-y divide-white/[0.06] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        {cells.map((cell) => (
+          <div key={cell.label} className="px-5 py-4 md:px-6 md:py-5">
+            <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-white/40">
+              {cell.label}
+            </p>
+            {loading && !summary ? (
+              <div className="mt-3 h-7 w-28 animate-pulse rounded bg-white/10" />
+            ) : (
+              <p className="mt-2 text-xl font-semibold tabular-nums text-white md:text-2xl">
+                {cell.value}
+              </p>
+            )}
+            <p className="mt-1 text-[11px] text-white/35">{cell.helper}</p>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 export default function InventoryPage() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
 
   const [watches, setWatches] = useState<Watch[]>([]);
+  const [summary, setSummary] = useState<InventorySummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -101,9 +158,26 @@ export default function InventoryPage() {
     }
   }, [listQueryFilter]);
 
+  const loadSummary = useCallback(async () => {
+    setSummaryLoading(true);
+    try {
+      const data = await getInventorySummary();
+      setSummary(data);
+    } catch {
+      // Keep prior summary if refresh fails; strip shows em dash when null.
+      setSummary((prev) => prev);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadWatches();
   }, [loadWatches]);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
 
   useEffect(() => {
     if (!flash) return;
@@ -143,6 +217,7 @@ export default function InventoryPage() {
 
   const handleSaved = (payload: { mode: 'create' | 'edit' }) => {
     void loadWatches();
+    void loadSummary();
     setFlash({
       type: 'success',
       message:
@@ -159,6 +234,7 @@ export default function InventoryPage() {
       await apiDelete(`/inventory/${deleteTarget.id}`, { authenticated: true });
       setDeleteTarget(null);
       void loadWatches();
+      void loadSummary();
       setFlash({ type: 'success', message: 'Reloj eliminado del inventario.' });
     } catch (caught) {
       setFlash({
@@ -222,6 +298,8 @@ export default function InventoryPage() {
           </button>
         </div>
       </header>
+
+      <InventorySummaryStrip summary={summary} loading={summaryLoading} />
 
       {flash ? (
         <div
