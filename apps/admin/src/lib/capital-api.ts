@@ -4,11 +4,23 @@ import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api-client';
 
 export type CapitalAccount = 'CASH' | 'BANK' | 'CESAR_ACCOUNT';
 
+export type CapitalOpeningBalance = {
+  investorId: string;
+  investorName: string;
+  amount: string;
+  currency: 'MXN';
+  effectiveDate: string;
+  source: string;
+  notes: string | null;
+};
+
 export type CapitalInvestorBalance = {
   id: string;
   name: string;
   ownershipPercent: string;
   isActive: boolean;
+  openingCapital?: string;
+  laterContributions?: string;
   capitalContributed: string;
   profitEntitlement: string;
   distributionsPaid: string;
@@ -17,11 +29,19 @@ export type CapitalInvestorBalance = {
 
 export type CapitalInvestorFull = CapitalInvestorBalance & {
   notes: string | null;
+  openingBalances?: Array<{
+    amount: string;
+    effectiveDate: string;
+    source: string;
+    notes: string | null;
+  }>;
   createdAt: string;
   updatedAt: string;
 };
 
 export type CapitalSummary = {
+  totalOpeningCapital?: string;
+  totalLaterContributions?: string;
   totalCapitalContributed: string;
   totalBusinessProfit: string;
   totalBankCommissions?: string;
@@ -30,6 +50,7 @@ export type CapitalSummary = {
   capitalNeto: string;
   contributionsIncomplete?: boolean;
   roiAvailable?: boolean;
+  openingBalances?: CapitalOpeningBalance[];
   investors: CapitalInvestorBalance[];
 };
 
