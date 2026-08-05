@@ -2,6 +2,23 @@ import { DealStage, Prisma } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 import { TimelineGranularityParam } from './dto/sales-timeline.dto';
 
+const emptyCryptoService = {
+  getPortfolioValuation: jest.fn(async () => ({
+    totalCurrentValueMxn: '0.00',
+    totalCostBasisMxn: '0.00',
+    unrealizedPnlMxn: '0.00',
+    unrealizedPnlPercent: null,
+    activeHoldingCount: 0,
+    pricedHoldingCount: 0,
+    unpricedHoldingCount: 0,
+    missingPriceTickers: [],
+    oldestPriceCapturedAt: null,
+    newestPriceCapturedAt: null,
+    cryptoPriceStatus: 'MISSING' as const,
+  })),
+};
+
+
 function d(n: number) {
   return new Prisma.Decimal(n);
 }
@@ -98,7 +115,7 @@ describe('AnalyticsService.getSalesTimeline', () => {
         }),
       },
     };
-    return new AnalyticsService(prisma as never, {} as never);
+    return new AnalyticsService(prisma as never, {} as never, emptyCryptoService as never);
   }
 
   afterEach(() => {

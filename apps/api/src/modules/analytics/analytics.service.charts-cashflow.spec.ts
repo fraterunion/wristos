@@ -6,6 +6,23 @@ import {
 import { AnalyticsPeriod } from './dto/analytics-period.dto';
 import { AnalyticsService } from './analytics.service';
 
+const emptyCryptoService = {
+  getPortfolioValuation: jest.fn(async () => ({
+    totalCurrentValueMxn: '0.00',
+    totalCostBasisMxn: '0.00',
+    unrealizedPnlMxn: '0.00',
+    unrealizedPnlPercent: null,
+    activeHoldingCount: 0,
+    pricedHoldingCount: 0,
+    unpricedHoldingCount: 0,
+    missingPriceTickers: [],
+    oldestPriceCapturedAt: null,
+    newestPriceCapturedAt: null,
+    cryptoPriceStatus: 'MISSING' as const,
+  })),
+};
+
+
 function d(n: number) {
   return new Prisma.Decimal(n);
 }
@@ -146,7 +163,7 @@ describe('AnalyticsService — Deal-based revenue / sales charts', () => {
     const treasury = {
       getAccountBalances: jest.fn(async () => ({ CASH: '0', BANK: '0', CESAR: '0' })),
     };
-    return { service: new AnalyticsService(prisma as never, treasury as never), prisma };
+    return { service: new AnalyticsService(prisma as never, treasury as never, emptyCryptoService as never), prisma };
   }
 
   afterEach(() => {
@@ -209,7 +226,7 @@ describe('AnalyticsService — Treasury cash flow', () => {
     };
     const service = new AnalyticsService(prisma as never, {
       getAccountBalances: jest.fn(),
-    } as never);
+    } as never, emptyCryptoService as never);
 
     const cf = await service.getCashFlow('tenant-wc', AnalyticsPeriod.MONTH);
     expect(cf.inflows).toBe('8255940.17');
@@ -244,7 +261,7 @@ describe('AnalyticsService — Treasury cash flow', () => {
       ];
     });
     const prisma = { treasuryEntry: { groupBy } };
-    const service = new AnalyticsService(prisma as never, {} as never);
+    const service = new AnalyticsService(prisma as never, {} as never, emptyCryptoService as never);
     const cf = await service.getCashFlow('t', AnalyticsPeriod.MONTH);
     expect(cf.net).toBe('60.00');
   });

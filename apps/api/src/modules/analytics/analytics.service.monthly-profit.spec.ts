@@ -1,6 +1,23 @@
 import { DealStage, Prisma } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 
+const emptyCryptoService = {
+  getPortfolioValuation: jest.fn(async () => ({
+    totalCurrentValueMxn: '0.00',
+    totalCostBasisMxn: '0.00',
+    unrealizedPnlMxn: '0.00',
+    unrealizedPnlPercent: null,
+    activeHoldingCount: 0,
+    pricedHoldingCount: 0,
+    unpricedHoldingCount: 0,
+    missingPriceTickers: [],
+    oldestPriceCapturedAt: null,
+    newestPriceCapturedAt: null,
+    cryptoPriceStatus: 'MISSING' as const,
+  })),
+};
+
+
 function d(n: number) {
   return new Prisma.Decimal(n);
 }
@@ -82,7 +99,7 @@ describe('AnalyticsService — monthly profit deducts OpEx', () => {
     };
 
     return {
-      service: new AnalyticsService(prisma as never, treasury as never),
+      service: new AnalyticsService(prisma as never, treasury as never, emptyCryptoService as never),
       prisma,
       operatingExpense,
     };
@@ -183,6 +200,7 @@ describe('AnalyticsService — monthly profit deducts OpEx', () => {
         },
       } as never,
       { getAccountBalances: jest.fn(async () => ({ CASH: '0', BANK: '0', CESAR: '0' })) } as never,
+      emptyCryptoService as never,
     ).getSummary(TENANT);
 
     const where = operatingExpense.aggregate.mock.calls[0][0].where as {
