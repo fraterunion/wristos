@@ -18,6 +18,7 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { RadarModule } from './modules/radar/radar.module';
 import { FxModule } from './modules/fx/fx.module';
 import { CapitalModule } from './modules/capital/capital.module';
+import { CryptoModule } from './modules/crypto/crypto.module';
 import { CuentasModule } from './modules/cuentas/cuentas.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
 import { StripeModule } from './modules/stripe/stripe.module';
@@ -48,6 +49,7 @@ import { PlatformMigrationsModule } from './modules/platform-migrations/platform
     RadarModule,
     FxModule,
     CapitalModule,
+    CryptoModule,
     CuentasModule,
     TreasuryModule,
     StripeModule,
