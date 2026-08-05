@@ -2,13 +2,12 @@
  * One-time Wrist Caviar opening capital backfill.
  *
  * Usage:
- *   DRY_RUN=1 npx ts-node --transpile-only scripts/migrations/wrist-caviar/seed-opening-capital.ts
- *   APPLY=1 npx ts-node --transpile-only scripts/migrations/wrist-caviar/seed-opening-capital.ts
+ *   DRY_RUN=1 npx tsx scripts/migrations/wrist-caviar/seed-opening-capital.ts
+ *   APPLY=1 npx tsx scripts/migrations/wrist-caviar/seed-opening-capital.ts
  *
  * Does NOT create TreasuryEntry, InvestorContribution, cash/bank movements,
  * or touch CXC/CXP/inventory/sales.
  */
-import 'dotenv/config';
 import { PrismaClient, Currency } from '@prisma/client';
 
 const TENANT_ID = 'cmnzph8dm0000qotapt94alxs';
