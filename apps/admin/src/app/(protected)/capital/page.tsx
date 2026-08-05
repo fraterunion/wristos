@@ -50,10 +50,11 @@ function fmtRoiPct(roi: number) {
   }).format(roi)}%`;
 }
 
-function calcRoi(totalBusinessProfit: string, totalCapitalContributed: string): number | null {
+function calcRoi(capitalNeto: string, totalCapitalContributed: string): number | null {
   const contributed = Number(totalCapitalContributed);
   if (contributed <= 0) return null;
-  return (Number(totalBusinessProfit) / contributed) * 100;
+  // ROI = (Net Capital − Invested Capital) / Invested Capital
+  return ((Number(capitalNeto) - contributed) / contributed) * 100;
 }
 
 function isoToDateInput(iso: string) {
@@ -164,24 +165,28 @@ function CapitalHero({
   totalDistributionsPaid,
   totalPendingToPartners,
   capitalNeto,
+  totalOpeningCapital,
+  totalLaterContributions,
 }: {
   totalCapitalContributed: string;
   totalBusinessProfit: string;
   totalDistributionsPaid: string;
   totalPendingToPartners: string;
   capitalNeto: string;
+  totalOpeningCapital?: string;
+  totalLaterContributions?: string;
 }) {
   const cells = [
-    { label: 'Capital aportado',   value: fmtMxn(totalCapitalContributed), tone: 'default' },
-    { label: 'Utilidad acumulada', value: fmtMxn(totalBusinessProfit),     tone: 'positive' },
-    { label: 'Retirado a socios',  value: fmtMxn(totalDistributionsPaid),  tone: 'default' },
+    { label: 'Capital invertido', value: fmtMxn(totalCapitalContributed), tone: 'default' as const },
+    { label: 'Utilidad acumulada', value: fmtMxn(totalBusinessProfit), tone: 'positive' as const },
+    { label: 'Distribuciones', value: fmtMxn(totalDistributionsPaid), tone: 'default' as const },
     {
       label: 'Por pagar a socios',
       value: fmtMxn(totalPendingToPartners),
-      tone: Number(totalPendingToPartners) > 0 ? 'negative' : 'default',
+      tone: Number(totalPendingToPartners) > 0 ? ('negative' as const) : ('default' as const),
     },
-    { label: 'Capital neto', value: fmtMxn(capitalNeto), tone: 'default' },
-  ] as const;
+    { label: 'Capital neto', value: fmtMxn(capitalNeto), tone: 'default' as const },
+  ];
 
   const toneClass = (tone: 'default' | 'positive' | 'negative') =>
     tone === 'positive' ? 'text-emerald-400' :
@@ -204,13 +209,73 @@ function CapitalHero({
             <p className={`mt-2 text-xl font-semibold tabular-nums leading-none md:text-2xl ${toneClass(cell.tone)}`}>
               {cell.value}
             </p>
+            {cell.label === 'Capital invertido' && totalOpeningCapital !== undefined ? (
+              <p className="mt-2 text-[11px] text-white/35">
+                Inicial {fmtMxn(totalOpeningCapital)}
+                {totalLaterContributions !== undefined
+                  ? ` · Posteriores ${fmtMxn(totalLaterContributions)}`
+                  : ''}
+              </p>
+            ) : null}
           </div>
         ))}
       </div>
       <div className="flex flex-col gap-1 border-t border-white/[0.06] bg-black/20 px-5 py-3 md:px-6">
         <p className="text-[10px] text-white/20">
-          Capital neto = capital aportado + utilidad acumulada − retiros
+          Capital neto = capital invertido + utilidad acumulada − distribuciones
         </p>
+        <p className="text-[10px] text-white/20">
+          Por pagar a socios = utilidad asignada − distribuciones (no incluye capital)
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function OpeningCapitalPanel({
+  totalOpeningCapital,
+  openingBalances,
+}: {
+  totalOpeningCapital: string;
+  openingBalances: NonNullable<CapitalSummary['openingBalances']>;
+}) {
+  if (!openingBalances.length) return null;
+  const effective = openingBalances[0]?.effectiveDate;
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/95 shadow-lg shadow-black/20">
+      <div className="border-b border-white/[0.06] px-5 py-3 md:px-6">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+          Capital inicial
+        </p>
+        <p className="mt-1 text-xs text-white/40">
+          Saldo inicial de capital registrado al comenzar la operación en WristOS. No representa una
+          aportación realizada hoy.
+        </p>
+      </div>
+      <div className="grid gap-4 px-5 py-4 md:grid-cols-[1fr_auto] md:px-6">
+        <div>
+          <p className="text-2xl font-semibold tabular-nums text-white">
+            {fmtMxn(totalOpeningCapital)}
+          </p>
+          {effective ? (
+            <p className="mt-1 text-xs text-white/40">Vigente desde {fmtDate(effective)}</p>
+          ) : null}
+        </div>
+        <ul className="space-y-2 text-sm">
+          {openingBalances.map((row) => (
+            <li
+              key={`${row.investorId}:${row.source}`}
+              className="flex items-center justify-between gap-6 border-b border-white/[0.04] pb-2 last:border-0 last:pb-0"
+            >
+              <span className="text-white/70">{row.investorName}</span>
+              <span className="tabular-nums text-white">{fmtMxn(row.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="border-t border-white/[0.06] bg-black/20 px-5 py-2.5 md:px-6">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">Saldo inicial</p>
       </div>
     </article>
   );
@@ -223,16 +288,18 @@ function FinancialInsightStrip({
   totalDistributionsPaid,
   totalPendingToPartners,
   totalCapitalContributed,
+  capitalNeto,
 }: Pick<
   CapitalSummary,
   | 'totalBusinessProfit'
   | 'totalDistributionsPaid'
   | 'totalPendingToPartners'
   | 'totalCapitalContributed'
+  | 'capitalNeto'
 >) {
   const profit = Number(totalBusinessProfit);
   const pending = Number(totalPendingToPartners);
-  const roi = calcRoi(totalBusinessProfit, totalCapitalContributed);
+  const roi = calcRoi(capitalNeto, totalCapitalContributed);
 
   const toneClass = (tone: 'neutral' | 'positive' | 'warning' | 'negative') =>
     tone === 'positive' ? 'text-emerald-400' :
@@ -300,9 +367,9 @@ function InvestorCard({
   onClick?: () => void;
 }) {
   const rows = [
-    { label: 'Aportado',          value: fmtMxn(investor.capitalContributed) },
+    { label: 'Capital invertido', value: fmtMxn(investor.capitalContributed) },
     { label: 'Utilidad asignada', value: fmtMxn(investor.profitEntitlement) },
-    { label: 'Retirado',          value: fmtMxn(investor.distributionsPaid) },
+    { label: 'Distribuido', value: fmtMxn(investor.distributionsPaid) },
   ];
   const pending = Number(investor.pendingProfit);
 
@@ -411,7 +478,7 @@ function InvestorDrawer({
     .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
 
   const metrics = [
-    { label: 'Aportado', value: fmtMxn(investor.capitalContributed), tone: 'neutral' as const },
+    { label: 'Capital invertido', value: fmtMxn(investor.capitalContributed), tone: 'neutral' as const },
     { label: 'Utilidad asignada', value: fmtMxn(investor.profitEntitlement), tone: 'neutral' as const },
     { label: 'Retirado', value: fmtMxn(investor.distributionsPaid), tone: 'neutral' as const },
     {
@@ -1885,13 +1952,23 @@ export default function CapitalPage() {
           totalDistributionsPaid={s.totalDistributionsPaid}
           totalPendingToPartners={s.totalPendingToPartners}
           capitalNeto={s.capitalNeto}
+          totalOpeningCapital={s.totalOpeningCapital}
+          totalLaterContributions={s.totalLaterContributions}
         />
+
+        {s.openingBalances && s.openingBalances.length > 0 && s.totalOpeningCapital ? (
+          <OpeningCapitalPanel
+            totalOpeningCapital={s.totalOpeningCapital}
+            openingBalances={s.openingBalances}
+          />
+        ) : null}
 
         <FinancialInsightStrip
           totalBusinessProfit={s.totalBusinessProfit}
           totalDistributionsPaid={s.totalDistributionsPaid}
           totalPendingToPartners={s.totalPendingToPartners}
           totalCapitalContributed={s.totalCapitalContributed}
+          capitalNeto={s.capitalNeto}
         />
       </div>
 

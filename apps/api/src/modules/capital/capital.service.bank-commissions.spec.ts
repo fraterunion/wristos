@@ -32,6 +32,7 @@ describe('CapitalService — Treasury bank commissions in business profit', () =
             isActive: true,
             contributions: [],
             distributions: [{ amount: new Prisma.Decimal(100) }],
+            openingBalances: [],
           },
         ]),
       },
