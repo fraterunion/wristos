@@ -364,6 +364,22 @@ function FinancialPositionHero({
       Icon: TrendingUp,
     },
     {
+      label: 'Capital neto',
+      value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
+      helper:
+        capitalContributed !== null && investedCapital <= 0
+          ? 'Patrimonio · aportaciones pendientes'
+          : 'Patrimonio neto',
+      group: 'performance',
+      iconBubbleClass: 'bg-cyan-500/15 text-cyan-400',
+      tone:
+        capitalNeto === null ? 'muted' :
+        netCapital > 0 ? 'positive' :
+        netCapital < 0 ? 'negative' :
+        'muted',
+      Icon: ShieldCheck,
+    },
+    {
       label: 'ROI',
       value: roi !== null ? fmtRoiPct(roi) : 'No disponible',
       helper:
@@ -380,26 +396,10 @@ function FinancialPositionHero({
         'muted',
       Icon: PieChart,
     },
-    {
-      label: 'Capital neto',
-      value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
-      helper:
-        capitalContributed !== null && investedCapital <= 0
-          ? 'Patrimonio · aportaciones pendientes'
-          : 'Patrimonio neto',
-      group: 'performance',
-      iconBubbleClass: 'bg-cyan-500/15 text-cyan-400',
-      tone:
-        capitalNeto === null ? 'muted' :
-        netCapital > 0 ? 'positive' :
-        netCapital < 0 ? 'negative' :
-        'muted',
-      Icon: ShieldCheck,
-    },
   ];
 
   return (
-    <div className="space-y-8 md:space-y-10">
+    <div className="space-y-10 md:space-y-12">
       {/* ── Posición de liquidez ─────────────────────────────────────────── */}
       <article className="relative overflow-hidden rounded-[24px] border border-white/[0.04] bg-gradient-to-b from-white/[0.04] to-white/[0.012] shadow-2xl shadow-black/40">
         <div
@@ -442,7 +442,7 @@ function FinancialPositionHero({
           </div>
         </div>
 
-        <div className="relative grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-4 md:p-5 md:pb-6">
+        <div className="relative grid grid-cols-1 gap-2 p-3 pb-2 sm:grid-cols-2 sm:p-4 sm:pb-3 lg:grid-cols-4 md:p-5 md:pb-4">
           {liquidityCards.map((item) => (
             <FinancialKpiCard
               key={item.label}
@@ -459,7 +459,7 @@ function FinancialPositionHero({
           ))}
         </div>
 
-        <div className="relative border-t border-white/[0.06]">
+        <div className="relative mt-2 border-t border-white/[0.06] sm:mt-3 md:mt-4">
           <div
             className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_120%_at_85%_50%,rgba(16,185,129,0.18),transparent_62%)]"
             aria-hidden
@@ -476,7 +476,7 @@ function FinancialPositionHero({
             className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent"
             aria-hidden
           />
-          <div className="relative flex flex-col gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between md:px-6 md:py-8">
+          <div className="relative flex flex-col gap-4 px-4 py-8 sm:flex-row sm:items-center sm:justify-between md:px-6 md:py-10">
             <div className="min-w-0">
               <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-white/50">
                 Liquidez total
@@ -490,11 +490,11 @@ function FinancialPositionHero({
                 </p>
               ) : null}
             </div>
-            <div className="flex items-center gap-3 sm:gap-4">
-              <p className="text-4xl font-semibold tabular-nums tracking-tight text-emerald-400 sm:text-5xl xl:text-6xl">
+            <div className="flex items-center gap-3 sm:gap-5">
+              <p className="text-5xl font-semibold tabular-nums tracking-tight text-emerald-400 sm:text-6xl xl:text-7xl">
                 {fmtMxn(liquidityTotal)}
               </p>
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
                 <TrendingUp className="h-5 w-5" strokeWidth={1.75} aria-hidden />
               </div>
             </div>
@@ -544,7 +544,7 @@ function FinancialPositionHero({
           </div>
         </div>
 
-        <div className="relative grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-6 md:p-5">
+        <div className="relative grid grid-cols-1 gap-2 p-3 pt-4 sm:grid-cols-2 sm:p-4 sm:pt-5 lg:grid-cols-3 md:p-5 md:pt-6">
           {financialCards.map((item) => (
             <FinancialKpiCard
               key={item.label}
