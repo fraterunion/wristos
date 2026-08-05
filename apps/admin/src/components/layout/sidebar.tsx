@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import {
   ArrowLeftRight,
+  Bitcoin,
   Bot,
   Boxes,
   History,
@@ -31,6 +32,7 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/history', label: 'Historial', icon: History },
   { href: '/expenses', label: 'Gastos', icon: WalletCards },
   { href: '/capital', label: 'Capital', icon: TrendingUp },
+  { href: '/crypto', label: 'Crypto', icon: Bitcoin },
   { href: '/radar', label: 'Radar', icon: Radar },
   { href: '/data-onboarding', label: 'Importar datos', icon: Upload },
   { href: '/platform/migrations/wrist-caviar', label: 'Migración WC', icon: Upload },

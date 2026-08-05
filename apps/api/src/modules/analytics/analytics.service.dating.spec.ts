@@ -7,6 +7,23 @@ import {
 } from '../../common/utils/effective-sale-date';
 import { AnalyticsService } from './analytics.service';
 
+const emptyCryptoService = {
+  getPortfolioValuation: jest.fn(async () => ({
+    totalCurrentValueMxn: '0.00',
+    totalCostBasisMxn: '0.00',
+    unrealizedPnlMxn: '0.00',
+    unrealizedPnlPercent: null,
+    activeHoldingCount: 0,
+    pricedHoldingCount: 0,
+    unpricedHoldingCount: 0,
+    missingPriceTickers: [],
+    oldestPriceCapturedAt: null,
+    newestPriceCapturedAt: null,
+    cryptoPriceStatus: 'MISSING' as const,
+  })),
+};
+
+
 describe('AnalyticsService — historical sale dating', () => {
   const tenantId = 'tenant-dating';
   const now = new Date('2026-07-23T15:00:00.000Z');
@@ -115,7 +132,7 @@ describe('AnalyticsService — historical sale dating', () => {
       })),
     };
 
-    return new AnalyticsService(prisma as never, treasury as never);
+    return new AnalyticsService(prisma as never, treasury as never, emptyCryptoService as never);
   }
 
   beforeAll(() => {

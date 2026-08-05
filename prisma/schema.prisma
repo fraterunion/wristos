@@ -145,6 +145,11 @@ enum Currency {
   USD
 }
 
+/// Digital / alternative asset class. V1 only supports CRYPTO.
+enum AssetType {
+  CRYPTO
+}
+
 enum TreasuryAccount {
   CASH
   BANK
@@ -393,6 +398,8 @@ model Tenant {
   receivablePayments           ReceivablePayment[]
   financialAuditEvents         FinancialAuditEvent[]
   wristCaviarMigrationAnalyses WristCaviarMigrationAnalysis[]
+  assetHoldings                AssetHolding[]
+  assetPriceSnapshots          AssetPriceSnapshot[]
 
   @@index([slug])
   @@map("tenants")
@@ -415,6 +422,7 @@ model User {
   wristCaviarMigrationResolutions     WristCaviarMigrationResolution[]      @relation("WristCaviarMigrationResolvedBy")
   wristCaviarMigrationEntityApprovals WristCaviarMigrationEntityApproval[]  @relation("WristCaviarMigrationEntityApprovedBy")
   wristCaviarMigrationDatasets        WristCaviarMigrationReviewedDataset[] @relation("WristCaviarMigrationDatasetFrozenBy")
+  assetPriceSnapshotsCreated          AssetPriceSnapshot[]                  @relation("AssetPriceSnapshotCreatedBy")
 
   @@map("users")
 }
@@ -1805,4 +1813,61 @@ model WristCaviarOneTimeImportRun {
 
   @@index([tenantId, packageFingerprint])
   @@map("wrist_caviar_one_time_import_runs")
+}
+
+/// Current business position in a digital asset (V1: CRYPTO only).
+/// Quantity + averageCostMxn are canonical; market value is derived from latest price snapshot.
+model AssetHolding {
+  id             String    @id @default(cuid())
+  tenantId       String
+  assetType      AssetType @default(CRYPTO)
+  /// Normalized uppercase ticker, e.g. BTC, ETH, USDT.
+  ticker         String
+  name           String
+  /// Coin/token units — high precision for fractional crypto.
+  quantity       Decimal   @db.Decimal(28, 18)
+  /// MXN cost per unit (average). Prefer computing cost basis = quantity × averageCostMxn.
+  averageCostMxn Decimal   @db.Decimal(18, 8)
+  /// Exchange or wallet location, e.g. Binance, Ledger, cold wallet.
+  location       String
+  /// Person who administers/safeguards the asset — does NOT imply personal ownership.
+  custodian      String?
+  notes          String?
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, assetType, ticker])
+  @@index([tenantId, assetType, deletedAt])
+  @@map("asset_holdings")
+}
+
+/// Append-only manual market-price observation. Latest capturedAt per tenant+ticker is current price.
+model AssetPriceSnapshot {
+  id              String    @id @default(cuid())
+  tenantId        String
+  assetType       AssetType @default(CRYPTO)
+  /// Normalized uppercase ticker matching holdings.
+  ticker          String
+  /// MXN price per unit at capturedAt.
+  priceMxn        Decimal   @db.Decimal(18, 8)
+  /// Explicit market observation time — never use createdAt as price time.
+  capturedAt      DateTime
+  /// e.g. Binance, Coinbase, CoinMarketCap, Manual review.
+  source          String
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("AssetPriceSnapshotCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, assetType, ticker, capturedAt])
+  @@index([tenantId, assetType, capturedAt])
+  @@map("asset_price_snapshots")
 }

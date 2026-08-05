@@ -1,6 +1,23 @@
 import { Prisma } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 
+const emptyCryptoService = {
+  getPortfolioValuation: jest.fn(async () => ({
+    totalCurrentValueMxn: '0.00',
+    totalCostBasisMxn: '0.00',
+    unrealizedPnlMxn: '0.00',
+    unrealizedPnlPercent: null,
+    activeHoldingCount: 0,
+    pricedHoldingCount: 0,
+    unpricedHoldingCount: 0,
+    missingPriceTickers: [],
+    oldestPriceCapturedAt: null,
+    newestPriceCapturedAt: null,
+    cryptoPriceStatus: 'MISSING' as const,
+  })),
+};
+
+
 describe('AnalyticsService — structured bank commissions', () => {
   it('bankCommissionsThisMonth comes from TreasuryEntry.commission, not OpEx BANK_FEES', async () => {
     const treasuryEntry = {
@@ -39,7 +56,7 @@ describe('AnalyticsService — structured bank commissions', () => {
       getAccountBalances: jest.fn(async () => ({ CASH: '0', BANK: '0', CESAR: '0' })),
     };
 
-    const service = new AnalyticsService(prisma as never, treasury as never);
+    const service = new AnalyticsService(prisma as never, treasury as never, emptyCryptoService as never);
     const summary = await service.getSummary('tenant-wc');
 
     expect(summary.bankCommissionsThisMonth).toBe('54453.80');

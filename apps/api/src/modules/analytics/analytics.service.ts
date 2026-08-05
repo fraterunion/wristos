@@ -18,6 +18,7 @@ import {
   resolveModelAggregationLabel,
   watchLabelGroupKey,
 } from '../history/historical-watch-snapshot';
+import { CryptoService } from '../crypto/crypto.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import {
   buildCalendarPeriodWindow,
@@ -40,6 +41,7 @@ export class AnalyticsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly treasuryService: TreasuryService,
+    private readonly cryptoService: CryptoService,
   ) {}
 
   /**
@@ -299,6 +301,7 @@ export class AnalyticsService {
       bankCommissionsAllTimeAgg,
       bankCommissionMovementCountAllTime,
       operatingExpensesThisMonthAgg,
+      cryptoValuation,
     ] = await Promise.all([
       this.prisma.watch.count({ where: watchWhere }),
       this.prisma.watch.count({ where: { ...watchWhere, status: WatchStatus.AVAILABLE } }),
@@ -419,6 +422,8 @@ export class AnalyticsService {
         },
         _sum: { amount: true },
       }),
+      // Crypto mark-to-market (priced holdings only). Does not touch Treasury.
+      this.cryptoService.getPortfolioValuation(tenantId, now),
     ]);
 
     // ── Accounts receivable: pending balance across all real-receivable deals ──
@@ -510,6 +515,17 @@ export class AnalyticsService {
       cashBalance,
       bankBalance,
       cesarBalance,
+      // ── Crypto (mark-to-market; excluded from profit / cash flow) ──────────
+      cryptoValueMxn: cryptoValuation.totalCurrentValueMxn,
+      cryptoCostBasisMxn: cryptoValuation.totalCostBasisMxn,
+      cryptoUnrealizedPnlMxn: cryptoValuation.unrealizedPnlMxn,
+      cryptoUnrealizedPnlPercent: cryptoValuation.unrealizedPnlPercent,
+      cryptoPriceStatus: cryptoValuation.cryptoPriceStatus,
+      cryptoOldestPriceCapturedAt: cryptoValuation.oldestPriceCapturedAt,
+      cryptoNewestPriceCapturedAt: cryptoValuation.newestPriceCapturedAt,
+      cryptoMissingPriceTickers: cryptoValuation.missingPriceTickers,
+      cryptoActiveHoldingCount: cryptoValuation.activeHoldingCount,
+      cryptoUnpricedHoldingCount: cryptoValuation.unpricedHoldingCount,
       // ── New: accounts payable — no schema yet; placeholder ─────────────────
       accountsPayable: '0',
       // ── New: this-month KPIs ───────────────────────────────────────────────
