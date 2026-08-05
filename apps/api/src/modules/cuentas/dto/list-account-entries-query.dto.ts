@@ -3,7 +3,16 @@ import {
   AccountEntryStatus,
   AccountEntryType,
 } from '@prisma/client';
-import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class ListAccountEntriesQueryDto {
   @IsOptional()
@@ -22,6 +31,11 @@ export class ListAccountEntriesQueryDto {
   @IsString()
   clientId?: string;
 
+  /** Search counterparty, concept, notes, or reference. */
+  @IsOptional()
+  @IsString()
+  q?: string;
+
   @IsOptional()
   @IsDateString()
   from?: string;
@@ -29,4 +43,17 @@ export class ListAccountEntriesQueryDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  pageSize?: number;
 }

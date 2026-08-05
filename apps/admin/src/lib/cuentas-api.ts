@@ -88,6 +88,25 @@ export type CuentasSummary = {
   overdueReceivableByCurrency: CurrencyTotals;
   overduePayableByCurrency: CurrencyTotals;
   exchangeRateUsed: string | null;
+  receivableStatusCounts?: Record<AccountEntryStatus, number>;
+  payableStatusCounts?: Record<AccountEntryStatus, number>;
+  expectedNetFlow?: string;
+};
+
+export type TopDebtor = {
+  clientId: string | null;
+  counterpartyName: string;
+  currency: Currency;
+  outstanding: string;
+  openAccounts: number;
+};
+
+export type CustomerLedger = {
+  customer: { id: string; name: string; email: string | null; phone: string | null };
+  receivables: AccountEntry[];
+  payables: AccountEntry[];
+  receivableOutstandingByCurrency: CurrencyTotals;
+  payableOutstandingByCurrency: CurrencyTotals;
 };
 
 // ─── API functions ────────────────────────────────────────────────────────────
@@ -96,6 +115,17 @@ const AUTH = { authenticated: true } as const;
 
 export function getCuentasSummary() {
   return apiGet<CuentasSummary>('/cuentas/summary', AUTH);
+}
+
+export function getTopDebtors(limit = 10) {
+  return apiGet<TopDebtor[]>('/cuentas/top-debtors', {
+    ...AUTH,
+    query: { limit },
+  });
+}
+
+export function getCustomerLedger(clientId: string) {
+  return apiGet<CustomerLedger>(`/cuentas/clients/${clientId}/ledger`, AUTH);
 }
 
 export function listClients() {
@@ -107,8 +137,11 @@ export function listAccountEntries(query?: {
   status?: AccountEntryStatus;
   source?: AccountEntrySource;
   clientId?: string;
+  q?: string;
   from?: string;
   to?: string;
+  page?: number;
+  pageSize?: number;
 }) {
   return apiGet<AccountEntry[]>('/cuentas/entries', { ...AUTH, query });
 }

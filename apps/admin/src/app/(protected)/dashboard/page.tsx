@@ -118,6 +118,7 @@ function FinancialKpiCard({
   iconBubbleClass,
   valueType = 'monetary',
   Icon,
+  href,
 }: {
   label: string;
   value: string;
@@ -127,16 +128,15 @@ function FinancialKpiCard({
   iconBubbleClass: string;
   valueType?: 'monetary' | 'percentage';
   Icon: LucideIcon;
+  href?: string;
 }) {
   const valueClass =
     valueType === 'percentage'
       ? 'text-base font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.2rem]'
       : 'text-lg font-semibold tabular-nums leading-none tracking-[-0.02em] xl:text-[1.35rem]';
 
-  return (
-    <div
-      className={`flex min-h-[145px] min-w-0 flex-col rounded-xl border border-white/[0.04] bg-gradient-to-b from-white/[0.03] to-transparent p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`}
-    >
+  const body = (
+    <>
       <div
         className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-lg ${iconBubbleClass}`}
       >
@@ -149,8 +149,20 @@ function FinancialKpiCard({
         {value}
       </p>
       <p className="mt-2 text-xs text-white/35">{helper}</p>
-    </div>
+    </>
   );
+
+  const className = `flex min-h-[145px] min-w-0 flex-col rounded-xl border border-white/[0.04] bg-gradient-to-b from-white/[0.03] to-transparent p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:bg-white/[0.03] ${financialGroupSurfaceClass(group)}`;
+
+  if (href) {
+    return (
+      <Link href={href} className={className}>
+        {body}
+      </Link>
+    );
+  }
+
+  return <div className={className}>{body}</div>;
 }
 
 function FinancialPositionHero({
@@ -188,6 +200,7 @@ function FinancialPositionHero({
     iconBubbleClass: string;
     valueType?: 'monetary' | 'percentage';
     Icon: LucideIcon;
+    href?: string;
   }> = [
     {
       label: 'Efectivo',
@@ -227,6 +240,7 @@ function FinancialPositionHero({
         receivable > 0 ? 'negative' :
         'default',
       Icon: Receipt,
+      href: '/cuentas?type=RECEIVABLE',
     },
     {
       label: 'Cuentas por pagar',
@@ -239,6 +253,7 @@ function FinancialPositionHero({
         payable > 0 ? 'warning' :
         'muted',
       Icon: WalletCards,
+      href: '/cuentas?type=PAYABLE',
     },
     {
       label: 'Por pagar socios',
@@ -365,6 +380,7 @@ function FinancialPositionHero({
             iconBubbleClass={item.iconBubbleClass}
             valueType={item.valueType}
             Icon={item.Icon}
+            href={item.href}
           />
         ))}
       </div>

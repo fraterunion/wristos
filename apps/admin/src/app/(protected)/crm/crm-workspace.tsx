@@ -284,7 +284,7 @@ function ClientAccountsSummary({ clientId }: { clientId: string }) {
           Resumen financiero
         </h3>
         <Link
-          href={`/cuentas?clientId=${clientId}`}
+          href={`/cuentas/clients/${clientId}`}
           className="text-xs font-medium text-emerald-400 underline-offset-4 transition hover:text-white hover:underline"
         >
           Ver cuentas →

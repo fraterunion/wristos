@@ -18,7 +18,6 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CuentasService } from '../cuentas/cuentas.service';
-import { ReceivablesService } from '../receivables/receivables.service';
 import { ListStorefrontReservationsDto } from './dto/list-storefront-reservations.dto';
 
 const WATCH_SELECT = {
@@ -52,7 +51,6 @@ export class StorefrontAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cuentasService: CuentasService,
-    private readonly receivablesService: ReceivablesService,
   ) {}
 
   async listReservations(tenantId: string, query: ListStorefrontReservationsDto) {
@@ -180,7 +178,6 @@ export class StorefrontAdminService {
 
     if (remainingBalance.gt(0)) {
       await this.cuentasService.syncDealReceivable(deal.id, tenantId);
-      await this.receivablesService.ensureForDeal(tenantId, deal.id);
 
       const entry = await this.prisma.accountEntry.findFirst({
         where: {
@@ -206,7 +203,6 @@ export class StorefrontAdminService {
       }
     } else {
       await this.cuentasService.syncDealReceivable(deal.id, tenantId);
-      await this.receivablesService.ensureForDeal(tenantId, deal.id);
     }
 
     return {
