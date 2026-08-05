@@ -240,7 +240,7 @@ function FinancialPositionHero({
     );
   }
 
-  const positions: Array<{
+  const liquidityCards: Array<{
     label: string;
     value: string;
     helper: string;
@@ -295,6 +295,19 @@ function FinancialPositionHero({
       iconBubbleClass: 'bg-blue-500/15 text-blue-400',
       Icon: User,
     },
+  ];
+
+  const financialCards: Array<{
+    label: string;
+    value: string;
+    helper: string;
+    tone: FinancialTone;
+    group: FinancialGroup;
+    iconBubbleClass: string;
+    valueType?: 'monetary' | 'percentage';
+    Icon: LucideIcon;
+    href?: string;
+  }> = [
     {
       label: 'Cuentas por cobrar',
       value: receivable !== null ? fmtMxn(receivable) : '—',
@@ -351,6 +364,22 @@ function FinancialPositionHero({
       Icon: TrendingUp,
     },
     {
+      label: 'Capital neto',
+      value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
+      helper:
+        capitalContributed !== null && investedCapital <= 0
+          ? 'Patrimonio · aportaciones pendientes'
+          : 'Patrimonio neto',
+      group: 'performance',
+      iconBubbleClass: 'bg-cyan-500/15 text-cyan-400',
+      tone:
+        capitalNeto === null ? 'muted' :
+        netCapital > 0 ? 'positive' :
+        netCapital < 0 ? 'negative' :
+        'muted',
+      Icon: ShieldCheck,
+    },
+    {
       label: 'ROI',
       value: roi !== null ? fmtRoiPct(roi) : 'No disponible',
       helper:
@@ -367,145 +396,181 @@ function FinancialPositionHero({
         'muted',
       Icon: PieChart,
     },
-    {
-      label: 'Capital neto',
-      value: capitalNeto !== null ? fmtMxn(netCapital) : '—',
-      helper:
-        capitalContributed !== null && investedCapital <= 0
-          ? 'Patrimonio · aportaciones pendientes'
-          : 'Patrimonio neto',
-      group: 'performance',
-      iconBubbleClass: 'bg-cyan-500/15 text-cyan-400',
-      tone:
-        capitalNeto === null ? 'muted' :
-        netCapital > 0 ? 'positive' :
-        netCapital < 0 ? 'negative' :
-        'muted',
-      Icon: ShieldCheck,
-    },
   ];
 
   return (
-    <article className="relative overflow-hidden rounded-[24px] border border-white/[0.04] bg-gradient-to-b from-white/[0.04] to-white/[0.012] shadow-2xl shadow-black/40">
-      <div
-        className="pointer-events-none absolute -left-20 -top-20 h-56 w-56 rounded-full bg-emerald-500/[0.05] blur-3xl"
-        aria-hidden
-      />
-      <div
-        className="pointer-events-none absolute -right-12 top-1/4 h-40 w-40 rounded-full bg-white/[0.02] blur-3xl"
-        aria-hidden
-      />
-      <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(16,185,129,0.07),transparent_55%)]"
-        aria-hidden
-      />
+    <div className="space-y-10 md:space-y-12">
+      {/* ── Posición de liquidez ─────────────────────────────────────────── */}
+      <article className="relative overflow-hidden rounded-[24px] border border-white/[0.04] bg-gradient-to-b from-white/[0.04] to-white/[0.012] shadow-2xl shadow-black/40">
+        <div
+          className="pointer-events-none absolute -left-20 -top-20 h-56 w-56 rounded-full bg-emerald-500/[0.05] blur-3xl"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute -right-12 top-1/4 h-40 w-40 rounded-full bg-white/[0.02] blur-3xl"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(16,185,129,0.07),transparent_55%)]"
+          aria-hidden
+        />
 
-      <div className="relative border-b border-white/[0.04] px-4 py-3 md:px-5">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/15 to-transparent" />
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/90">
-                <Wallet className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+        <div className="relative border-b border-white/[0.04] px-4 py-3 md:px-5">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/15 to-transparent" />
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/90">
+                  <Wallet className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                </div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+                  Posición de liquidez
+                </p>
               </div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
-                Posición financiera
+              <p className="mt-0.5 pl-9 text-xs text-white/35">
+                Dinero disponible de Wrist Caviar.
               </p>
             </div>
-            <p className="mt-0.5 pl-9 text-xs text-white/35">Resumen financiero consolidado</p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
-            <Link
-              href="/cuentas"
-              className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
-            >
-              Ver cuentas →
-            </Link>
-            <span className="hidden text-white/12 sm:inline" aria-hidden>
-              ·
-            </span>
-            <Link
-              href="/capital"
-              className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
-            >
-              Ver capital →
-            </Link>
-            <span className="hidden text-white/12 sm:inline" aria-hidden>
-              ·
-            </span>
-            <Link
-              href="/crypto"
-              className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
-            >
-              Ver crypto →
-            </Link>
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
+              <Link
+                href="/crypto"
+                className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+              >
+                Ver crypto →
+              </Link>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="relative grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-10 md:p-5">
-        {positions.map((item) => (
-          <FinancialKpiCard
-            key={item.label}
-            label={item.label}
-            value={item.value}
-            helper={item.helper}
-            tone={item.tone}
-            group={item.group}
-            iconBubbleClass={item.iconBubbleClass}
-            valueType={item.valueType}
-            Icon={item.Icon}
-            href={item.href}
+        <div className="relative grid grid-cols-1 gap-2 p-3 pb-2 sm:grid-cols-2 sm:p-4 sm:pb-3 lg:grid-cols-4 md:p-5 md:pb-4">
+          {liquidityCards.map((item) => (
+            <FinancialKpiCard
+              key={item.label}
+              label={item.label}
+              value={item.value}
+              helper={item.helper}
+              tone={item.tone}
+              group={item.group}
+              iconBubbleClass={item.iconBubbleClass}
+              valueType={item.valueType}
+              Icon={item.Icon}
+              href={item.href}
+            />
+          ))}
+        </div>
+
+        <div className="relative mt-2 border-t border-white/[0.06] sm:mt-3 md:mt-4">
+          <div
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_120%_at_85%_50%,rgba(16,185,129,0.18),transparent_62%)]"
+            aria-hidden
           />
-        ))}
-      </div>
-      {capitalContributed !== null && investedCapital <= 0 ? (
-        <div className="relative border-t border-amber-400/15 bg-amber-500/[0.06] px-4 py-2.5 md:px-5">
-          <p className="text-[11px] font-medium text-amber-200/90">
-            Datos de aportaciones pendientes — Capital invertido y ROI no están disponibles hasta
-            registrar aportaciones de socios.
-          </p>
-        </div>
-      ) : null}
-
-      <div className="relative border-t border-white/[0.04]">
-        <div
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_120%_at_85%_50%,rgba(16,185,129,0.14),transparent_62%)]"
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-500/[0.05] via-transparent to-emerald-500/[0.03]"
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-emerald-400/20 to-transparent"
-          aria-hidden
-        />
-        <div className="relative flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between md:px-5 md:py-6">
-          <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
-              Liquidez total
-            </p>
-            <p className="mt-1 text-xs text-white/35">
-              Incluye efectivo, bancos, crypto valuado y Cuenta César.
-            </p>
-            {liquidityWarnings.length > 0 ? (
-              <p className="mt-2 text-[11px] font-medium text-amber-200/90">
-                {liquidityWarnings.join(' ')}
+          <div
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-500/[0.07] via-transparent to-emerald-500/[0.05]"
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent"
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent"
+            aria-hidden
+          />
+          <div className="relative flex flex-col gap-4 px-4 py-8 sm:flex-row sm:items-center sm:justify-between md:px-6 md:py-10">
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-white/50">
+                Liquidez total
               </p>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-3 sm:gap-4">
-            <p className="text-4xl font-semibold tabular-nums tracking-tight text-emerald-400 xl:text-5xl">
-              {fmtMxn(liquidityTotal)}
-            </p>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400/80">
-              <TrendingUp className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+              <p className="mt-1.5 text-sm text-white/40">
+                Efectivo + Bancos + Crypto + Cuenta César
+              </p>
+              {liquidityWarnings.length > 0 ? (
+                <p className="mt-2 text-[11px] font-medium text-amber-200/90">
+                  {liquidityWarnings.join(' ')}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-3 sm:gap-5">
+              <p className="text-5xl font-semibold tabular-nums tracking-tight text-emerald-400 sm:text-6xl xl:text-7xl">
+                {fmtMxn(liquidityTotal)}
+              </p>
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
+                <TrendingUp className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </article>
+      </article>
+
+      {/* ── Posición financiera ──────────────────────────────────────────── */}
+      <article className="relative overflow-hidden rounded-[24px] border border-white/[0.04] bg-gradient-to-b from-white/[0.04] to-white/[0.012] shadow-2xl shadow-black/40">
+        <div
+          className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-white/[0.02] blur-3xl"
+          aria-hidden
+        />
+
+        <div className="relative border-b border-white/[0.04] px-4 py-3 md:px-5">
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400/90">
+                  <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                </div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+                  Posición financiera
+                </p>
+              </div>
+              <p className="mt-0.5 pl-9 text-xs text-white/35">
+                Salud financiera del negocio.
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
+              <Link
+                href="/cuentas"
+                className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+              >
+                Ver cuentas →
+              </Link>
+              <span className="hidden text-white/12 sm:inline" aria-hidden>
+                ·
+              </span>
+              <Link
+                href="/capital"
+                className="text-[11px] font-medium tracking-wide text-white/30 underline-offset-4 transition-colors hover:text-emerald-400 hover:underline"
+              >
+                Ver capital →
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        <div className="relative grid grid-cols-1 gap-2 p-3 pt-4 sm:grid-cols-2 sm:p-4 sm:pt-5 lg:grid-cols-3 md:p-5 md:pt-6">
+          {financialCards.map((item) => (
+            <FinancialKpiCard
+              key={item.label}
+              label={item.label}
+              value={item.value}
+              helper={item.helper}
+              tone={item.tone}
+              group={item.group}
+              iconBubbleClass={item.iconBubbleClass}
+              valueType={item.valueType}
+              Icon={item.Icon}
+              href={item.href}
+            />
+          ))}
+        </div>
+
+        {capitalContributed !== null && investedCapital <= 0 ? (
+          <div className="relative border-t border-amber-400/15 bg-amber-500/[0.06] px-4 py-2.5 md:px-5">
+            <p className="text-[11px] font-medium text-amber-200/90">
+              Datos de aportaciones pendientes — Capital invertido y ROI no están disponibles hasta
+              registrar aportaciones de socios.
+            </p>
+          </div>
+        ) : null}
+      </article>
+    </div>
   );
 }
 
