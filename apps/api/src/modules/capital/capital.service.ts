@@ -24,6 +24,7 @@ type InvestorWithBalances = {
   deletedAt: Date | null;
   contributions: { amount: Prisma.Decimal }[];
   distributions: { amount: Prisma.Decimal }[];
+  openingBalances: { amount: Prisma.Decimal; effectiveDate: Date; source: string; notes: string | null }[];
 };
 
 type ContributionWithInvestor = {
@@ -83,6 +84,11 @@ export class CapitalService {
         include: {
           contributions: { where: { deletedAt: null }, select: { amount: true } },
           distributions: { where: { deletedAt: null }, select: { amount: true } },
+          openingBalances: {
+            where: { deletedAt: null },
+            select: { amount: true, effectiveDate: true, source: true, notes: true },
+            orderBy: { effectiveDate: 'asc' },
+          },
         },
         orderBy: { createdAt: 'asc' },
       }),
@@ -105,15 +111,32 @@ export class CapitalService {
     const totalBankFees = bankCommissionAgg._sum.commission ?? new Prisma.Decimal(0);
     const totalBusinessProfit = totalRevenue.minus(totalCostOfSold).minus(totalBankFees);
 
+    let totalOpeningCapital = new Prisma.Decimal(0);
+    let totalLaterContributions = new Prisma.Decimal(0);
     let totalCapitalContributed = new Prisma.Decimal(0);
     let totalDistributionsPaid = new Prisma.Decimal(0);
     let totalPendingToPartners = new Prisma.Decimal(0);
+    const openingBalanceRows: Array<{
+      investorId: string;
+      investorName: string;
+      amount: string;
+      currency: 'MXN';
+      effectiveDate: string;
+      source: string;
+      notes: string | null;
+    }> = [];
 
     const investorRows = investors.map((investor) => {
-      const capitalContributed = investor.contributions.reduce(
+      const openingCapital = investor.openingBalances.reduce(
+        (sum, row) => sum.plus(row.amount),
+        new Prisma.Decimal(0),
+      );
+      const laterContributions = investor.contributions.reduce(
         (sum, c) => sum.plus(c.amount),
         new Prisma.Decimal(0),
       );
+      // Invested capital = opening balances + later contributions (withdrawals would subtract if modeled).
+      const capitalContributed = openingCapital.plus(laterContributions);
       const distributionsPaid = investor.distributions.reduce(
         (sum, d) => sum.plus(d.amount),
         new Prisma.Decimal(0),
@@ -121,17 +144,34 @@ export class CapitalService {
       const profitEntitlement = totalBusinessProfit
         .times(investor.ownershipPercent)
         .dividedBy(100);
+      // Por pagar socios = profit entitlement only (never opening capital).
       const pendingProfit = profitEntitlement.minus(distributionsPaid);
 
+      totalOpeningCapital = totalOpeningCapital.plus(openingCapital);
+      totalLaterContributions = totalLaterContributions.plus(laterContributions);
       totalCapitalContributed = totalCapitalContributed.plus(capitalContributed);
       totalDistributionsPaid = totalDistributionsPaid.plus(distributionsPaid);
       totalPendingToPartners = totalPendingToPartners.plus(pendingProfit);
+
+      for (const row of investor.openingBalances) {
+        openingBalanceRows.push({
+          investorId: investor.id,
+          investorName: investor.name,
+          amount: row.amount.toFixed(2),
+          currency: 'MXN',
+          effectiveDate: row.effectiveDate.toISOString(),
+          source: row.source,
+          notes: row.notes,
+        });
+      }
 
       return {
         id: investor.id,
         name: investor.name,
         ownershipPercent: investor.ownershipPercent.toString(),
         isActive: investor.isActive,
+        openingCapital: openingCapital.toFixed(2),
+        laterContributions: laterContributions.toFixed(2),
         capitalContributed: capitalContributed.toFixed(2),
         profitEntitlement: profitEntitlement.toFixed(2),
         distributionsPaid: distributionsPaid.toFixed(2),
@@ -146,6 +186,8 @@ export class CapitalService {
     const contributionsIncomplete = totalCapitalContributed.lte(0);
 
     return {
+      totalOpeningCapital: totalOpeningCapital.toFixed(2),
+      totalLaterContributions: totalLaterContributions.toFixed(2),
       totalCapitalContributed: totalCapitalContributed.toFixed(2),
       totalBusinessProfit: totalBusinessProfit.toFixed(2),
       totalBankCommissions: totalBankFees.toFixed(2),
@@ -154,6 +196,7 @@ export class CapitalService {
       capitalNeto: capitalNeto.toFixed(2),
       contributionsIncomplete,
       roiAvailable: !contributionsIncomplete,
+      openingBalances: openingBalanceRows,
       investors: investorRows,
     };
   }
@@ -295,14 +338,21 @@ export class CapitalService {
 
   // ─── Investors ────────────────────────────────────────────────────────────────
 
+  private readonly investorBalanceInclude = {
+    contributions: { where: { deletedAt: null }, select: { amount: true } },
+    distributions: { where: { deletedAt: null }, select: { amount: true } },
+    openingBalances: {
+      where: { deletedAt: null },
+      select: { amount: true, effectiveDate: true, source: true, notes: true },
+      orderBy: { effectiveDate: 'asc' as const },
+    },
+  };
+
   async listInvestors(tenantId: string) {
     const [investors, totalBusinessProfit] = await Promise.all([
       this.prisma.investor.findMany({
         where: { tenantId, deletedAt: null },
-        include: {
-          contributions: { where: { deletedAt: null }, select: { amount: true } },
-          distributions: { where: { deletedAt: null }, select: { amount: true } },
-        },
+        include: this.investorBalanceInclude,
         orderBy: { createdAt: 'asc' },
       }),
       this.computeBusinessProfit(tenantId),
@@ -318,10 +368,7 @@ export class CapitalService {
         ownershipPercent: new Prisma.Decimal(dto.ownershipPercent),
         notes: dto.notes ?? null,
       },
-      include: {
-        contributions: { where: { deletedAt: null }, select: { amount: true } },
-        distributions: { where: { deletedAt: null }, select: { amount: true } },
-      },
+      include: this.investorBalanceInclude,
     });
     const totalBusinessProfit = await this.computeBusinessProfit(tenantId);
     return this.serializeInvestor(investor, totalBusinessProfit);
@@ -339,10 +386,7 @@ export class CapitalService {
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         ...(dto.notes !== undefined && { notes: dto.notes }),
       },
-      include: {
-        contributions: { where: { deletedAt: null }, select: { amount: true } },
-        distributions: { where: { deletedAt: null }, select: { amount: true } },
-      },
+      include: this.investorBalanceInclude,
     });
     const totalBusinessProfit = await this.computeBusinessProfit(tenantId);
     return this.serializeInvestor(investor, totalBusinessProfit);
@@ -539,10 +583,16 @@ export class CapitalService {
   }
 
   private serializeInvestor(investor: InvestorWithBalances, totalBusinessProfit: Prisma.Decimal) {
-    const capitalContributed = investor.contributions.reduce(
+    const openingBalances = investor.openingBalances ?? [];
+    const openingCapital = openingBalances.reduce(
+      (sum, row) => sum.plus(row.amount),
+      new Prisma.Decimal(0),
+    );
+    const laterContributions = investor.contributions.reduce(
       (sum, c) => sum.plus(c.amount),
       new Prisma.Decimal(0),
     );
+    const capitalContributed = openingCapital.plus(laterContributions);
     const distributionsPaid = investor.distributions.reduce(
       (sum, d) => sum.plus(d.amount),
       new Prisma.Decimal(0),
@@ -558,10 +608,18 @@ export class CapitalService {
       ownershipPercent: investor.ownershipPercent.toString(),
       isActive: investor.isActive,
       notes: investor.notes,
+      openingCapital: openingCapital.toFixed(2),
+      laterContributions: laterContributions.toFixed(2),
       capitalContributed: capitalContributed.toFixed(2),
       profitEntitlement: profitEntitlement.toFixed(2),
       distributionsPaid: distributionsPaid.toFixed(2),
       pendingProfit: pendingProfit.toFixed(2),
+      openingBalances: openingBalances.map((row) => ({
+        amount: row.amount.toFixed(2),
+        effectiveDate: row.effectiveDate.toISOString(),
+        source: row.source,
+        notes: row.notes,
+      })),
       createdAt: investor.createdAt.toISOString(),
       updatedAt: investor.updatedAt.toISOString(),
     };
