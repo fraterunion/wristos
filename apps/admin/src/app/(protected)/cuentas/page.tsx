@@ -96,21 +96,55 @@ function treasuryAccountToPaymentMethod(account: TreasuryAccount): PaymentMethod
 }
 
 function paymentSourceLabel(payment: AccountPayment, entryType: AccountEntryType): string {
-  if (payment.settlement) {
-    if (entryType === 'RECEIVABLE' || payment.settlement.role === 'RECEIVABLE_SIDE') {
-      return `Aplicado a cuenta por pagar · ${payment.settlement.counterpartName}`;
+  if (payment.settlement || payment.method === 'SETTLEMENT') {
+    if (entryType === 'RECEIVABLE' || payment.settlement?.role === 'RECEIVABLE_SIDE') {
+      return 'Aplicado a cuenta por pagar';
     }
-    return `Pago recibido por compensación · Origen: ${payment.settlement.counterpartName}`;
-  }
-  if (payment.method === 'SETTLEMENT') {
-    return entryType === 'RECEIVABLE'
-      ? 'Aplicado a cuenta por pagar'
-      : 'Pago recibido por compensación';
+    return 'Pago recibido por compensación';
   }
   if (payment.cashAccount) {
     return TREASURY_ACCOUNT_LABELS[payment.cashAccount];
   }
   return PAYMENT_METHOD_LABELS[payment.method as PaymentMethod] ?? payment.method;
+}
+
+function settlementShortId(id: string): string {
+  return id.slice(0, 8);
+}
+
+function StatusChip({ status }: { status: AccountEntryStatus }) {
+  const tone =
+    status === 'OVERDUE'
+      ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
+      : status === 'PARTIAL'
+        ? 'border-amber-400/30 bg-amber-500/10 text-amber-100'
+        : status === 'OPEN'
+          ? 'border-sky-400/30 bg-sky-500/10 text-sky-100'
+          : 'border-white/15 bg-white/5 text-white/60';
+  return (
+    <span
+      className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium tracking-wide ${tone}`}
+    >
+      {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function InfoIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        fillRule="evenodd"
+        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-4a1 1 0 100 2 1 1 0 000-2zm1 4a1 1 0 10-2 0v4a1 1 0 102 0V10z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
 }
 
 const CATEGORY_OPTIONS: AccountEntryCategory[] = [
@@ -1156,7 +1190,14 @@ function PaymentModal({
           </div>
 
           {isSettlement ? (
-            <div className="space-y-3 rounded-xl border border-white/[0.08] bg-black/20 p-3">
+            <div className="space-y-3 rounded-xl border border-sky-400/25 bg-sky-500/[0.06] p-3">
+              <div className="flex items-start gap-2 text-sky-100/90">
+                <InfoIcon className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+                <p className="text-[11px] leading-relaxed">
+                  Compensación entre cuentas: no ingresa dinero a la empresa.
+                </p>
+              </div>
+
               <div>
                 <label className="ui-field-label">Cuenta por pagar</label>
                 <input
@@ -1166,66 +1207,125 @@ function PaymentModal({
                   value={payableSearch}
                   onChange={(e) => setPayableSearch(e.target.value)}
                 />
-                <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                <div className="mt-2 max-h-52 space-y-2 overflow-y-auto">
                   {payableLoading ? (
                     <p className="px-1 py-2 text-xs text-white/35">Buscando…</p>
                   ) : payableOptions.length === 0 ? (
-                    <p className="px-1 py-2 text-xs text-white/35">
-                      No hay cuentas por pagar abiertas en {entry.currency}.
-                    </p>
+                    <div className="rounded-lg border border-sky-400/20 bg-black/20 px-3 py-3">
+                      <p className="text-xs font-medium text-white/75">
+                        No existen cuentas por pagar compatibles.
+                      </p>
+                      <p className="mt-2 text-[11px] text-white/45">Las cuentas deben:</p>
+                      <ul className="mt-1 space-y-0.5 text-[11px] text-white/45">
+                        <li>• pertenecer al mismo tenant</li>
+                        <li>• estar en la misma moneda</li>
+                        <li>• tener saldo pendiente.</li>
+                      </ul>
+                    </div>
                   ) : (
-                    payableOptions.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() =>
-                          setForm({
-                            ...form,
-                            payableEntryId: option.id,
-                            confirmedSettlement: false,
-                            amount: '',
-                          })
-                        }
-                        className={`w-full rounded-lg border px-3 py-2 text-left transition ${
-                          form.payableEntryId === option.id
-                            ? 'border-emerald-400/40 bg-emerald-500/10'
-                            : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'
-                        }`}
-                      >
-                        <p className="text-sm font-medium text-white/85">{option.counterpartyName}</p>
-                        <p className="mt-0.5 truncate text-xs text-white/40">{option.concept}</p>
-                        <p className="mt-1 text-xs tabular-nums text-white/55">
-                          Pendiente {fmtEntryMoney(option.balance, option.currency)} ·{' '}
-                          {STATUS_LABELS[option.status]}
-                        </p>
-                      </button>
-                    ))
+                    payableOptions.map((option) => {
+                      const selected = form.payableEntryId === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              payableEntryId: option.id,
+                              confirmedSettlement: false,
+                              amount: '',
+                            })
+                          }
+                          className={`w-full rounded-lg border px-3 py-2.5 text-left transition ${
+                            selected
+                              ? 'border-sky-400/45 bg-sky-500/15 ring-1 ring-sky-400/20'
+                              : 'border-white/10 bg-white/[0.03] hover:border-sky-400/25 hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          <p className="text-sm font-semibold text-white/90">
+                            {option.counterpartyName}
+                          </p>
+                          <p className="mt-0.5 line-clamp-2 text-xs text-white/45">
+                            {option.concept || 'Sin concepto'}
+                          </p>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <StatusChip status={option.status} />
+                            <p className="text-xs font-medium tabular-nums text-white/75">
+                              {fmtEntryMoney(option.balance, option.currency)}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })
                   )}
                 </div>
               </div>
 
               {selectedPayable ? (
-                <div className="rounded-lg border border-amber-400/20 bg-amber-500/[0.07] px-3 py-2.5">
-                  <p className="text-[11px] font-medium text-amber-100/90">
-                    Se reducirán ambas cuentas sin mover efectivo, bancos ni Cuenta César.
-                  </p>
-                  <div className="mt-2 space-y-1 text-xs text-white/60">
-                    <p>
-                      {entry.counterpartyName}:{' '}
-                      <span className="tabular-nums text-white/80">
-                        {fmtEntryMoney(entry.balance, entry.currency)} →{' '}
-                        {fmtEntryMoney(String(recvAfter ?? 0), entry.currency)}
-                      </span>
-                    </p>
-                    <p>
-                      {selectedPayable.counterpartyName}:{' '}
-                      <span className="tabular-nums text-white/80">
-                        {fmtEntryMoney(selectedPayable.balance, selectedPayable.currency)} →{' '}
-                        {fmtEntryMoney(String(payAfter ?? 0), selectedPayable.currency)}
-                      </span>
+                <div className="space-y-3 rounded-lg border border-sky-400/25 bg-black/25 px-3 py-3">
+                  <div className="flex items-center gap-2 text-sky-100">
+                    <InfoIcon className="h-4 w-4 text-sky-300" />
+                    <p className="text-[11px] font-semibold tracking-wide">
+                      Vista previa de la compensación
                     </p>
                   </div>
-                  <label className="mt-3 flex items-start gap-2 text-xs text-white/70">
+
+                  <div className="grid gap-2">
+                    <div className="rounded-md border border-white/[0.06] bg-white/[0.03] px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
+                        Cuenta por cobrar
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-sky-100">
+                        {entry.counterpartyName}
+                      </p>
+                      <p className="mt-2 text-sm tabular-nums text-white/70">
+                        {fmtEntryMoney(entry.balance, entry.currency)}
+                      </p>
+                      <p className="my-1 text-center text-xs text-sky-300/80">↓</p>
+                      <p className="text-sm font-semibold tabular-nums text-white/90">
+                        {fmtEntryMoney(String(recvAfter ?? 0), entry.currency)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-white/[0.06] bg-white/[0.03] px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
+                        Cuenta por pagar
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-sky-100">
+                        {selectedPayable.counterpartyName}
+                      </p>
+                      <p className="mt-2 text-sm tabular-nums text-white/70">
+                        {fmtEntryMoney(selectedPayable.balance, selectedPayable.currency)}
+                      </p>
+                      <p className="my-1 text-center text-xs text-sky-300/80">↓</p>
+                      <p className="text-sm font-semibold tabular-nums text-white/90">
+                        {fmtEntryMoney(String(payAfter ?? 0), selectedPayable.currency)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border border-sky-400/20 bg-sky-500/[0.08] px-3 py-2.5">
+                    <p className="text-[11px] font-medium text-sky-100/90">
+                      No se registrará movimiento en:
+                    </p>
+                    <ul className="mt-1.5 space-y-1 text-[11px] text-white/65">
+                      <li className="flex items-center gap-1.5">
+                        <span className="text-sky-300">✓</span> Efectivo
+                      </li>
+                      <li className="flex items-center gap-1.5">
+                        <span className="text-sky-300">✓</span> Bancos
+                      </li>
+                      <li className="flex items-center gap-1.5">
+                        <span className="text-sky-300">✓</span> Cuenta César
+                      </li>
+                      <li className="flex items-center gap-1.5">
+                        <span className="text-sky-300">✓</span> Crypto
+                      </li>
+                    </ul>
+                  </div>
+
+                  <label className="flex items-start gap-2 text-xs text-white/75">
                     <input
                       type="checkbox"
                       className="mt-0.5"
@@ -1476,43 +1576,74 @@ function EntryDrawer({
               </div>
             ) : (
               <ul className="mt-3 space-y-0 divide-y divide-white/[0.04]">
-                {payments.map((payment) => (
-                  <li key={payment.id} className="py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-xs tabular-nums text-white/35">{fmtDate(payment.paidAt)}</p>
-                        <p className="mt-1 text-xs text-white/40">
-                          {paymentSourceLabel(payment, entry.type)}
-                        </p>
-                        {payment.settlementId ? (
-                          <p className="mt-0.5 text-[10px] tabular-nums text-white/25">
-                            Settlement ID: {payment.settlementId}
+                {payments.map((payment) => {
+                  const isSettlementPayment =
+                    Boolean(payment.settlement) ||
+                    payment.method === 'SETTLEMENT' ||
+                    Boolean(payment.settlementId);
+                  return (
+                    <li key={payment.id} className="py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs tabular-nums text-white/35">
+                            {fmtDate(payment.paidAt)}
                           </p>
-                        ) : null}
-                        {payment.settlement ? (
-                          <button
-                            type="button"
-                            className="mt-1 text-[11px] font-medium text-emerald-400/90 underline-offset-2 hover:underline"
-                            onClick={() => {
-                              // Navigate by selecting counterpart in list via soft hint — open same drawer refresh path
-                              window.location.href = `/cuentas?type=${
-                                payment.settlement?.role === 'RECEIVABLE_SIDE' ? 'PAYABLE' : 'RECEIVABLE'
-                              }`;
-                            }}
-                          >
-                            Ver contraparte: {payment.settlement.counterpartName} →
-                          </button>
-                        ) : null}
-                        {payment.notes ? (
-                          <p className="mt-1 truncate text-sm text-white/40">{payment.notes}</p>
-                        ) : null}
+                          {isSettlementPayment ? (
+                            <div className="mt-1.5 rounded-lg border border-sky-400/20 bg-sky-500/[0.07] px-2.5 py-2">
+                              <div className="flex items-start gap-1.5">
+                                <InfoIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-300" />
+                                <div className="min-w-0">
+                                  <p className="text-xs font-medium text-sky-100/95">
+                                    {paymentSourceLabel(payment, entry.type)}
+                                  </p>
+                                  {payment.settlement?.counterpartName ? (
+                                    <p className="mt-1 text-sm font-semibold text-sky-50">
+                                      {payment.settlement.counterpartName}
+                                    </p>
+                                  ) : null}
+                                  {payment.settlementId ? (
+                                    <p className="mt-1 text-[10px] tabular-nums text-sky-200/55">
+                                      Settlement #{settlementShortId(payment.settlementId)}
+                                    </p>
+                                  ) : null}
+                                  {payment.settlement ? (
+                                    <button
+                                      type="button"
+                                      className="mt-1.5 text-[11px] font-medium text-sky-300 underline-offset-2 hover:underline"
+                                      onClick={() => {
+                                        window.location.href = `/cuentas?type=${
+                                          payment.settlement?.role === 'RECEIVABLE_SIDE'
+                                            ? 'PAYABLE'
+                                            : 'RECEIVABLE'
+                                        }`;
+                                      }}
+                                    >
+                                      Ver contraparte →
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-xs text-white/40">
+                              {paymentSourceLabel(payment, entry.type)}
+                            </p>
+                          )}
+                          {payment.notes ? (
+                            <p className="mt-1 truncate text-sm text-white/40">{payment.notes}</p>
+                          ) : null}
+                        </div>
+                        <p
+                          className={`shrink-0 text-sm font-semibold tabular-nums ${
+                            isSettlementPayment ? 'text-sky-200' : 'text-emerald-300'
+                          }`}
+                        >
+                          {fmtEntryMoney(payment.amount, payment.currency as Currency)}
+                        </p>
                       </div>
-                      <p className="shrink-0 text-sm font-semibold tabular-nums text-emerald-300">
-                        {fmtEntryMoney(payment.amount, payment.currency as Currency)}
-                      </p>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
