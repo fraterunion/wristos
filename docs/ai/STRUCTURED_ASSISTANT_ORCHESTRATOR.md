@@ -104,14 +104,17 @@ Existing conversation/workspace references must belong to the authenticated tena
 
 ## Error mapping
 
-- stale workspace or fingerprint state → `STALE_PLAN` / `ERROR_RECOVERY_CARD`;
-- permission denial → `PERMISSION_BLOCKED`;
+- missing, inaccessible, cross-tenant, or soft-deleted conversation/workspace → HTTP 404 with the same `FAILED / NOT_FOUND` recovery card;
+- stale workspace or fingerprint state → HTTP 409 with `STALE_PLAN / ERROR_RECOVERY_CARD`;
+- permission denial → HTTP 403 with `PERMISSION_BLOCKED`;
 - missing entities → `NEEDS_INPUT` / `MISSING_FIELDS_CARD`;
-- read failure → `FAILED` / `ERROR_RECOVERY_CARD`;
+- read or unexpected internal failure → HTTP 500 with `FAILED / ERROR_RECOVERY_CARD`;
 - unsupported write execution → `READY_FOR_CONFIRMATION` / `ACTION_PREVIEW_CARD`;
 - request-ID reuse with different content → HTTP 409.
 
 Every typed failure states what happened, confirms that no business data changed, and identifies the next safe action.
+
+The endpoint retains Nest's current HTTP 201 contract for successful new reads, exact successful replays, clarification cards, and non-executing write previews. DTO validation remains HTTP 400 and unauthenticated requests remain HTTP 401. HTTP status is derived at the controller boundary from stable typed failure codes or interaction states; message text is never parsed. Missing and inaccessible resources deliberately share the same external 404 response and reveal no ownership or tenant information.
 
 ## Audit and security
 

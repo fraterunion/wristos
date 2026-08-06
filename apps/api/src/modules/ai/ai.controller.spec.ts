@@ -1,6 +1,7 @@
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { AIController } from './ai.controller';
+import { HttpStatus } from '@nestjs/common';
 
 describe('AIController public action-run API', () => {
   it('exposes semantic confirm/cancel commands and no generic status mutation', () => {
@@ -16,5 +17,15 @@ describe('AIController public action-run API', () => {
     expect(routes).not.toEqual(expect.arrayContaining([{ path: 'action-runs/:id/status', method: expect.anything() }]));
     expect(routes).toEqual(expect.arrayContaining([{ path: 'assistant/structured', method: RequestMethod.POST }]));
     expect(prototype).not.toHaveProperty('transitionActionRun');
+  });
+
+  it('maps a durable typed NOT_FOUND response to HTTP 404 without changing its body', async () => {
+    const typedResponse = { requestId: 'request-1', conversationId: '', workspaceId: '', interactionState: 'FAILED', responseType: 'ERROR_RECOVERY_CARD', payload: { errorType: 'NOT_FOUND', message: 'No se encontró el recurso solicitado.' }, warnings: [], suggestedActions: [], traceId: 'trace-1', createdAt: '2026-08-06T00:00:00.000Z' };
+    const assistant = { execute: jest.fn().mockResolvedValue(typedResponse) };
+    const controller = new AIController({} as never, {} as never, {} as never, assistant as never);
+    const httpResponse = { status: jest.fn() };
+    const result = await controller.structuredAssistant({ userId: 'u1', tenantId: 't1', email: 'u@example.test' }, { intent: 'GET_LIQUIDITY', entities: {}, surface: 'API', clientRequestId: 'request-1' }, httpResponse as never);
+    expect(httpResponse.status).toHaveBeenCalledWith(HttpStatus.NOT_FOUND);
+    expect(result).toBe(typedResponse);
   });
 });

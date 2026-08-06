@@ -1,4 +1,5 @@
 import { AIRequestStatus } from '@prisma/client';
+import { NotFoundException } from '@nestjs/common';
 import { StructuredAssistantService } from './structured-assistant.service';
 
 describe('StructuredAssistantService', () => {
@@ -54,5 +55,14 @@ describe('StructuredAssistantService', () => {
     await expect(service.execute(actor, { intent: 'GET_LIQUIDITY', entities: {}, surface: 'API', clientRequestId: 'replay' })).resolves.toBe(replay);
     expect(planner.plan).not.toHaveBeenCalled();
     expect(persistence.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(['cross-tenant conversation', 'cross-tenant workspace', 'missing reference', 'soft-deleted reference'])('returns the same typed NOT_FOUND failure for %s', async () => {
+    persistence.prepare.mockRejectedValue(new NotFoundException('AI resource not found'));
+    requests.failUnattached.mockImplementation((_request, _actor, _intent, response) => response);
+    const response = await service.execute(actor, { intent: 'GET_LIQUIDITY', entities: {}, surface: 'API', clientRequestId: 'not-found' });
+    expect(response).toEqual(expect.objectContaining({ interactionState: 'FAILED', responseType: 'ERROR_RECOVERY_CARD', payload: expect.objectContaining({ errorType: 'NOT_FOUND', code: 'NOT_FOUND', message: 'No se encontró el recurso solicitado.' }) }));
+    expect(planner.plan).not.toHaveBeenCalled();
+    expect(readRunner.run).not.toHaveBeenCalled();
   });
 });
