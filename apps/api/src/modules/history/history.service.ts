@@ -163,6 +163,11 @@ export class HistoryService {
     });
   }
 
+  async getRecentSalesForTools(tenantId: string, limit: number, clientId?: string, from?: string, to?: string) {
+    const rows = await this.getSold(tenantId);
+    return rows.filter((row) => (!clientId || row.buyer.id === clientId) && (!from || row.soldAt >= from) && (!to || row.soldAt <= to)).slice(0, Math.min(limit, 50));
+  }
+
   async getStock(tenantId: string) {
     const watches = await this.prisma.watch.findMany({
       where: { tenantId, deletedAt: null },

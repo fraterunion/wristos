@@ -397,6 +397,18 @@ export class CuentasService {
     return serialized;
   }
 
+  async getClientAccountsForTools(tenantId: string, clientId: string, type?: AccountEntryType, status?: AccountEntryStatus) {
+    await this.getCustomerLedger(tenantId, clientId);
+    const rows = await this.listEntries(tenantId, { clientId, type, status });
+    return Array.isArray(rows) ? rows : rows.items;
+  }
+
+  async getOpenAccountsForTools(tenantId: string, type: AccountEntryType, clientId?: string) {
+    const rows = await this.listEntries(tenantId, { type, clientId });
+    const items = (Array.isArray(rows) ? rows : rows.items).filter((row) => !['PAID', 'CANCELLED'].includes(row.status) && new Prisma.Decimal(row.balance).gt(0));
+    return items;
+  }
+
   async createEntry(tenantId: string, dto: CreateAccountEntryDto) {
     if (dto.dealId) {
       await this.ensureDealInTenant(dto.dealId, tenantId);

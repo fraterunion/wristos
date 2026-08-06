@@ -54,6 +54,19 @@ export class CrmService {
     return clients.map((client) => this.serializeClient(client));
   }
 
+  async searchClientsForTools(tenantId: string, query: string, limit: number) {
+    const clients = await this.prisma.client.findMany({
+      where: { tenantId, deletedAt: null, name: { contains: query.trim(), mode: 'insensitive' } },
+      include: { accountEntries: { where: { deletedAt: null, type: 'RECEIVABLE', status: { in: ['OPEN', 'PARTIAL', 'OVERDUE'] } }, select: { currency: true, totalAmount: true, payments: { where: { deletedAt: null }, select: { amount: true } } } }, interactions: { orderBy: { occurredAt: 'desc' }, take: 1, select: { occurredAt: true } } },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }], take: Math.min(limit, 50),
+    });
+    return clients.map((client) => {
+      const totals = { MXN: new Prisma.Decimal(0), USD: new Prisma.Decimal(0) };
+      for (const entry of client.accountEntries) totals[entry.currency] = totals[entry.currency].plus(entry.totalAmount.minus(entry.payments.reduce((sum, p) => sum.plus(p.amount), new Prisma.Decimal(0))));
+      return { id: client.id, name: client.name, normalizedName: client.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(), phone: client.phone, email: client.email, openReceivableCount: client.accountEntries.length, openReceivableTotalByCurrency: { MXN: totals.MXN.toFixed(2), USD: totals.USD.toFixed(2) }, lastActivityAt: client.interactions[0]?.occurredAt.toISOString() ?? null };
+    });
+  }
+
   async getClientById(id: string, tenantId: string) {
     const client = await this.prisma.client.findFirst({
       where: { id, tenantId, deletedAt: null },
