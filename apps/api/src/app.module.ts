@@ -26,6 +26,7 @@ import { StorefrontModule } from './modules/storefront/storefront.module';
 import { DataOnboardingModule } from './modules/data-onboarding/data-onboarding.module';
 import { ReceivablesModule } from './modules/receivables/receivables.module';
 import { PlatformMigrationsModule } from './modules/platform-migrations/platform-migrations.module';
+import { AIModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { PlatformMigrationsModule } from './modules/platform-migrations/platform
     DataOnboardingModule,
     ReceivablesModule,
     PlatformMigrationsModule,
+    AIModule,
   ],
   controllers: [AppController],
 })
