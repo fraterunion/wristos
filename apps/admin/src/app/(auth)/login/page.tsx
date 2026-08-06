@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { useAuthContext } from '@/lib/auth-context';
+import { browserPostLoginRoute } from '@/lib/mobile-routing';
 
 export default function LoginPage() {
   const { isLoading } = useAuthGuard();
@@ -27,7 +28,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.replace('/dashboard');
+      router.replace(browserPostLoginRoute());
     } catch (submitError) {
       setError(
         submitError instanceof Error

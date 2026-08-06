@@ -21,6 +21,7 @@ import {
 import { usePathname } from 'next/navigation';
 
 const navItems: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: '/assistant', label: 'Asistente', icon: Bot },
   { href: '/dashboard', label: 'Panel', icon: LayoutDashboard },
   { href: '/inventory', label: 'Inventario', icon: Boxes },
   { href: '/storefront', label: 'Tienda', icon: Store },
@@ -41,11 +42,11 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-full shrink-0 border-b border-white/10 bg-panel px-3 py-3 lg:w-64 lg:border-b-0 lg:border-r lg:px-4 lg:py-5">
+    <aside className="hidden w-64 shrink-0 border-r border-white/10 bg-panel px-4 py-5 lg:block">
       <div className="mb-3 text-base font-semibold tracking-wide text-white lg:mb-6 lg:text-lg">
         WristOS
       </div>
-      <nav className="-mx-1 flex flex-row gap-1 overflow-x-auto pb-1 lg:mx-0 lg:flex-col lg:space-y-1.5 lg:overflow-visible lg:pb-0">
+      <nav className="space-y-1.5">
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
           const Icon = item.icon;
@@ -53,7 +54,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`inline-flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm whitespace-nowrap transition lg:flex lg:w-full lg:whitespace-normal ${
+              className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
                 isActive
                   ? 'bg-emerald-500/[0.12] font-medium text-emerald-400'
                   : 'text-muted hover:bg-white/8 hover:text-white'
