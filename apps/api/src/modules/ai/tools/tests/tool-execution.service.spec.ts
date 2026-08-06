@@ -3,6 +3,7 @@ import { AIAuditEventType } from '@prisma/client';
 import { z } from 'zod';
 import { ToolDefinition, ToolContext } from '../tool-definition';
 import { ToolExecutionService } from '../tool-execution.service';
+import { CapabilityExecutionAuditContext } from '../../types/execution-audit-context';
 
 describe('ToolExecutionService', () => {
   const auditCreate = jest.fn().mockResolvedValue({ id: 'audit' });
@@ -10,6 +11,7 @@ describe('ToolExecutionService', () => {
   const context: ToolContext = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [], conversationId: null, workspaceId: null, actionRunId: null, requestId: 'trace-1', locale: 'es-MX', timezone: 'America/Mexico_City', now: new Date('2026-08-06T12:00:00Z') };
   const makeTool = (overrides: Partial<ToolDefinition> = {}): ToolDefinition => ({ name: 'test_read', version: '1.0.0', description: 'test', category: 'TEST', mode: 'READ', confirmationTier: 0, permission: null, inputSchema: {}, outputSchema: {}, inputValidator: z.object({ value: z.string() }).strict(), outputValidator: z.object({ result: z.string() }).strict(), canonicalService: 'TestService.read', execute: jest.fn(async (_ctx, input: any) => ({ data: { result: input.value }, summary: 'ok' })), ...overrides });
   const serviceFor = (tool: ToolDefinition) => new ToolExecutionService({ getDefinition: jest.fn(() => tool) } as never, prisma as never);
+  const capabilityAudit: CapabilityExecutionAuditContext = { capability: 'SEARCH_CLIENT', bindingVersion: '1.0.0', stepId: 'search-client-1', planFingerprint: 'a'.repeat(64) };
   beforeEach(() => jest.clearAllMocks());
 
   it('validates, executes, validates output, and emits start/completed metadata', async () => {
@@ -25,6 +27,17 @@ describe('ToolExecutionService', () => {
     expect(tool.execute).not.toHaveBeenCalled();
     expect(auditCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ type: AIAuditEventType.TOOL_INPUT_INVALID }) });
     expect(JSON.stringify(auditCreate.mock.calls)).not.toContain('secret-pii');
+  });
+
+  it('adds explicit trusted capability metadata to started and completed events without raw input or output', async () => {
+    await serviceFor(makeTool()).execute('test_read', context, { value: 'customer@example.com' }, capabilityAudit);
+    const [started, completed] = auditCreate.mock.calls.map((call) => call[0].data);
+    for (const event of [started, completed]) {
+      expect(event.payload).toEqual(expect.objectContaining({ capability: 'SEARCH_CLIENT', bindingVersion: '1.0.0', stepId: 'search-client-1', planFingerprint: 'a'.repeat(64), toolName: 'test_read', toolVersion: '1.0.0', traceId: 'trace-1' }));
+      expect(Object.hasOwn(event.payload, 'stepId')).toBe(true);
+    }
+    expect(JSON.stringify([started, completed])).not.toContain('customer@example.com');
+    expect(JSON.stringify([started, completed])).not.toContain('result');
   });
 
   it('rejects invalid canonical output and audits without payload', async () => {
@@ -45,5 +58,14 @@ describe('ToolExecutionService', () => {
     await expect(serviceFor(tool).execute('test_read', context, { value: 'x' })).rejects.toThrow('database unavailable');
     expect(auditCreate.mock.calls.map((call) => call[0].data.type)).toContain(AIAuditEventType.TOOL_EXECUTION_FAILED);
     expect(JSON.stringify(auditCreate.mock.calls)).not.toContain('database unavailable');
+  });
+
+  it('adds trusted capability identity and failureType to failed events', async () => {
+    const tool = makeTool({ execute: jest.fn(async () => { throw new Error('private customer failure'); }) });
+    await expect(serviceFor(tool).execute('test_read', context, { value: 'customer@example.com' }, capabilityAudit)).rejects.toThrow();
+    const failed = auditCreate.mock.calls.map((call) => call[0].data).find((event) => event.type === AIAuditEventType.TOOL_EXECUTION_FAILED);
+    expect(failed.payload).toEqual(expect.objectContaining({ ...capabilityAudit, toolName: 'test_read', toolVersion: '1.0.0', traceId: 'trace-1', failureType: 'Error' }));
+    expect(JSON.stringify(failed)).not.toContain('customer@example.com');
+    expect(JSON.stringify(failed)).not.toContain('private customer failure');
   });
 });

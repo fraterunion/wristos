@@ -7,6 +7,7 @@ import { BusinessCapability, BusinessPlanStep } from '../../planner/planner.type
 const toolRegistry = () => new ToolRegistry({} as never, {} as never, {} as never, {} as never, {} as never);
 const step = (capability: BusinessCapability, args: Record<string, any> = {}): BusinessPlanStep => ({ stepId: 's1', capability, arguments: args, dependsOn: [], estimatedEffects: [], reversibility: 'FULL' });
 const context = { tenantId: 't1', userId: 'u1', permissions: [], conversationId: null, workspaceId: null, actionRunId: null, requestId: 'trace-1', locale: 'en', timezone: 'UTC', now: new Date('2026-08-06T00:00:00Z') };
+const pendingAudit = (capability: BusinessCapability) => ({ planFingerprint: 'a'.repeat(64), stepId: 's1', capability });
 
 describe('CapabilityBindingRegistry', () => {
   it('contains exactly five unique, verified read bindings', () => {
@@ -44,8 +45,8 @@ describe('Capability input mapping and execution', () => {
     const execute = jest.fn(async (name, _context, input) => ({ toolName: name, toolVersion: '1.0.0', success: true, data: { amount: '1.20', at: '2026-08-06T00:00:00.000Z', input }, summary: 'bounded', sourceMetadata: { canonicalService: 'Test.read', deterministic: true, tenantScoped: true }, warnings: [], executedAt: context.now.toISOString(), durationMs: 1, traceId: context.requestId }));
     const prisma = { tenantUser: { findFirst: jest.fn(async () => ({ id: 'membership' })) } };
     const service = new CapabilityBindingService(registry, { execute } as never, prisma as never);
-    const result = await service.executeCapability(step(capability, args), context);
-    expect(execute).toHaveBeenCalledWith(toolName, context, args);
+    const result = await service.executeCapability(step(capability, args), context, pendingAudit(capability));
+    expect(execute).toHaveBeenCalledWith(toolName, context, args, { ...pendingAudit(capability), bindingVersion: '1.0.0' });
     expect(result).toEqual(expect.objectContaining({ capability, toolName, toolVersion: '1.0.0', bindingVersion: '1.0.0', data: { amount: '1.20', at: '2026-08-06T00:00:00.000Z', input: args } }));
   });
 
@@ -53,8 +54,8 @@ describe('Capability input mapping and execution', () => {
     const registry = new CapabilityBindingRegistry(toolRegistry());
     const execute = jest.fn();
     const service = new CapabilityBindingService(registry, { execute } as never, { tenantUser: { findFirst: jest.fn(async () => ({ id: 'm' })) } } as never);
-    await expect(service.executeCapability(step('SEARCH_CLIENT', { query: 'Jose', extra: true }), context)).rejects.toThrow();
-    await expect(service.executeCapability(step('GET_MONTHLY_PROFIT', { year: 2026 }), context)).rejects.toThrow();
+    await expect(service.executeCapability(step('SEARCH_CLIENT', { query: 'Jose', extra: true }), context, pendingAudit('SEARCH_CLIENT'))).rejects.toThrow();
+    await expect(service.executeCapability(step('GET_MONTHLY_PROFIT', { year: 2026 }), context, pendingAudit('GET_MONTHLY_PROFIT'))).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -62,7 +63,7 @@ describe('Capability input mapping and execution', () => {
     const registry = new CapabilityBindingRegistry(toolRegistry());
     const execute = jest.fn();
     const service = new CapabilityBindingService(registry, { execute } as never, { tenantUser: { findFirst: jest.fn(async () => null) } } as never);
-    await expect(service.executeCapability(step('GET_LIQUIDITY'), context)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.executeCapability(step('GET_LIQUIDITY'), context, pendingAudit('GET_LIQUIDITY'))).rejects.toBeInstanceOf(ForbiddenException);
     expect(execute).not.toHaveBeenCalled();
   });
 });

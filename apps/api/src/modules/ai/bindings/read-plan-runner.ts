@@ -7,6 +7,7 @@ import { ToolContext } from '../tools/tool-definition';
 import { CapabilityResult } from './capability-binding-definition';
 import { CapabilityBindingRegistry } from './capability-binding-registry';
 import { CapabilityBindingService } from './capability-binding.service';
+import { RuntimeExecutionAuditContext } from '../types/execution-audit-context';
 
 export interface ReadPlanResult {
   planFingerprint: string;
@@ -42,23 +43,24 @@ export class ReadPlanRunner {
     const startedMs = Date.now();
     const startedAt = new Date(startedMs).toISOString();
     const traceId = toolContext.requestId;
+    const runtimeAudit = this.runtimeAuditContext(plan);
     let runtimeStarted = false;
     const stepResults: ReadPlanResult['stepResults'] = [];
     try {
       if (actionRunId) {
-        await this.runtime.startExecution(toolContext.tenantId, toolContext.userId, actionRunId);
+        await this.runtime.startExecution(toolContext.tenantId, toolContext.userId, actionRunId, runtimeAudit);
         runtimeStarted = true;
       }
       for (const step of plan.executionSteps) {
-        const result = await this.bindingService.executeCapability(step, { ...toolContext, actionRunId: actionRunId ?? toolContext.actionRunId, requestId: `${traceId}:${step.stepId}` });
+        const result = await this.bindingService.executeCapability(step, { ...toolContext, actionRunId: actionRunId ?? toolContext.actionRunId, requestId: `${traceId}:${step.stepId}` }, { planFingerprint: plan.fingerprint, stepId: step.stepId, capability: step.capability });
         stepResults.push({ stepId: step.stepId, result });
       }
       const completedAt = new Date().toISOString();
       const output: ReadPlanResult = { planFingerprint: plan.fingerprint, executionState: 'COMPLETED', stepResults, warnings: plan.warnings.map((warning) => warning.message), startedAt, completedAt, durationMs: Math.max(0, Date.parse(completedAt) - startedMs), traceId };
-      if (actionRunId) await this.runtime.completeExecution(toolContext.tenantId, toolContext.userId, actionRunId, { planFingerprint: plan.fingerprint, executionState: 'COMPLETED', stepCount: stepResults.length } as Prisma.InputJsonObject);
+      if (actionRunId) await this.runtime.completeExecution(toolContext.tenantId, toolContext.userId, actionRunId, { planFingerprint: plan.fingerprint, executionState: 'COMPLETED', stepCount: stepResults.length } as Prisma.InputJsonObject, runtimeAudit);
       return output;
     } catch (error) {
-      if (actionRunId && runtimeStarted) await this.runtime.failExecution(toolContext.tenantId, toolContext.userId, actionRunId, `Read plan failed: ${error instanceof Error ? error.constructor.name : 'UnknownError'}`);
+      if (actionRunId && runtimeStarted) await this.runtime.failExecution(toolContext.tenantId, toolContext.userId, actionRunId, `Read plan failed: ${error instanceof Error ? error.constructor.name : 'UnknownError'}`, runtimeAudit);
       const completedAt = new Date().toISOString();
       return { planFingerprint: plan.fingerprint, executionState: stepResults.length ? 'PARTIALLY_COMPLETED' : 'FAILED', stepResults, warnings: plan.warnings.map((warning) => warning.message), startedAt, completedAt, durationMs: Math.max(0, Date.parse(completedAt) - startedMs), traceId };
     }
@@ -72,5 +74,19 @@ export class ReadPlanRunner {
       if (completed.has(step.stepId) || step.dependsOn.some((dependency) => !completed.has(dependency))) throw new BadRequestException('Read plan dependency cannot be resolved deterministically');
       completed.add(step.stepId);
     }
+  }
+
+  private runtimeAuditContext(plan: BusinessExecutionPlan): RuntimeExecutionAuditContext {
+    const audit: RuntimeExecutionAuditContext = { planFingerprint: plan.fingerprint };
+    if (plan.executionSteps.length === 1) {
+      const step = plan.executionSteps[0]!;
+      const binding = this.registry.getBinding(step.capability);
+      audit.stepId = step.stepId;
+      audit.capability = step.capability;
+      audit.bindingVersion = binding.version;
+      audit.toolName = binding.toolName;
+      audit.toolVersion = binding.toolVersion;
+    }
+    return audit;
   }
 }

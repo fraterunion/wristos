@@ -58,6 +58,8 @@ No new audit enum was required. Existing immutable events provide the audit trai
 
 Audit metadata remains sanitized under the existing tool/runtime contracts. No raw customer search, PII, or full result payload is added by the binding layer.
 
+Capability executions pass a typed, trusted audit context containing only `capability`, `bindingVersion`, `stepId`, and `planFingerprint`. `ToolExecutionService` combines those fields explicitly with its own trusted `toolName`, `toolVersion`, `traceId`, duration, fingerprints/hashes, bounded summary, and `failureType`. It never spreads plan arguments or caller-provided metadata into audit payloads. Direct non-binding tool calls may omit this context and retain their existing behavior.
+
 ## Failure, retries, and idempotency
 
 Preflight failures throw before runtime or tool execution. After runtime execution begins, a step failure returns `FAILED` or `PARTIALLY_COMPLETED` and transitions the existing action run to `FAILED`. Retrying the same terminal action run fails closed under the existing state machine. Read calls without an action run are safe to repeat but create independent immutable tool audit events; orchestration requiring single-run semantics must supply the persisted action-run ID.

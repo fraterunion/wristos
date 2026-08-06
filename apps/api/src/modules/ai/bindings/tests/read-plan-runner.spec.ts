@@ -18,7 +18,7 @@ const resign = (plan: BusinessExecutionPlan) => {
 const resultFor = (stepId: string, capability = 'SEARCH_CLIENT') => ({ capability, bindingVersion: '1.0.0', toolName: 'search_clients', toolVersion: '1.0.0', success: true, data: {}, summary: stepId, warnings: [], sourceMetadata: { canonicalService: 'CrmService.searchClientsForTools', deterministic: true, tenantScoped: true }, executedAt: context.now.toISOString(), durationMs: 1, traceId: `trace:${stepId}` });
 
 describe('ReadPlanRunner', () => {
-  const registry = { getBinding: jest.fn(() => ({ mode: 'READ' })) } as unknown as CapabilityBindingRegistry;
+  const registry = { getBinding: jest.fn((capability) => ({ mode: 'READ', version: '1.0.0', toolName: capability === 'GET_CLIENT_ACCOUNTS' ? 'get_client_accounts' : 'search_clients', toolVersion: '1.0.0' })) } as unknown as CapabilityBindingRegistry;
   const runtime = { startExecution: jest.fn(), completeExecution: jest.fn(), failExecution: jest.fn() };
 
   beforeEach(() => jest.clearAllMocks());
@@ -77,8 +77,9 @@ describe('ReadPlanRunner', () => {
     const runner = new ReadPlanRunner(planner, registry, service as never, runtime as never);
     const output = await runner.run({ plan, current, expectedFingerprint: plan.fingerprint, toolContext: context, actionRunId: 'run-1' });
     expect(output.executionState).toBe('COMPLETED');
-    expect(runtime.startExecution).toHaveBeenCalledWith('t1', 'u1', 'run-1');
-    expect(runtime.completeExecution).toHaveBeenCalledWith('t1', 'u1', 'run-1', { planFingerprint: plan.fingerprint, executionState: 'COMPLETED', stepCount: 1 });
+    const audit = { planFingerprint: plan.fingerprint, stepId: plan.executionSteps[0]!.stepId, capability: 'SEARCH_CLIENT', bindingVersion: '1.0.0', toolName: 'search_clients', toolVersion: '1.0.0' };
+    expect(runtime.startExecution).toHaveBeenCalledWith('t1', 'u1', 'run-1', audit);
+    expect(runtime.completeExecution).toHaveBeenCalledWith('t1', 'u1', 'run-1', { planFingerprint: plan.fingerprint, executionState: 'COMPLETED', stepCount: 1 }, audit);
   });
 
   it('moves a started runtime to FAILED without a business mutation when execution fails', async () => {
@@ -86,7 +87,7 @@ describe('ReadPlanRunner', () => {
     const runner = new ReadPlanRunner(planner, registry, { executeCapability: jest.fn(async () => { throw new Error('controlled'); }) } as never, runtime as never);
     const output = await runner.run({ plan, current, expectedFingerprint: plan.fingerprint, toolContext: context, actionRunId: 'run-1' });
     expect(output.executionState).toBe('FAILED');
-    expect(runtime.failExecution).toHaveBeenCalledWith('t1', 'u1', 'run-1', 'Read plan failed: Error');
+    expect(runtime.failExecution).toHaveBeenCalledWith('t1', 'u1', 'run-1', 'Read plan failed: Error', expect.objectContaining({ planFingerprint: plan.fingerprint, stepId: plan.executionSteps[0]!.stepId, capability: 'SEARCH_CLIENT', bindingVersion: '1.0.0' }));
   });
 
   it('fails a retry closed when the existing action-run lifecycle rejects it', async () => {
