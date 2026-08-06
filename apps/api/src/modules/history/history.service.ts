@@ -135,7 +135,7 @@ export class HistoryService {
           email: deal.client.email,
           phone: deal.client.phone,
         },
-        agreedPrice: deal.agreedPrice.toString(),
+        agreedPrice: deal.agreedPrice.toFixed(2),
         originalCurrency: deal.originalCurrency,
         originalAmount: deal.originalAmount?.toString() ?? null,
         exchangeRate: deal.exchangeRate?.toString() ?? null,
