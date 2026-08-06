@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useAuthContext } from '@/lib/auth-context';
+import { browserPostLoginRoute } from '@/lib/mobile-routing';
 
 const LOGIN_ROUTE = '/login';
 
@@ -21,7 +22,7 @@ export function useAuthGuard() {
     }
 
     if (user && isLoginRoute) {
-      router.replace('/dashboard');
+      router.replace(browserPostLoginRoute());
     }
   }, [isLoading, pathname, router, user]);
 
