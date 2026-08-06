@@ -10,11 +10,18 @@ import { ConfirmActionRunDto } from './dto/action-run-command.dto';
 import { CreateWorkspaceDto, UpdateWorkspaceDto, WorkspaceVersionDto } from './dto/workspace.dto';
 import { RuntimeService } from './runtime/runtime.service';
 import { WorkspaceService } from './workspace/workspace.service';
+import { StructuredAssistantRequestDto } from './dto/structured-assistant.dto';
+import { StructuredAssistantService } from './assistant/structured-assistant.service';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
 export class AIController {
-  constructor(private readonly conversations: ConversationService, private readonly runtime: RuntimeService, private readonly workspaces: WorkspaceService) {}
+  constructor(private readonly conversations: ConversationService, private readonly runtime: RuntimeService, private readonly workspaces: WorkspaceService, private readonly assistant: StructuredAssistantService) {}
+
+  @Post('assistant/structured')
+  structuredAssistant(@CurrentUser() user: CurrentUserType, @Body() dto: StructuredAssistantRequestDto) {
+    return this.assistant.execute({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
+  }
 
   @Post('conversations')
   createConversation(@CurrentUser() user: CurrentUserType, @Body() dto: CreateConversationDto) {

@@ -390,6 +390,17 @@ enum AIInteractionState {
   AWAITING_RESPONSE
 }
 
+enum AIRequestStatus {
+  RECEIVED
+  VALIDATING
+  PLANNING
+  NEEDS_CLARIFICATION
+  READY_FOR_CONFIRMATION
+  EXECUTING
+  COMPLETED
+  FAILED
+}
+
 enum AIAuditEventType {
   CONVERSATION_CREATED
   CONVERSATION_DELETED
@@ -413,6 +424,12 @@ enum AIAuditEventType {
   TOOL_PERMISSION_DENIED
   TOOL_INPUT_INVALID
   TOOL_OUTPUT_INVALID
+  ASSISTANT_REQUEST_RECEIVED
+  ASSISTANT_REQUEST_STARTED
+  ASSISTANT_REQUEST_REPLAYED
+  ASSISTANT_REQUEST_CONFLICTED
+  ASSISTANT_REQUEST_COMPLETED
+  ASSISTANT_REQUEST_FAILED
 }
 
 // --- Core (platform) ---
@@ -466,6 +483,7 @@ model Tenant {
   assetHoldings                  AssetHolding[]
   assetPriceSnapshots            AssetPriceSnapshot[]
   aiConversations                AIConversation[]
+  aiRequests                     AIRequest[]
   aiActionRuns                   AIActionRun[]
   aiAuditEvents                  AIAuditEvent[]
   aiWorkspaces                   AIWorkspace[]
@@ -498,6 +516,7 @@ model User {
   aiAuditEvents                       AIAuditEvent[]                        @relation("AIAuditActor")
   aiWorkspaces                        AIWorkspace[]                         @relation("AIWorkspaceUser")
   aiActionRunsConfirmed               AIActionRun[]                         @relation("AIActionRunConfirmedBy")
+  aiRequests                          AIRequest[]                           @relation("AIRequestActor")
 
   @@map("users")
 }
@@ -522,6 +541,7 @@ model AIConversation {
   actionRuns  AIActionRun[]
   auditEvents AIAuditEvent[]
   workspaces  AIWorkspace[]
+  requests    AIRequest[]
 
   @@index([tenantId, deletedAt])
   @@index([tenantId, userId, lastActivityAt])
@@ -572,6 +592,7 @@ model AIActionRun {
   confirmedBy      User?          @relation("AIActionRunConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
   auditEvents      AIAuditEvent[]
   activeWorkspaces AIWorkspace[]
+  requests         AIRequest[]
 
   @@index([tenantId, conversationId])
   @@index([tenantId, idempotencyKey])
@@ -627,12 +648,52 @@ model AIWorkspace {
   conversation    AIConversation? @relation(fields: [conversationId], references: [id], onDelete: Restrict)
   activeActionRun AIActionRun?    @relation(fields: [activeActionRunId], references: [id], onDelete: Restrict)
   auditEvents     AIAuditEvent[]
+  requests        AIRequest[]
 
   @@index([tenantId, userId, deletedAt])
   @@index([tenantId, userId, surface, lastActivityAt])
   @@index([conversationId])
   @@index([activeActionRunId])
   @@map("ai_workspaces")
+}
+
+model AIRequest {
+  id                 String          @id @default(cuid())
+  tenantId           String
+  actorUserId        String
+  conversationId     String?
+  workspaceId        String?
+  actionRunId        String?
+  clientRequestId    String
+  requestFingerprint String
+  status             AIRequestStatus @default(RECEIVED)
+  requestPayload     Json
+  responsePayload    Json?
+  responseHash       String?
+  traceId            String
+  errorType           String?
+  failureSummary     String?
+  receivedAt         DateTime        @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  failedAt           DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor        User            @relation("AIRequestActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  conversation AIConversation? @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  workspace    AIWorkspace?    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  actionRun    AIActionRun?    @relation(fields: [actionRunId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, actorUserId, clientRequestId])
+  @@index([tenantId, actorUserId, createdAt])
+  @@index([conversationId])
+  @@index([workspaceId])
+  @@index([actionRunId])
+  @@index([status])
+  @@index([requestFingerprint])
+  @@map("ai_requests")
 }
 
 /// Role names are unique per tenant (e.g. OWNER, SALES, VIEWER).
