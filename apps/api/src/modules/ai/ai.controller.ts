@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
@@ -12,6 +13,7 @@ import { RuntimeService } from './runtime/runtime.service';
 import { WorkspaceService } from './workspace/workspace.service';
 import { StructuredAssistantRequestDto } from './dto/structured-assistant.dto';
 import { StructuredAssistantService } from './assistant/structured-assistant.service';
+import { structuredAssistantHttpStatus } from './assistant/assistant-http-status';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
@@ -19,8 +21,11 @@ export class AIController {
   constructor(private readonly conversations: ConversationService, private readonly runtime: RuntimeService, private readonly workspaces: WorkspaceService, private readonly assistant: StructuredAssistantService) {}
 
   @Post('assistant/structured')
-  structuredAssistant(@CurrentUser() user: CurrentUserType, @Body() dto: StructuredAssistantRequestDto) {
-    return this.assistant.execute({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
+  async structuredAssistant(@CurrentUser() user: CurrentUserType, @Body() dto: StructuredAssistantRequestDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.assistant.execute({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
+    const status = structuredAssistantHttpStatus(result);
+    if (status !== null) response.status(status);
+    return result;
   }
 
   @Post('conversations')

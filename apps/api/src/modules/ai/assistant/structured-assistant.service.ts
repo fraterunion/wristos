@@ -96,15 +96,17 @@ export class StructuredAssistantService {
   }
 
   private errorResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest | undefined, error: unknown): StructuredAssistantResponse {
-    const stale = error instanceof ConflictException && /stale|version|fingerprint/i.test(error.message);
+    const stale = error instanceof ConflictException;
     const denied = error instanceof ForbiddenException;
     const notFound = error instanceof NotFoundException;
+    const errorType = this.failureType(error);
     const state = stale ? 'STALE_PLAN' : denied ? 'PERMISSION_BLOCKED' : 'FAILED';
     return {
       requestId, conversationId: prepared?.conversationId ?? '', workspaceId: prepared?.workspaceId ?? '',
       interactionState: state, responseType: 'ERROR_RECOVERY_CARD',
       payload: {
-        code: this.failureType(error),
+        errorType,
+        code: errorType,
         message: stale ? 'El estado cambió y la solicitud ya no es vigente.' : denied ? 'No tienes acceso a los datos solicitados.' : notFound ? 'No se encontró el recurso solicitado.' : 'No fue posible procesar la solicitud.',
         unchanged: 'No se ejecutó ninguna acción de escritura ni se modificaron datos de negocio.',
         nextAction: stale ? 'Actualiza el espacio de trabajo y envía una solicitud nueva.' : 'Revisa los datos y envía una solicitud nueva.',
