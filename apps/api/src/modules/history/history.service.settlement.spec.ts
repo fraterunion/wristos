@@ -81,7 +81,7 @@ describe('HistoryService — historical settlement display', () => {
     });
     const { service, prisma } = serviceFor([deal]);
     const [row] = await service.getSold('t1');
-    expect(row!.agreedPrice).toBe('25000');
+    expect(row!.agreedPrice).toBe('25000.00');
     expect(row!.paidTotal).toBe('25000');
     expect(row!.pendingAmount).toBe('0');
     expect(row!.computedStatus).toBe('HISTORICO');

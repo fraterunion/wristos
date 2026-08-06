@@ -12,6 +12,9 @@ import { AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE } from 
 import { WorkspaceService } from './workspace/workspace.service';
 import { ToolExecutionService } from './tools/tool-execution.service';
 import { ToolRegistry } from './tools/tool-registry';
+import { BusinessActionCatalog } from './planner/actions/business-action-catalog';
+import { PlannerService } from './planner/planner.service';
+import { BusinessCapabilityCatalog } from './planner/capabilities/business-capability-catalog';
 
 @Module({
   imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule],
@@ -23,11 +26,14 @@ import { ToolRegistry } from './tools/tool-registry';
     WorkspaceService,
     ToolRegistry,
     ToolExecutionService,
+    BusinessActionCatalog,
+    BusinessCapabilityCatalog,
+    PlannerService,
     { provide: AUDIT_STORE, useExisting: AuditService },
     { provide: CONVERSATION_STORE, useExisting: ConversationService },
     { provide: RUNTIME_STORE, useExisting: RuntimeService },
     { provide: WORKSPACE_STORE, useExisting: WorkspaceService },
   ],
-  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService],
+  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService],
 })
 export class AIModule {}
