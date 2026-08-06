@@ -44,16 +44,34 @@ describe('RuntimeService', () => {
   });
 
   it('allows internal execution lifecycle methods after confirmation', async () => {
+    const auditContext = { planFingerprint: 'a'.repeat(64), stepId: 's1', capability: 'GET_LIQUIDITY' as const, bindingVersion: '1.0.0', toolName: 'get_liquidity', toolVersion: '1.0.0' };
     tx.aIActionRun.findFirst
       .mockResolvedValueOnce({ id: 'r1', conversationId: 'c1', status: AIActionRunStatus.READY_FOR_CONFIRMATION, requiresConfirmation: true, confirmedAt: new Date() })
       .mockResolvedValueOnce({ id: 'r1', conversationId: 'c1', status: AIActionRunStatus.EXECUTING, requiresConfirmation: true, confirmedAt: new Date() });
     tx.aIActionRun.update
       .mockResolvedValueOnce({ id: 'r1', status: AIActionRunStatus.EXECUTING })
       .mockResolvedValueOnce({ id: 'r1', status: AIActionRunStatus.COMPLETED });
-    await service.startExecution('t1', 'system-user', 'r1');
-    await service.completeExecution('t1', 'system-user', 'r1', { ok: true });
+    await service.startExecution('t1', 'system-user', 'r1', auditContext);
+    await service.completeExecution('t1', 'system-user', 'r1', { ok: true }, auditContext);
     expect(tx.aIActionRun.update).toHaveBeenNthCalledWith(1, { where: { id: 'r1' }, data: expect.objectContaining({ status: AIActionRunStatus.EXECUTING }) });
     expect(tx.aIActionRun.update).toHaveBeenNthCalledWith(2, { where: { id: 'r1' }, data: expect.objectContaining({ status: AIActionRunStatus.COMPLETED }) });
+    expect(tx.aIAuditEvent.create).toHaveBeenNthCalledWith(1, { data: expect.objectContaining({ type: AIAuditEventType.EXECUTION_STARTED, payload: auditContext }) });
+    expect(tx.aIAuditEvent.create).toHaveBeenNthCalledWith(2, { data: expect.objectContaining({ type: AIAuditEventType.EXECUTION_COMPLETED, payload: { result: { ok: true }, ...auditContext } }) });
+  });
+
+  it('allows a Tier 0 read run to execute directly from DRAFT when confirmation is not required', async () => {
+    tx.aIActionRun.findFirst.mockResolvedValue({ id: 'r1', conversationId: 'c1', status: AIActionRunStatus.DRAFT, requiresConfirmation: false, confirmedAt: null });
+    tx.aIActionRun.update.mockResolvedValue({ id: 'r1', status: AIActionRunStatus.EXECUTING });
+    await service.startExecution('t1', 'system-user', 'r1');
+    expect(tx.aIActionRun.update).toHaveBeenCalledWith({ where: { id: 'r1' }, data: expect.objectContaining({ status: AIActionRunStatus.EXECUTING }) });
+  });
+
+  it('emits sanitized trusted metadata and failureType when read execution fails', async () => {
+    const auditContext = { planFingerprint: 'a'.repeat(64), stepId: 's1', capability: 'GET_LIQUIDITY' as const, bindingVersion: '1.0.0', toolName: 'get_liquidity', toolVersion: '1.0.0' };
+    tx.aIActionRun.findFirst.mockResolvedValue({ id: 'r1', conversationId: 'c1', status: AIActionRunStatus.EXECUTING, requiresConfirmation: false, confirmedAt: null });
+    tx.aIActionRun.update.mockResolvedValue({ id: 'r1', status: AIActionRunStatus.FAILED });
+    await service.failExecution('t1', 'system-user', 'r1', 'Read plan failed: Error', auditContext);
+    expect(tx.aIAuditEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: AIAuditEventType.EXECUTION_FAILED, payload: { failureType: 'Read plan failed: Error', ...auditContext } }) });
   });
 
   it('keeps terminal states terminal', async () => {

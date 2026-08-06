@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { AIActionRunStatus } from '@prisma/client';
 
 const transitions: Readonly<Record<AIActionRunStatus, readonly AIActionRunStatus[]>> = {
-  DRAFT: ['NEEDS_CLARIFICATION', 'READY_FOR_CONFIRMATION', 'CANCELLED', 'STALE'],
+  DRAFT: ['NEEDS_CLARIFICATION', 'READY_FOR_CONFIRMATION', 'EXECUTING', 'CANCELLED', 'STALE'],
   NEEDS_CLARIFICATION: ['DRAFT', 'READY_FOR_CONFIRMATION', 'CANCELLED', 'STALE'],
   READY_FOR_CONFIRMATION: ['EXECUTING', 'CANCELLED', 'STALE'],
   EXECUTING: ['COMPLETED', 'FAILED', 'CANCELLED'],

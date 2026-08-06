@@ -7,6 +7,7 @@ import { createIdempotencyKey } from '../domain/idempotency';
 import { createPlanFingerprint } from '../domain/plan-fingerprint';
 import { CreateActionRunDto } from '../dto/create-action-run.dto';
 import { RuntimeStore } from '../types/store-contracts';
+import { RuntimeExecutionAuditContext } from '../types/execution-audit-context';
 
 const statusAuditType: Record<AIActionRunStatus, AIAuditEventType> = {
   DRAFT: AIAuditEventType.PLAN_CREATED,
@@ -73,23 +74,23 @@ export class RuntimeService implements RuntimeStore {
     return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.READY_FOR_CONFIRMATION);
   }
 
-  startExecution(tenantId: string, actorUserId: string, id: string) {
-    return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.EXECUTING);
+  startExecution(tenantId: string, actorUserId: string, id: string, auditContext?: RuntimeExecutionAuditContext) {
+    return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.EXECUTING, {}, auditContext);
   }
 
-  completeExecution(tenantId: string, actorUserId: string, id: string, result?: Prisma.InputJsonValue) {
-    return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.COMPLETED, { result });
+  completeExecution(tenantId: string, actorUserId: string, id: string, result?: Prisma.InputJsonValue, auditContext?: RuntimeExecutionAuditContext) {
+    return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.COMPLETED, { result }, auditContext);
   }
 
-  failExecution(tenantId: string, actorUserId: string, id: string, error: string) {
-    return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.FAILED, { error });
+  failExecution(tenantId: string, actorUserId: string, id: string, error: string, auditContext?: RuntimeExecutionAuditContext) {
+    return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.FAILED, { error }, auditContext);
   }
 
   markStale(tenantId: string, actorUserId: string, id: string) {
     return this.transitionInternal(tenantId, actorUserId, id, AIActionRunStatus.STALE);
   }
 
-  private transitionInternal(tenantId: string, actorUserId: string, id: string, status: AIActionRunStatus, details: { error?: string; result?: Prisma.InputJsonValue } = {}) {
+  private transitionInternal(tenantId: string, actorUserId: string, id: string, status: AIActionRunStatus, details: { error?: string; result?: Prisma.InputJsonValue } = {}, auditContext?: RuntimeExecutionAuditContext) {
     return this.prisma.$transaction(async (tx) => {
       const current = await this.requireRun(tx, tenantId, id);
       assertValidTransition(current.status, status);
@@ -104,7 +105,18 @@ export class RuntimeService implements RuntimeStore {
       if (status === AIActionRunStatus.FAILED) data.error = details.error ?? 'Execution failed';
 
       const actionRun = await tx.aIActionRun.update({ where: { id }, data });
-      await tx.aIAuditEvent.create({ data: { tenantId, actorUserId, conversationId: current.conversationId, actionRunId: id, type: statusAuditType[status], payload: details as Prisma.InputJsonObject } });
+      const payload: Record<string, Prisma.InputJsonValue> = {};
+      if (details.result !== undefined) payload.result = details.result;
+      if (details.error !== undefined) payload.failureType = details.error;
+      if (auditContext) {
+        payload.planFingerprint = auditContext.planFingerprint;
+        if (auditContext.stepId) payload.stepId = auditContext.stepId;
+        if (auditContext.capability) payload.capability = auditContext.capability;
+        if (auditContext.bindingVersion) payload.bindingVersion = auditContext.bindingVersion;
+        if (auditContext.toolName) payload.toolName = auditContext.toolName;
+        if (auditContext.toolVersion) payload.toolVersion = auditContext.toolVersion;
+      }
+      await tx.aIAuditEvent.create({ data: { tenantId, actorUserId, conversationId: current.conversationId, actionRunId: id, type: statusAuditType[status], payload: payload as Prisma.InputJsonObject } });
       return actionRun;
     });
   }
