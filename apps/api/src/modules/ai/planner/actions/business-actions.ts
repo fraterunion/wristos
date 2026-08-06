@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { JsonValue } from '../../domain/canonical-json';
 import { BusinessActionDefinition, WarningRule } from './business-action-definition';
-import { BusinessActionId, BusinessWarning, ConfirmationTier, StructuredEntities } from '../planner.types';
+import { BusinessActionId, BusinessCapability, BusinessWarning, ConfirmationTier, StructuredEntities } from '../planner.types';
 
 const present = (value: JsonValue | undefined) => value !== undefined && value !== null && value !== '';
 const valueFor = (entities: StructuredEntities, key: string): JsonValue => entities[key] ?? null;
@@ -19,14 +19,15 @@ const questions: Record<string, string> = {
 };
 
 interface ActionOptions {
-  id: BusinessActionId; name: string; category: string; tier: ConfirmationTier; required?: string[]; optional?: string[]; tools: string[];
-  effects?: Array<{ area: string; description: string }>; warnings?: WarningRule[];
+  id: BusinessActionId; name: string; category: string; tier: ConfirmationTier; required?: string[]; optional?: string[]; capabilities?: BusinessCapability[];
+  effects?: Array<{ area: string; description: string }>; warnings?: WarningRule[]; reversibility?: 'FULL' | 'PARTIAL' | 'NONE';
 }
 
 const define = (options: ActionOptions): BusinessActionDefinition => {
   const required = options.required ?? [];
   const optional = options.optional ?? [];
-  const allowed = [...options.tools];
+  const capabilities = options.capabilities ?? [options.id];
+  const effects = options.effects ?? [];
   return {
     id: options.id,
     name: options.name,
@@ -37,24 +38,24 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
     optionalEntities: optional,
     clarificationQuestions: Object.fromEntries(required.map((key) => [key, questions[key] ?? `Provide ${key}.`])),
     warningRules: options.warnings ?? [],
-    previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({ title: options.name, category: options.category, fields: fields(entities, [...required, ...optional]), warnings, confirmationTier: options.tier, estimatedEffects: options.effects ?? [] }),
-    planBuilder: (entities: StructuredEntities) => allowed.map((toolName) => ({ businessAction: options.id, toolName, arguments: args(entities) })),
-    allowedToolNames: allowed,
+    previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({ title: options.name, category: options.category, fields: fields(entities, [...required, ...optional]), warnings, confirmationTier: options.tier, estimatedEffects: effects }),
+    planningStrategy: (entities: StructuredEntities) => capabilities.map((capability, index) => ({ stepId: `${capability.toLowerCase().replaceAll('_', '-')}-${index + 1}`, capability, arguments: args(entities), dependsOn: index === 0 ? [] : [`${capabilities[index - 1]!.toLowerCase().replaceAll('_', '-')}-${index}`], estimatedEffects: effects, reversibility: options.reversibility ?? (options.tier === 'NONE' ? 'FULL' : 'PARTIAL') })),
+    capabilities,
     resultSchema: z.unknown(),
   };
 };
 
 export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
-  define({ id: 'GET_LIQUIDITY', name: 'Get Liquidity', category: 'FINANCE', tier: 'NONE', tools: ['get_liquidity'] }),
-  define({ id: 'GET_MONTHLY_PROFIT', name: 'Get Monthly Profit', category: 'ANALYTICS', tier: 'NONE', required: ['year', 'month'], tools: ['get_monthly_profit'] }),
-  define({ id: 'SEARCH_INVENTORY', name: 'Search Inventory', category: 'INVENTORY', tier: 'NONE', required: ['query'], optional: ['status', 'limit'], tools: ['search_inventory'] }),
-  define({ id: 'SEARCH_CLIENT', name: 'Search Client', category: 'CRM', tier: 'NONE', required: ['query'], optional: ['limit'], tools: ['search_clients'] }),
-  define({ id: 'GET_CLIENT_ACCOUNTS', name: 'Get Client Accounts', category: 'ACCOUNTS', tier: 'NONE', required: ['clientId'], optional: ['type', 'status'], tools: ['get_client_accounts'] }),
-  define({ id: 'REGISTER_SALE', name: 'Register Sale', category: 'SALES', tier: 'HIGH', required: ['watchId', 'customerId', 'price', 'currency'], optional: ['date', 'watchLabel', 'customerName', 'watchStatus'], tools: ['register_sale'], effects: [{ area: 'Inventory', description: 'Selected watch becomes SOLD.' }, { area: 'Treasury', description: 'Sale proceeds are recorded in the selected currency.' }, { area: 'Capital', description: 'Profit is recalculated.' }], warnings: [warning('WATCH_RESERVED', 'The selected watch is reserved.', (e) => e.watchStatus === 'RESERVED')] }),
-  define({ id: 'REGISTER_RECEIVABLE_PAYMENT', name: 'Register Receivable Payment', category: 'ACCOUNTS', tier: 'HIGH', required: ['accountId', 'amount', 'destination'], optional: ['currency', 'date', 'outstandingAmount'], tools: ['register_receivable_payment'], effects: [{ area: 'Accounts', description: 'Outstanding receivable is reduced.' }, { area: 'Treasury', description: 'Destination balance increases.' }], warnings: [warning('AMOUNT_EXCEEDS_OUTSTANDING', 'Payment amount exceeds the outstanding balance.', (e) => typeof e.amount === 'number' && typeof e.outstandingAmount === 'number' && e.amount > e.outstandingAmount)] }),
-  define({ id: 'REGISTER_PURCHASE', name: 'Register Purchase', category: 'INVENTORY', tier: 'HIGH', required: ['watch', 'cost', 'currency'], optional: ['date', 'serial', 'duplicateSerial'], tools: ['register_purchase'], effects: [{ area: 'Inventory', description: 'A purchased watch is added to inventory.' }, { area: 'Treasury', description: 'Purchase funding is recorded.' }], warnings: [warning('DUPLICATE_SERIAL', 'The supplied serial already exists.', (e) => e.duplicateSerial === true)] }),
-  define({ id: 'REGISTER_EXPENSE', name: 'Register Expense', category: 'EXPENSES', tier: 'MEDIUM', required: ['concept', 'amount', 'currency'], optional: ['date', 'sourceAccountId'], tools: ['register_expense'], effects: [{ area: 'Expenses', description: 'Operating expense is recorded.' }, { area: 'Treasury', description: 'Source balance is reduced.' }] }),
-  define({ id: 'REGISTER_SETTLEMENT', name: 'Register Settlement', category: 'ACCOUNTS', tier: 'HIGH', required: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'], optional: ['date'], tools: ['register_settlement'], effects: [{ area: 'Accounts', description: 'The selected accounts are settled by the confirmed amount.' }] }),
-  define({ id: 'REGISTER_CRYPTO_POSITION', name: 'Register Crypto Position', category: 'TREASURY', tier: 'HIGH', required: ['asset', 'quantity', 'cost', 'currency'], optional: ['date'], tools: ['register_crypto_position'], effects: [{ area: 'Crypto', description: 'The confirmed position is recorded.' }] }),
-  define({ id: 'REGISTER_CRYPTO_PRICE', name: 'Register Crypto Price', category: 'TREASURY', tier: 'MEDIUM', required: ['asset', 'unitPrice', 'currency'], optional: ['date'], tools: ['register_crypto_price'], effects: [{ area: 'Crypto', description: 'The confirmed price snapshot is recorded.' }] }),
+  define({ id: 'GET_LIQUIDITY', name: 'Get Liquidity', category: 'FINANCE', tier: 'NONE' }),
+  define({ id: 'GET_MONTHLY_PROFIT', name: 'Get Monthly Profit', category: 'ANALYTICS', tier: 'NONE', required: ['year', 'month'] }),
+  define({ id: 'SEARCH_INVENTORY', name: 'Search Inventory', category: 'INVENTORY', tier: 'NONE', required: ['query'], optional: ['status', 'limit'] }),
+  define({ id: 'SEARCH_CLIENT', name: 'Search Client', category: 'CRM', tier: 'NONE', required: ['query'], optional: ['limit'] }),
+  define({ id: 'GET_CLIENT_ACCOUNTS', name: 'Get Client Accounts', category: 'ACCOUNTS', tier: 'NONE', required: ['clientId'], optional: ['type', 'status'] }),
+  define({ id: 'REGISTER_SALE', name: 'Register Sale', category: 'SALES', tier: 'HIGH', required: ['watchId', 'customerId', 'price', 'currency'], optional: ['date', 'watchLabel', 'customerName', 'watchStatus'], effects: [{ area: 'Inventory', description: 'Selected watch becomes SOLD.' }, { area: 'Treasury', description: 'Sale proceeds are recorded in the selected currency.' }, { area: 'Capital', description: 'Profit is recalculated.' }], warnings: [warning('WATCH_RESERVED', 'The selected watch is reserved.', (e) => e.watchStatus === 'RESERVED')] }),
+  define({ id: 'REGISTER_RECEIVABLE_PAYMENT', name: 'Register Receivable Payment', category: 'ACCOUNTS', tier: 'HIGH', required: ['accountId', 'amount', 'destination'], optional: ['currency', 'date', 'outstandingAmount'], effects: [{ area: 'Accounts', description: 'Outstanding receivable is reduced.' }, { area: 'Treasury', description: 'Destination balance increases.' }], warnings: [warning('AMOUNT_EXCEEDS_OUTSTANDING', 'Payment amount exceeds the outstanding balance.', (e) => typeof e.amount === 'number' && typeof e.outstandingAmount === 'number' && e.amount > e.outstandingAmount)] }),
+  define({ id: 'REGISTER_PURCHASE', name: 'Register Purchase', category: 'INVENTORY', tier: 'HIGH', required: ['watch', 'cost', 'currency'], optional: ['date', 'serial', 'duplicateSerial'], effects: [{ area: 'Inventory', description: 'A purchased watch is added to inventory.' }, { area: 'Treasury', description: 'Purchase funding is recorded.' }], warnings: [warning('DUPLICATE_SERIAL', 'The supplied serial already exists.', (e) => e.duplicateSerial === true)] }),
+  define({ id: 'REGISTER_EXPENSE', name: 'Register Expense', category: 'EXPENSES', tier: 'MEDIUM', required: ['concept', 'amount', 'currency'], optional: ['date', 'sourceAccountId'], effects: [{ area: 'Expenses', description: 'Operating expense is recorded.' }, { area: 'Treasury', description: 'Source balance is reduced.' }] }),
+  define({ id: 'REGISTER_SETTLEMENT', name: 'Register Settlement', category: 'ACCOUNTS', tier: 'HIGH', required: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'], optional: ['date'], effects: [{ area: 'Accounts', description: 'The selected accounts are settled by the confirmed amount.' }] }),
+  define({ id: 'REGISTER_CRYPTO_POSITION', name: 'Register Crypto Position', category: 'TREASURY', tier: 'HIGH', required: ['asset', 'quantity', 'cost', 'currency'], optional: ['date'], effects: [{ area: 'Crypto', description: 'The confirmed position is recorded.' }] }),
+  define({ id: 'REGISTER_CRYPTO_PRICE', name: 'Register Crypto Price', category: 'TREASURY', tier: 'MEDIUM', required: ['asset', 'unitPrice', 'currency'], optional: ['date'], effects: [{ area: 'Crypto', description: 'The confirmed price snapshot is recorded.' }] }),
 ];

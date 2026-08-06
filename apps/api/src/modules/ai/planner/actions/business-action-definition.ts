@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BusinessActionId, BusinessWarning, ConfirmationPreview, ConfirmationTier, ExecutionStep, StructuredEntities } from '../planner.types';
+import { BusinessActionId, BusinessCapability, BusinessPlanStep, BusinessWarning, ConfirmationPreview, ConfirmationTier, StructuredEntities } from '../planner.types';
 
 export interface WarningRule {
   code: string;
@@ -17,7 +17,7 @@ export interface BusinessActionDefinition {
   clarificationQuestions: Readonly<Record<string, string>>;
   warningRules: readonly WarningRule[];
   previewBuilder(entities: StructuredEntities, warnings: BusinessWarning[]): ConfirmationPreview;
-  planBuilder(entities: StructuredEntities): ExecutionStep[];
-  allowedToolNames: readonly string[];
+  planningStrategy(entities: StructuredEntities): BusinessPlanStep[];
+  capabilities: readonly BusinessCapability[];
   resultSchema: z.ZodType;
 }

@@ -2,7 +2,9 @@ import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { BusinessActionCatalog } from './actions/business-action-catalog';
 import { BusinessActionDefinition } from './actions/business-action-definition';
+import { BusinessCapabilityCatalog } from './capabilities/business-capability-catalog';
 import { PlannerService } from './planner.service';
+import { createNotExecutedResult } from './planner.types';
 
 const context = { workspaceVersion: 7, entityVersions: { watch: 3, customer: 'v2' } };
 const saleEntities = { watchId: 'watch-1', customerId: 'client-1', price: '35000.00', currency: 'MXN', watchLabel: 'Batman' };
@@ -23,9 +25,19 @@ describe('BusinessActionCatalog', () => {
   });
 });
 
+describe('BusinessCapabilityCatalog', () => {
+  it('contains business meaning for exactly the twelve V1 capabilities', () => {
+    const entries = new BusinessCapabilityCatalog().list();
+    expect(entries).toHaveLength(12);
+    expect(entries.map((entry) => entry.id)).toContain('REGISTER_SALE');
+    expect(entries.every((entry) => entry.name && entry.description && entry.category)).toBe(true);
+  });
+});
+
 describe('PlannerService', () => {
   const catalog = new BusinessActionCatalog();
-  const planner = new PlannerService(catalog);
+  const capabilities = new BusinessCapabilityCatalog();
+  const planner = new PlannerService(catalog, capabilities);
 
   it('detects every missing entity and generates deterministic clarification questions', () => {
     const plan = planner.plan({ intent: 'REGISTER_SALE', entities: { watchId: 'watch-1' } }, context);
@@ -47,7 +59,7 @@ describe('PlannerService', () => {
   it('builds a deterministic execution plan without executing a tool', () => {
     const first = planner.plan({ intent: 'REGISTER_SALE', entities: saleEntities }, context);
     const second = planner.plan({ intent: 'REGISTER_SALE', entities: { currency: 'MXN', price: '35000.00', customerId: 'client-1', watchLabel: 'Batman', watchId: 'watch-1' } }, { entityVersions: { customer: 'v2', watch: 3 }, workspaceVersion: 7 });
-    expect(first.executionSteps).toEqual([{ businessAction: 'REGISTER_SALE', toolName: 'register_sale', arguments: saleEntities }]);
+    expect(first.executionSteps).toEqual([{ stepId: 'register-sale-1', capability: 'REGISTER_SALE', arguments: saleEntities, dependsOn: [], estimatedEffects: first.preview?.estimatedEffects, reversibility: 'PARTIAL' }]);
     expect(first.fingerprint).toBe(second.fingerprint);
     expect(first.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -76,16 +88,33 @@ describe('PlannerService', () => {
     const futureExecutor = jest.fn();
     const definition: BusinessActionDefinition = {
       id: 'REGISTER_SETTLEMENT', name: 'Settlement', description: 'test', category: 'ACCOUNTS', confirmationTier: 'HIGH',
-      requiredEntities: ['amount'], optionalEntities: [], clarificationQuestions: { amount: 'Amount?' }, warningRules: [], allowedToolNames: ['prepare_settlement', 'register_settlement'], resultSchema: z.unknown(),
+      requiredEntities: ['amount'], optionalEntities: [], clarificationQuestions: { amount: 'Amount?' }, warningRules: [], capabilities: ['GET_CLIENT_ACCOUNTS', 'REGISTER_SETTLEMENT'], resultSchema: z.unknown(),
       previewBuilder: (_entities, warnings) => ({ title: 'Settlement', category: 'ACCOUNTS', fields: [], warnings, confirmationTier: 'HIGH', estimatedEffects: [] }),
-      planBuilder: (entities) => [{ businessAction: 'REGISTER_SETTLEMENT', toolName: 'prepare_settlement', arguments: { amount: entities.amount! } }, { businessAction: 'REGISTER_SETTLEMENT', toolName: 'register_settlement', arguments: { amount: entities.amount! } }],
+      planningStrategy: (entities) => [
+        { stepId: 'load-accounts', capability: 'GET_CLIENT_ACCOUNTS', arguments: { amount: entities.amount! }, dependsOn: [], estimatedEffects: [], reversibility: 'FULL' },
+        { stepId: 'settle', capability: 'REGISTER_SETTLEMENT', arguments: { amount: entities.amount! }, dependsOn: ['load-accounts'], estimatedEffects: [], reversibility: 'PARTIAL' },
+      ],
     };
     const customCatalog = new BusinessActionCatalog();
     jest.spyOn(customCatalog, 'get').mockReturnValue(definition);
-    const customPlanner = new PlannerService(customCatalog);
+    const customPlanner = new PlannerService(customCatalog, capabilities);
     const plan = customPlanner.plan({ intent: 'REGISTER_SETTLEMENT', entities: { amount: '10.00' } }, context);
     expect(plan.executionSteps).toHaveLength(2);
+    expect(plan.executionSteps.map((step) => [step.stepId, step.dependsOn])).toEqual([['load-accounts', []], ['settle', ['load-accounts']]]);
     expect(futureExecutor).not.toHaveBeenCalled();
+  });
+
+  it('keeps fingerprints stable when an external capability binding changes', () => {
+    const bindings = new Map([['REGISTER_SALE', 'implementation-a']]);
+    const first = planner.plan({ intent: 'REGISTER_SALE', entities: saleEntities }, context);
+    bindings.set('REGISTER_SALE', 'implementation-b');
+    const second = planner.plan({ intent: 'REGISTER_SALE', entities: saleEntities }, context);
+    expect(bindings.get('REGISTER_SALE')).toBe('implementation-b');
+    expect(first.fingerprint).toBe(second.fingerprint);
+  });
+
+  it('creates only an inert, not-executed business action result', () => {
+    expect(createNotExecutedResult('REGISTER_SALE')).toEqual({ actionId: 'REGISTER_SALE', executionState: 'NOT_EXECUTED', success: false, affectedEntities: [], generatedEvents: [], receipt: null, warnings: [], rollbackPossible: false });
   });
 
   it('emits deterministic overpayment and duplicate-serial warnings', () => {

@@ -14,6 +14,8 @@ export type BusinessActionId =
   | 'REGISTER_CRYPTO_POSITION'
   | 'REGISTER_CRYPTO_PRICE';
 
+export type BusinessCapability = BusinessActionId;
+
 export type ConfirmationTier = 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH';
 export type PlannerState = 'NEEDS_CLARIFICATION' | 'READY_FOR_CONFIRMATION';
 export type StructuredEntities = Record<string, JsonValue | undefined>;
@@ -47,25 +49,55 @@ export interface ConfirmationPreview {
   estimatedEffects: Array<{ area: string; description: string }>;
 }
 
-export interface ExecutionStep {
-  businessAction: BusinessActionId;
-  toolName: string;
-  arguments: Record<string, JsonValue>;
+export interface EstimatedEffect {
+  area: string;
+  description: string;
 }
 
-export interface ExecutionPlan {
+export interface BusinessPlanStep {
+  stepId: string;
+  capability: BusinessCapability;
+  arguments: Record<string, JsonValue>;
+  dependsOn: string[];
+  estimatedEffects: EstimatedEffect[];
+  reversibility: 'FULL' | 'PARTIAL' | 'NONE';
+}
+
+export interface BusinessExecutionPlan {
   businessAction: BusinessActionId;
   state: PlannerState;
   missingEntities: MissingEntity[];
   clarificationQuestions: string[];
   warnings: BusinessWarning[];
   confirmationTier: ConfirmationTier;
-  executionSteps: ExecutionStep[];
+  executionSteps: BusinessPlanStep[];
   preview: ConfirmationPreview | null;
   workspaceVersion: number;
   entityVersions: Record<string, string | number>;
   fingerprint: string;
 }
+
+export interface BusinessActionResult {
+  actionId: BusinessActionId;
+  executionState: 'NOT_EXECUTED' | 'EXECUTED' | 'PARTIALLY_EXECUTED' | 'FAILED';
+  success: boolean;
+  affectedEntities: JsonValue[];
+  generatedEvents: JsonValue[];
+  receipt: JsonValue | null;
+  warnings: BusinessWarning[];
+  rollbackPossible: boolean;
+}
+
+export const createNotExecutedResult = (actionId: BusinessActionId, warnings: BusinessWarning[] = []): BusinessActionResult => ({
+  actionId,
+  executionState: 'NOT_EXECUTED',
+  success: false,
+  affectedEntities: [],
+  generatedEvents: [],
+  receipt: null,
+  warnings: [...warnings],
+  rollbackPossible: false,
+});
 
 export interface PlanValidationResult {
   current: boolean;
