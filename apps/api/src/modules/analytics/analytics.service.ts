@@ -575,7 +575,14 @@ export class AnalyticsService {
       this.prisma.operatingExpense.aggregate({ where: { tenantId, expenseDate: { gte: start, lt: end } }, _sum: { amount: true } }),
     ]);
     const sales = saleAgg._sum.agreedPrice ?? new Prisma.Decimal(0);
-    const cogs = new Prisma.Decimal(deals.reduce((sum, deal) => sum + (deal.watch ? Number(deal.watch.cost ?? 0) + deal.watch.expenses.reduce((s, e) => s + Number(e.amount), 0) : Number(deal.historicalCost ?? 0)), 0));
+    const cogs = deals.reduce((sum, deal) => {
+      if (!deal.watch) return sum.plus(deal.historicalCost ?? 0);
+      const watchExpenses = deal.watch.expenses.reduce(
+        (expenseSum, expense) => expenseSum.plus(expense.amount),
+        new Prisma.Decimal(0),
+      );
+      return sum.plus(deal.watch.cost ?? 0).plus(watchExpenses);
+    }, new Prisma.Decimal(0));
     const commissions = commissionAgg._sum.commission ?? new Prisma.Decimal(0);
     const expenses = expenseAgg._sum.amount ?? new Prisma.Decimal(0);
     return { period: `${year}-${String(month).padStart(2, '0')}`, salesMxn: sales.toFixed(2), cogsMxn: cogs.toFixed(2), bankCommissionsMxn: commissions.toFixed(2), operatingExpensesMxn: expenses.toFixed(2), netProfitMxn: sales.minus(cogs).minus(commissions).minus(expenses).toFixed(2), saleCount: saleAgg._count._all };
