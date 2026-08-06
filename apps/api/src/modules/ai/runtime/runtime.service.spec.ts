@@ -54,6 +54,15 @@ describe('RuntimeService', () => {
     await service.completeExecution('t1', 'system-user', 'r1', { ok: true });
     expect(tx.aIActionRun.update).toHaveBeenNthCalledWith(1, { where: { id: 'r1' }, data: expect.objectContaining({ status: AIActionRunStatus.EXECUTING }) });
     expect(tx.aIActionRun.update).toHaveBeenNthCalledWith(2, { where: { id: 'r1' }, data: expect.objectContaining({ status: AIActionRunStatus.COMPLETED }) });
+    expect(tx.aIAuditEvent.create).toHaveBeenNthCalledWith(1, { data: expect.objectContaining({ type: AIAuditEventType.EXECUTION_STARTED }) });
+    expect(tx.aIAuditEvent.create).toHaveBeenNthCalledWith(2, { data: expect.objectContaining({ type: AIAuditEventType.EXECUTION_COMPLETED }) });
+  });
+
+  it('allows a Tier 0 read run to execute directly from DRAFT when confirmation is not required', async () => {
+    tx.aIActionRun.findFirst.mockResolvedValue({ id: 'r1', conversationId: 'c1', status: AIActionRunStatus.DRAFT, requiresConfirmation: false, confirmedAt: null });
+    tx.aIActionRun.update.mockResolvedValue({ id: 'r1', status: AIActionRunStatus.EXECUTING });
+    await service.startExecution('t1', 'system-user', 'r1');
+    expect(tx.aIActionRun.update).toHaveBeenCalledWith({ where: { id: 'r1' }, data: expect.objectContaining({ status: AIActionRunStatus.EXECUTING }) });
   });
 
   it('keeps terminal states terminal', async () => {

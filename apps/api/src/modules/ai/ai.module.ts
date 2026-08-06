@@ -15,6 +15,9 @@ import { ToolRegistry } from './tools/tool-registry';
 import { BusinessActionCatalog } from './planner/actions/business-action-catalog';
 import { PlannerService } from './planner/planner.service';
 import { BusinessCapabilityCatalog } from './planner/capabilities/business-capability-catalog';
+import { CapabilityBindingRegistry } from './bindings/capability-binding-registry';
+import { CapabilityBindingService } from './bindings/capability-binding.service';
+import { ReadPlanRunner } from './bindings/read-plan-runner';
 
 @Module({
   imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule],
@@ -29,11 +32,14 @@ import { BusinessCapabilityCatalog } from './planner/capabilities/business-capab
     BusinessActionCatalog,
     BusinessCapabilityCatalog,
     PlannerService,
+    CapabilityBindingRegistry,
+    CapabilityBindingService,
+    ReadPlanRunner,
     { provide: AUDIT_STORE, useExisting: AuditService },
     { provide: CONVERSATION_STORE, useExisting: ConversationService },
     { provide: RUNTIME_STORE, useExisting: RuntimeService },
     { provide: WORKSPACE_STORE, useExisting: WorkspaceService },
   ],
-  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService],
+  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner],
 })
 export class AIModule {}
