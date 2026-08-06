@@ -14,6 +14,7 @@ describe('AIController public action-run API', () => {
       { path: 'action-runs/:id/cancel', method: RequestMethod.POST },
     ]));
     expect(routes).not.toEqual(expect.arrayContaining([{ path: 'action-runs/:id/status', method: expect.anything() }]));
+    expect(routes).toEqual(expect.arrayContaining([{ path: 'assistant/structured', method: RequestMethod.POST }]));
     expect(prototype).not.toHaveProperty('transitionActionRun');
   });
 });

@@ -18,6 +18,9 @@ import { BusinessCapabilityCatalog } from './planner/capabilities/business-capab
 import { CapabilityBindingRegistry } from './bindings/capability-binding-registry';
 import { CapabilityBindingService } from './bindings/capability-binding.service';
 import { ReadPlanRunner } from './bindings/read-plan-runner';
+import { AIRequestService } from './assistant/ai-request.service';
+import { StructuredAssistantPersistence } from './assistant/structured-assistant.persistence';
+import { StructuredAssistantService } from './assistant/structured-assistant.service';
 
 @Module({
   imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule],
@@ -35,11 +38,14 @@ import { ReadPlanRunner } from './bindings/read-plan-runner';
     CapabilityBindingRegistry,
     CapabilityBindingService,
     ReadPlanRunner,
+    AIRequestService,
+    StructuredAssistantPersistence,
+    StructuredAssistantService,
     { provide: AUDIT_STORE, useExisting: AuditService },
     { provide: CONVERSATION_STORE, useExisting: ConversationService },
     { provide: RUNTIME_STORE, useExisting: RuntimeService },
     { provide: WORKSPACE_STORE, useExisting: WorkspaceService },
   ],
-  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner],
+  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner, AIRequestService, StructuredAssistantService],
 })
 export class AIModule {}
