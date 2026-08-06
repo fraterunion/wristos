@@ -39,6 +39,18 @@ export type AssistantInteractionState =
   | 'STALE_PLAN'
   | 'PERMISSION_BLOCKED';
 
+export const ASSISTANT_INTERACTION_STATES = [
+  'ANSWERING',
+  'NEEDS_INPUT',
+  'NEEDS_DISAMBIGUATION',
+  'READY_FOR_CONFIRMATION',
+  'EXECUTING',
+  'COMPLETED',
+  'FAILED',
+  'STALE_PLAN',
+  'PERMISSION_BLOCKED',
+] as const satisfies readonly AssistantInteractionState[];
+
 export type AssistantResponseType =
   | 'TEXT_ANSWER'
   | 'METRIC_CARD'
@@ -49,6 +61,18 @@ export type AssistantResponseType =
   | 'ACTION_PREVIEW_CARD'
   | 'SUCCESS_RECEIPT'
   | 'ERROR_RECOVERY_CARD';
+
+export const ASSISTANT_RESPONSE_TYPES = [
+  'TEXT_ANSWER',
+  'METRIC_CARD',
+  'METRIC_BREAKDOWN',
+  'ENTITY_LIST',
+  'ENTITY_PICKER',
+  'MISSING_FIELDS_CARD',
+  'ACTION_PREVIEW_CARD',
+  'SUCCESS_RECEIPT',
+  'ERROR_RECOVERY_CARD',
+] as const satisfies readonly AssistantResponseType[];
 
 export interface StructuredAssistantRequest {
   conversationId?: string;

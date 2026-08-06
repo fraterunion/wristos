@@ -2,7 +2,9 @@
 
 import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from 'lucide-react';
 import { FormEvent, useState } from 'react';
-import type { JsonValue, StructuredAssistantResponse } from '@/lib/assistant-types';
+import Link from 'next/link';
+import { validateAssistantResponse } from '@/lib/assistant-response-validation';
+import type { BusinessActionId, JsonValue, StructuredAssistantResponse } from '@/lib/assistant-types';
 
 function text(value: JsonValue | undefined): string | null {
   return typeof value === 'string' ? value : null;
@@ -89,7 +91,7 @@ function MissingFieldsForm({
   );
 }
 
-export function AssistantResponseRenderer({
+function ValidatedAssistantResponse({
   response,
   onSelectClient,
   onContinue,
@@ -199,5 +201,44 @@ export function AssistantResponseRenderer({
         </p>
       ) : null}
     </article>
+  );
+}
+
+export function AssistantResponseRenderer({
+  intent,
+  response,
+  onSelectClient,
+  onContinue,
+}: {
+  intent: BusinessActionId;
+  response: StructuredAssistantResponse;
+  onSelectClient?: (id: string, label: string) => void;
+  onContinue?: (entities: Record<string, JsonValue>) => void;
+}) {
+  const validation = validateAssistantResponse(intent, response);
+  if (validation.kind === 'FAIL_CLOSED') {
+    return (
+      <article className="rounded-2xl border border-rose-400/30 bg-rose-500/[0.07] p-4" role="alert">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" aria-hidden />
+          <div>
+            <p className="text-sm font-semibold text-white">{validation.title}</p>
+            <p className="mt-1 text-sm leading-6 text-white/70">{validation.message}</p>
+            {validation.manualHref ? (
+              <Link href={validation.manualHref} className="ui-btn-secondary mt-3 min-h-11">
+                Abrir flujo manual
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </article>
+    );
+  }
+  return (
+    <ValidatedAssistantResponse
+      response={validation.response}
+      onSelectClient={onSelectClient}
+      onContinue={onContinue}
+    />
   );
 }
