@@ -543,6 +543,44 @@ export class AnalyticsService {
     };
   }
 
+  async getLiquidity(tenantId: string, now: Date) {
+    const [treasury, crypto] = await Promise.all([
+      this.treasuryService.getAccountBalances(tenantId),
+      this.cryptoService.getPortfolioValuation(tenantId, now),
+    ]);
+    const cash = new Prisma.Decimal(treasury.CASH);
+    const bank = new Prisma.Decimal(treasury.BANK);
+    const cesar = new Prisma.Decimal(treasury.CESAR);
+    const cryptoValue = new Prisma.Decimal(crypto.totalCurrentValueMxn);
+    const warnings: string[] = [];
+    if (crypto.cryptoPriceStatus !== 'FRESH') warnings.push(`Crypto price status: ${crypto.cryptoPriceStatus}`);
+    if (crypto.missingPriceTickers.length) warnings.push('Some crypto holdings have no current price');
+    return {
+      cashMxn: cash.toFixed(2), bankMxn: bank.toFixed(2), cryptoMxn: cryptoValue.toFixed(2), cesarMxn: cesar.toFixed(2),
+      totalLiquidityMxn: cash.plus(bank).plus(cryptoValue).plus(cesar).toFixed(2),
+      cryptoPriceStatus: crypto.cryptoPriceStatus,
+      cryptoOldestPriceCapturedAt: crypto.oldestPriceCapturedAt,
+      warnings,
+    };
+  }
+
+  async getMonthlyProfit(tenantId: string, year: number, month: number) {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 1));
+    const range = dealEffectiveSaleDateRangeWhere(start, end);
+    const [saleAgg, deals, commissionAgg, expenseAgg] = await Promise.all([
+      this.prisma.deal.aggregate({ where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON, AND: [range] }, _sum: { agreedPrice: true }, _count: { _all: true } }),
+      this.prisma.deal.findMany({ where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON, AND: [range] }, select: { historicalCost: true, watch: { select: { cost: true, expenses: { select: { amount: true } } } } } }),
+      this.prisma.treasuryEntry.aggregate({ where: { tenantId, account: 'BANK', deletedAt: null, commission: { gt: 0 }, transactionDate: { gte: start, lt: end } }, _sum: { commission: true } }),
+      this.prisma.operatingExpense.aggregate({ where: { tenantId, expenseDate: { gte: start, lt: end } }, _sum: { amount: true } }),
+    ]);
+    const sales = saleAgg._sum.agreedPrice ?? new Prisma.Decimal(0);
+    const cogs = new Prisma.Decimal(deals.reduce((sum, deal) => sum + (deal.watch ? Number(deal.watch.cost ?? 0) + deal.watch.expenses.reduce((s, e) => s + Number(e.amount), 0) : Number(deal.historicalCost ?? 0)), 0));
+    const commissions = commissionAgg._sum.commission ?? new Prisma.Decimal(0);
+    const expenses = expenseAgg._sum.amount ?? new Prisma.Decimal(0);
+    return { period: `${year}-${String(month).padStart(2, '0')}`, salesMxn: sales.toFixed(2), cogsMxn: cogs.toFixed(2), bankCommissionsMxn: commissions.toFixed(2), operatingExpensesMxn: expenses.toFixed(2), netProfitMxn: sales.minus(cogs).minus(commissions).minus(expenses).toFixed(2), saleCount: saleAgg._count._all };
+  }
+
   async getInventoryByBrand(tenantId: string) {
     const watches = await this.prisma.watch.findMany({
       where: {

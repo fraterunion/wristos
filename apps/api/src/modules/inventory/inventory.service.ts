@@ -146,6 +146,15 @@ export class InventoryService {
     };
   }
 
+  async searchInventory(tenantId: string, query: string, status: 'AVAILABLE' | 'RESERVED' | 'ALL', limit: number, now: Date) {
+    const q = query.trim();
+    const watches = await this.prisma.watch.findMany({
+      where: { tenantId, deletedAt: null, ...(status === 'ALL' ? { status: { not: WatchStatus.SOLD } } : { status }), OR: [{ brand: { contains: q, mode: 'insensitive' } }, { model: { contains: q, mode: 'insensitive' } }, { reference: { contains: q, mode: 'insensitive' } }] },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: Math.min(limit, 50),
+    });
+    return watches.map((watch) => ({ id: watch.id, brand: watch.brand, model: watch.model, reference: watch.reference, serialNumber: watch.serialNumber, status: watch.status, cost: watch.cost?.toFixed(2) ?? null, createdAt: watch.createdAt.toISOString(), ageDays: Math.max(0, Math.floor((now.getTime() - watch.createdAt.getTime()) / 86400000)), location: null }));
+  }
+
   async findOne(id: string, tenantId: string) {
     const watch = await this.prisma.watch.findFirst({
       where: { id, tenantId, deletedAt: null },
