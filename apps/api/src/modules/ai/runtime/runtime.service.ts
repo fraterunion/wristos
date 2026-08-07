@@ -101,7 +101,11 @@ export class RuntimeService implements RuntimeStore {
       const now = new Date();
       const data: Prisma.AIActionRunUpdateInput = { status };
       if (status === AIActionRunStatus.EXECUTING) data.executedAt = now;
-      if (status === AIActionRunStatus.COMPLETED) { data.completedAt = now; data.result = details.result; }
+      if (status === AIActionRunStatus.COMPLETED) {
+        data.completedAt = now;
+        data.result = details.result;
+        data.error = null;
+      }
       if (status === AIActionRunStatus.FAILED) data.error = details.error ?? 'Execution failed';
 
       const actionRun = await tx.aIActionRun.update({ where: { id }, data });

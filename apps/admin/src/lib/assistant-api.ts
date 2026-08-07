@@ -199,7 +199,7 @@ export function clearResumeHint(): void {
 }
 
 export type ConfirmSaleResult = {
-  interactionState: 'COMPLETED' | 'FAILED' | 'STALE_PLAN' | 'PERMISSION_BLOCKED';
+  interactionState: 'COMPLETED' | 'FAILED' | 'STALE_PLAN' | 'PERMISSION_BLOCKED' | 'EXECUTING';
   responseType: 'SUCCESS_RECEIPT' | 'ERROR_RECOVERY_CARD';
   message: string;
   receipt: JsonValue | null;
@@ -207,6 +207,7 @@ export type ConfirmSaleResult = {
   executableWrite: true;
   capability: string;
   replayed: boolean;
+  recovered: boolean;
   actionRunId: string;
 };
 
@@ -214,6 +215,7 @@ export type ConfirmSaleResult = {
  * Semantic confirmation for a READY_FOR_CONFIRMATION ActionRun.
  * Calls POST /ai/action-runs/:id/confirm only — never /deals/register-sale.
  * Server owns execution and derives registerIdempotencyKey.
+ * Timeouts/retries always reuse the SAME actionRunId (safe recovery).
  */
 export async function confirmAssistantActionRun(input: {
   actionRunId: string;
@@ -226,15 +228,17 @@ export async function confirmAssistantActionRun(input: {
       { authenticated: true },
     );
     const receipt = (raw.receipt ?? null) as JsonValue | null;
-    const interactionState = String(raw.interactionState ?? 'FAILED') as ConfirmSaleResult['interactionState'];
+    const interactionState = String(raw.interactionState ?? 'FAILED');
     const responseType = String(raw.responseType ?? 'ERROR_RECOVERY_CARD') as ConfirmSaleResult['responseType'];
+    const normalizedState: ConfirmSaleResult['interactionState'] =
+      interactionState === 'COMPLETED' ||
+      interactionState === 'STALE_PLAN' ||
+      interactionState === 'PERMISSION_BLOCKED' ||
+      interactionState === 'EXECUTING'
+        ? interactionState
+        : 'FAILED';
     return {
-      interactionState:
-        interactionState === 'COMPLETED' ||
-        interactionState === 'STALE_PLAN' ||
-        interactionState === 'PERMISSION_BLOCKED'
-          ? interactionState
-          : 'FAILED',
+      interactionState: normalizedState,
       responseType: responseType === 'SUCCESS_RECEIPT' ? 'SUCCESS_RECEIPT' : 'ERROR_RECOVERY_CARD',
       message: typeof raw.message === 'string' ? raw.message : 'No se pudo confirmar la venta.',
       receipt,
@@ -242,14 +246,17 @@ export async function confirmAssistantActionRun(input: {
       executableWrite: true,
       capability: typeof raw.capability === 'string' ? raw.capability : 'REGISTER_SALE',
       replayed: Boolean(raw.replayed),
+      recovered: Boolean(raw.recovered),
       actionRunId: input.actionRunId,
     };
   } catch (error) {
     if (error instanceof ApiError) {
-      throw new AssistantRequestError(
-        error.status,
-        statusMessages[error.status] ?? 'No pude registrar la venta. No se realizó ningún cambio.',
-      );
+      // Confirm retries are safe — never imply the user must start a new sale.
+      const message =
+        error.status === 409 || error.status === 408 || error.status >= 500
+          ? 'La confirmación no respondió a tiempo o sigue en curso. Reintenta la misma confirmación — no se crea una venta nueva.'
+          : statusMessages[error.status] ?? 'No pude confirmar la venta. Reintenta la misma confirmación.';
+      throw new AssistantRequestError(error.status, message);
     }
     throw error;
   }
@@ -273,10 +280,13 @@ export function confirmResultToAssistantResponse(
       executableWrite: true,
       capability: result.capability,
       replayed: result.replayed,
+      recovered: result.recovered,
       unchanged:
         result.interactionState === 'COMPLETED'
           ? null
-          : 'No se realizó ningún cambio.',
+          : result.interactionState === 'EXECUTING'
+            ? 'La venta puede estar registrándose. Reintenta la misma confirmación.'
+            : 'No se realizó ningún cambio.',
     },
     warnings: [],
     suggestedActions: [],

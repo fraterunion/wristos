@@ -6,8 +6,9 @@ const transitions: Readonly<Record<AIActionRunStatus, readonly AIActionRunStatus
   NEEDS_CLARIFICATION: ['DRAFT', 'READY_FOR_CONFIRMATION', 'CANCELLED', 'STALE'],
   READY_FOR_CONFIRMATION: ['EXECUTING', 'CANCELLED', 'STALE'],
   EXECUTING: ['COMPLETED', 'FAILED', 'CANCELLED'],
+  // Recovery only: business write committed but runtime previously marked FAILED.
+  FAILED: ['COMPLETED'],
   COMPLETED: [],
-  FAILED: [],
   CANCELLED: [],
   STALE: [],
 };

@@ -334,6 +334,11 @@ export default function AssistantPage() {
     setMessagePendingLabel('Confirmar venta');
     try {
       const result = await confirmAssistantActionRun(args);
+      // In-flight: keep the original preview so the user retries the SAME actionRun.
+      if (result.interactionState === 'EXECUTING') {
+        setMessageError(result.message);
+        return;
+      }
       const response = confirmResultToAssistantResponse(result, {
         requestId: item.response.requestId,
         conversationId: item.response.conversationId || workspace.conversationId || '',
@@ -359,7 +364,7 @@ export default function AssistantPage() {
       if (error instanceof AssistantRequestError) {
         setMessageError(error.message);
       } else {
-        setMessageError('No pude registrar la venta. No se realizó ningún cambio.');
+        setMessageError('No pude confirmar la venta. Reintenta la misma confirmación.');
       }
     } finally {
       setConfirmingSale(false);

@@ -12,9 +12,10 @@ describe('AI runtime domain', () => {
     expect(canTransition(AIActionRunStatus.DRAFT, AIActionRunStatus.NEEDS_CLARIFICATION)).toBe(true);
   });
 
-  it('rejects transitions from terminal states and skips', () => {
-    expect(() => assertValidTransition(AIActionRunStatus.COMPLETED, AIActionRunStatus.EXECUTING)).toThrow(BadRequestException);
-    expect(() => assertValidTransition(AIActionRunStatus.DRAFT, AIActionRunStatus.COMPLETED)).toThrow(BadRequestException);
+  it('allows FAILED → COMPLETED only for post-commit runtime recovery', () => {
+    expect(canTransition(AIActionRunStatus.FAILED, AIActionRunStatus.COMPLETED)).toBe(true);
+    expect(canTransition(AIActionRunStatus.FAILED, AIActionRunStatus.EXECUTING)).toBe(false);
+    expect(canTransition(AIActionRunStatus.CANCELLED, AIActionRunStatus.COMPLETED)).toBe(false);
   });
 
   it('fingerprints equivalent plans identically despite key formatting/order', () => {

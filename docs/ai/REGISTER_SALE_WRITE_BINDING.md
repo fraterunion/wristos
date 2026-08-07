@@ -131,10 +131,45 @@ In-memory locks are not the safety boundary.
 ## 7. Concurrency behavior
 
 1. CAS: only one confirm transitions READY → EXECUTING
-2. Losers: if COMPLETED → replay receipt; if still EXECUTING → conflict (safe retry later)
+2. Losers: if COMPLETED → replay receipt; if still EXECUTING → see recovery policy below
 3. Domain uniqueness still prevents a second Deal even if execution were duplicated
 
 ---
+
+## 7b. Post-commit crash recovery (exactly-once runtime convergence)
+
+### Crash window
+
+```
+READY → CAS EXECUTING → SaleRegistrationService.register() commits
+→ (crash / timeout / completeExecution fails) → ActionRun still EXECUTING
+```
+
+Deal / Watch / Payment / Treasury / CXC may already exist. Deal uniqueness alone is not enough — the runtime must recover the receipt.
+
+### EXECUTING retry policy
+
+| Case | Behavior |
+| --- | --- |
+| A. Deal exists for `ai-action-run:<actionRunId>` + payload matches | Recover: rebuild receipt via idempotent `register()`, finalize COMPLETED, return SUCCESS_RECEIPT (`recovered: true`) |
+| B. No Deal, still EXECUTING | Return `interactionState: EXECUTING` / IN_PROGRESS — retry same confirm; no second ownership |
+| C. Stale EXECUTING without Deal beyond lease | **Not implemented** — would need heartbeat/lease schema. V1 stays on B (safe). |
+
+### FAILED + committed Deal
+
+If runtime wrongly marked FAILED after a committed sale: `FAILED → COMPLETED` recovery transition is allowed; lookup is still Deal idempotency key.
+
+### Durable receipt strategy
+
+1. **Primary:** persist `businessActionResult` on `AIActionRun.result` at COMPLETED (replay without LLM).
+2. **Recovery:** if result missing but Deal exists under `ai-action-run:<id>`, reconstruct via `SaleRegistrationService.register()` idempotent load + binding receipt mapping (trusted domain state only).
+
+### Financial trust
+
+Never show “No se realizó ningún cambio” when a Deal with this actionRun idempotency key exists.
+
+---
+
 
 ## 8. PAID / CREDIT / PARTIAL mapping
 
