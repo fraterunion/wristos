@@ -240,7 +240,7 @@ export class DealsService {
       exchangeRate: deal.exchangeRate?.toString() ?? null,
       paymentMethod: result.payment?.method ?? null,
       bankChannel: result.bankChannel,
-      bankFee: result.bankFee ? bankFeeDecimal.toString() : null,
+      bankFee: bankFeeDecimal.greaterThan(0) ? bankFeeDecimal.toString() : null,
       netReceived: result.canonicalMxn.minus(bankFeeDecimal).toString(),
       paidAt: result.payment?.paidAt?.toISOString() ?? null,
       paidTotal: result.paidTotal.toString(),
@@ -269,7 +269,7 @@ export class DealsService {
         notes: dto.notes,
       });
 
-      const bankFeeDecimal = result.bankFee?.amount ?? new Prisma.Decimal(0);
+      const bankFeeDecimal = result.bankFeeAmount;
 
       return {
         payment: {
@@ -280,7 +280,7 @@ export class DealsService {
           paidAt: result.payment.paidAt?.toISOString() ?? null,
           notes: result.payment.notes,
         },
-        bankFee: result.bankFee ? bankFeeDecimal.toString() : null,
+        bankFee: bankFeeDecimal.greaterThan(0) ? bankFeeDecimal.toString() : null,
         paidTotal: result.paidTotal.toString(),
         pendingAmount: result.pendingAmount.toString(),
         computedStatus: result.computedStatus,

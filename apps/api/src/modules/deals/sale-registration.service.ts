@@ -9,8 +9,6 @@ import {
   Currency,
   Deal,
   DealStage,
-  OperatingExpense,
-  OperatingExpenseCategory,
   Payment,
   PaymentMethod,
   PaymentStatus,
@@ -21,7 +19,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CuentasService } from '../cuentas/cuentas.service';
 import { FxService } from '../fx/fx.service';
-import { TreasuryService } from '../treasury/treasury.service';
+import {
+  dealPaymentBankFeeProvenanceKey,
+  TreasuryService,
+} from '../treasury/treasury.service';
 
 const BANK_RATES: Record<'JOSE' | 'MAYTE', number> = {
   JOSE: 0.02,
@@ -57,10 +58,11 @@ export type RegisterSaleCanonicalResult = {
   deal: Deal;
   watchId: string;
   payment: Payment | null;
+  /** Gross payment INFLOW (dealPaymentId linked). */
   treasuryEntry: TreasuryEntry | null;
+  /** BANCOS fee OUTFLOW (provenance `…:bank-fee`); null when no fee. */
+  bankFeeTreasuryEntry: TreasuryEntry | null;
   receivable: AccountEntry | null;
-  bankFee: OperatingExpense | null;
-  /** Computed fee amount even when OpEx row exists (same Decimal). */
   bankFeeAmount: Prisma.Decimal;
   paidTotal: Prisma.Decimal;
   pendingAmount: Prisma.Decimal;
@@ -159,7 +161,7 @@ export class SaleRegistrationService {
 
         let payment: Payment | null = null;
         let treasuryEntry: TreasuryEntry | null = null;
-        let bankFee: OperatingExpense | null = null;
+        let bankFeeTreasuryEntry: TreasuryEntry | null = null;
 
         if (paymentPlan.amount !== null && paymentPlan.method !== null) {
           payment = await tx.payment.create({
@@ -185,11 +187,11 @@ export class SaleRegistrationService {
             currency: Currency.MXN,
             transactionDate: paymentPlan.paidAt,
             description: `Venta ${deal.id}`,
-            // Commission stays on OpEx BANK_FEES (existing Ventas semantics).
             commission: null,
             tx,
           });
 
+          // BANCOS fee: separate OUTFLOW (cash) + commission (P&L once). No OpEx BANK_FEES.
           if (
             paymentPlan.method === PaymentMethod.BANCOS &&
             paymentPlan.bankChannel
@@ -197,16 +199,15 @@ export class SaleRegistrationService {
             const bankRate = BANK_RATES[paymentPlan.bankChannel];
             const feeAmount = paymentPlan.amount.mul(new Prisma.Decimal(bankRate));
             const pct = (bankRate * 100).toFixed(0);
-            bankFee = await tx.operatingExpense.create({
-              data: {
-                tenant: { connect: { id: tenantId } },
-                deal: { connect: { id: deal.id } },
-                category: OperatingExpenseCategory.BANK_FEES,
+            bankFeeTreasuryEntry =
+              await this.treasuryService.createBankFeeOutflowFromDealPayment({
+                tenantId,
+                dealPaymentId: payment.id,
                 amount: feeAmount,
-                expenseDate: paymentPlan.paidAt,
-                notes: `Comisión ${paymentPlan.bankChannel} ${pct}% — venta ${deal.id}`,
-              },
-            });
+                transactionDate: paymentPlan.paidAt,
+                description: `Comisión ${paymentPlan.bankChannel} ${pct}% — venta ${deal.id}`,
+                tx,
+              });
           }
         }
 
@@ -221,15 +222,15 @@ export class SaleRegistrationService {
           tx,
         );
 
-        return { deal, payment, treasuryEntry, bankFee, receivable };
+        return { deal, payment, treasuryEntry, bankFeeTreasuryEntry, receivable };
       });
 
       return this.toResult({
         deal: created.deal,
         payment: created.payment,
         treasuryEntry: created.treasuryEntry,
+        bankFeeTreasuryEntry: created.bankFeeTreasuryEntry,
         receivable: created.receivable,
-        bankFee: created.bankFee,
         bankChannel: paymentPlan.bankChannel,
         canonicalMxn,
         replayed: false,
@@ -292,23 +293,6 @@ export class SaleRegistrationService {
         },
       });
 
-      let bankFee: OperatingExpense | null = null;
-      if (args.method === 'BANCOS' && args.bankChannel) {
-        const bankRate = BANK_RATES[args.bankChannel];
-        const feeAmount = paymentAmount.mul(new Prisma.Decimal(bankRate));
-        const pct = (bankRate * 100).toFixed(0);
-        bankFee = await tx.operatingExpense.create({
-          data: {
-            tenant: { connect: { id: tenantId } },
-            deal: { connect: { id: dealId } },
-            category: OperatingExpenseCategory.BANK_FEES,
-            amount: feeAmount,
-            expenseDate: paidAt,
-            notes: `Comisión ${args.bankChannel} ${pct}% — venta ${dealId}`,
-          },
-        });
-      }
-
       const treasuryEntry = await this.treasuryService.createFromDealPayment({
         tenantId,
         dealPaymentId: payment.id,
@@ -322,9 +306,26 @@ export class SaleRegistrationService {
         tx,
       });
 
+      let bankFeeTreasuryEntry: TreasuryEntry | null = null;
+      let bankFeeAmount = new Prisma.Decimal(0);
+      if (args.method === 'BANCOS' && args.bankChannel) {
+        const bankRate = BANK_RATES[args.bankChannel];
+        bankFeeAmount = paymentAmount.mul(new Prisma.Decimal(bankRate));
+        const pct = (bankRate * 100).toFixed(0);
+        bankFeeTreasuryEntry =
+          await this.treasuryService.createBankFeeOutflowFromDealPayment({
+            tenantId,
+            dealPaymentId: payment.id,
+            amount: bankFeeAmount,
+            transactionDate: paidAt,
+            description: `Comisión ${args.bankChannel} ${pct}% — venta ${dealId}`,
+            tx,
+          });
+      }
+
       await this.cuentasService.syncDealReceivable(dealId, tenantId, tx);
 
-      return { payment, bankFee, treasuryEntry };
+      return { payment, treasuryEntry, bankFeeTreasuryEntry, bankFeeAmount };
     });
 
     const paidAgg = await this.prisma.payment.aggregate({
@@ -343,8 +344,9 @@ export class SaleRegistrationService {
 
     return {
       payment: result.payment,
-      bankFee: result.bankFee,
       treasuryEntry: result.treasuryEntry,
+      bankFeeTreasuryEntry: result.bankFeeTreasuryEntry,
+      bankFeeAmount: result.bankFeeAmount,
       paidTotal,
       pendingAmount,
       computedStatus,
@@ -438,10 +440,19 @@ export class SaleRegistrationService {
     replayed: boolean,
   ): Promise<RegisterSaleCanonicalResult> {
     const payment = deal.payments[0] ?? null;
-    const [treasuryEntry, receivable, bankFee] = await Promise.all([
+    const [treasuryEntry, bankFeeTreasuryEntry, receivable] = await Promise.all([
       payment
         ? this.prisma.treasuryEntry.findFirst({
             where: { dealPaymentId: payment.id, deletedAt: null },
+          })
+        : Promise.resolve(null),
+      payment
+        ? this.prisma.treasuryEntry.findFirst({
+            where: {
+              tenantId: deal.tenantId,
+              provenanceKey: dealPaymentBankFeeProvenanceKey(payment.id),
+              deletedAt: null,
+            },
           })
         : Promise.resolve(null),
       this.prisma.accountEntry.findFirst({
@@ -452,24 +463,18 @@ export class SaleRegistrationService {
           deletedAt: null,
         },
       }),
-      this.prisma.operatingExpense.findFirst({
-        where: {
-          tenantId: deal.tenantId,
-          dealId: deal.id,
-          category: OperatingExpenseCategory.BANK_FEES,
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
     ]);
 
-    const bankChannel = parseBankChannelFromNotes(bankFee?.notes ?? null);
+    const bankChannel = parseBankChannelFromNotes(
+      bankFeeTreasuryEntry?.description ?? null,
+    );
 
     return this.toResult({
       deal,
       payment,
       treasuryEntry,
+      bankFeeTreasuryEntry,
       receivable,
-      bankFee,
       bankChannel,
       canonicalMxn: deal.agreedPrice,
       replayed,
@@ -480,8 +485,8 @@ export class SaleRegistrationService {
     deal: Deal;
     payment: Payment | null;
     treasuryEntry: TreasuryEntry | null;
+    bankFeeTreasuryEntry: TreasuryEntry | null;
     receivable: AccountEntry | null;
-    bankFee: OperatingExpense | null;
     bankChannel: 'JOSE' | 'MAYTE' | null;
     canonicalMxn: Prisma.Decimal;
     replayed: boolean;
@@ -498,14 +503,19 @@ export class SaleRegistrationService {
           ? 'PARCIAL'
           : 'PENDIENTE';
 
+    const bankFeeAmount =
+      args.bankFeeTreasuryEntry?.commission ??
+      args.bankFeeTreasuryEntry?.amount ??
+      new Prisma.Decimal(0);
+
     return {
       deal: args.deal,
       watchId: args.deal.watchId!,
       payment: args.payment,
       treasuryEntry: args.treasuryEntry,
+      bankFeeTreasuryEntry: args.bankFeeTreasuryEntry,
       receivable: args.receivable,
-      bankFee: args.bankFee,
-      bankFeeAmount: args.bankFee?.amount ?? new Prisma.Decimal(0),
+      bankFeeAmount,
       paidTotal,
       pendingAmount,
       computedStatus,

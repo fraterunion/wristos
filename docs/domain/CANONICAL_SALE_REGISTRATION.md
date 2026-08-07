@@ -8,13 +8,14 @@ See also: `docs/ai/REGISTER_SALE_WRITE_BINDING.md`
 
 ## Atomic transaction
 
-Deal → Payment? → TreasuryEntry? → OpEx BANK_FEES? → Watch SOLD → AccountEntry (CXC)
+Deal → Payment? → Treasury INFLOW? → Treasury bank-fee OUTFLOW? → Watch SOLD → AccountEntry (CXC)
 
-All-or-nothing via Prisma `$transaction`.
+BANCOS fee: gross INFLOW + fee OUTFLOW (`commission`); Payment stays gross. No OpEx BANK_FEES on new sales.
 
 ## Idempotency
 
-`Deal.registerIdempotencyKey` unique per `(tenantId, key)` when non-null.
+- `Deal.registerIdempotencyKey` unique per `(tenantId, key)` when non-null
+- `TreasuryEntry.provenanceKey` unique per `(tenantId, key)` for `…:inflow` / `…:bank-fee`
 
 ## Correction
 

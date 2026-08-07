@@ -1456,15 +1456,21 @@ model TreasuryEntry {
   amountMxn       Decimal           @db.Decimal(12, 2)
   exchangeRate    Decimal?          @db.Decimal(12, 6)
   /// Bank commission component (CONTROL BANCOS). Nullable — not defaulted to 0.
-  /// Distinct from amount/amountMxn (movement totals). Populated for migrated BANK rows.
+  /// Distinct from amount/amountMxn (movement totals). Populated for migrated BANK rows
+  /// and for sale bank-fee OUTFLOW rows (amountMxn embeds the cash effect; commission is P&L).
   commission      Decimal?          @db.Decimal(12, 2)
   transactionDate DateTime
   description     String?
 
   accountPaymentId String? @unique
+  /// Optional 1:1 link to the gross deal Payment INFLOW only (fee OUTFLOW uses provenanceKey).
   dealPaymentId    String? @unique
   contributionId   String? @unique
   distributionId   String? @unique
+  /// Durable movement provenance for idempotent multi-leg writes, e.g.
+  /// `deal-payment:<paymentId>:inflow` | `deal-payment:<paymentId>:bank-fee`.
+  /// Nullable for legacy / non-keyed rows. Unique per tenant when set.
+  provenanceKey    String?
 
   deletedAt DateTime?
   createdAt DateTime  @default(now())
@@ -1477,6 +1483,7 @@ model TreasuryEntry {
   distribution                  InvestorDistribution?          @relation(fields: [distributionId], references: [id], onDelete: SetNull)
   physicalCashBalanceAdjustment PhysicalCashBalanceAdjustment?
 
+  @@unique([tenantId, provenanceKey])
   @@index([tenantId])
   @@index([tenantId, account])
   @@index([tenantId, account, direction])

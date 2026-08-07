@@ -56,23 +56,26 @@ Payment methods: `CASH` \| `BANCOS` \| `CESAR`. `BANCOS` requires `bankChannel` 
 
 ## 3. Treasury integration decision
 
-Dashboard liquidity uses `TreasuryService.getAccountBalances`.
+Dashboard liquidity uses `TreasuryService.getAccountBalances` = Σ INFLOW − Σ OUTFLOW (`amountMxn`).
 
-**Decision:** every received deal `Payment` creates exactly one `TreasuryEntry` via `TreasuryService.createFromDealPayment` (unique `dealPaymentId`).
+**Canonical BANCOS + fee (example 100,000 / 2% JOSE):**
+
+| Row | Effect |
+| --- | --- |
+| Payment | amount **100,000** (customer paid — never netted) |
+| Treasury INFLOW | +100,000 BANK (`dealPaymentId` + provenance `deal-payment:<id>:inflow`) |
+| Treasury OUTFLOW | −2,000 BANK (`provenance deal-payment:<id>:bank-fee`, `commission=2000`) |
+| Net BANK Δ | **+98,000** |
+| P&L | −2,000 **exactly once** via `TreasuryEntry.commission` (monthly profit / capital) |
+| OpEx BANK_FEES | **not created** for new sales (avoids double-count with commission) |
 
 | PaymentMethod | TreasuryAccount |
 | --- | --- |
-| CASH | CASH |
-| BANCOS | BANK |
-| CESAR | CESAR |
+| CASH | CASH (INFLOW only; no bank fee) |
+| BANCOS | BANK (INFLOW + fee OUTFLOW when channel set) |
+| CESAR | CESAR (INFLOW only; no bank fee) |
 
-- Direction: `INFLOW`
-- Amount: payment amount (MXN)
-- **`commission` left null** on sale-originated rows
-
-**Bank commission (exactly once):** remains **OperatingExpense `BANK_FEES`** (existing Ventas / monthly-profit OpEx path). Do **not** also set `TreasuryEntry.commission` for the same fee — that would double-count (`bankCommissionsMxn` + OpEx).
-
-Control Bancos structured commissions (migrated) continue to use `TreasuryEntry.commission` only.
+Analytics cash flow uses `amountMxn` only — fee cash is embedded in OUTFLOW; `commission` is informational for P&L KPIs and must not be added again on top of amountMxn.
 
 ---
 
@@ -95,19 +98,21 @@ Historical `sourceTag` deals still skip live AR (unchanged).
 
 ---
 
-## 5. Durable Deal idempotency
+## 5. Durable Deal + Treasury idempotency
 
 ```prisma
-registerIdempotencyKey String?
+Deal.registerIdempotencyKey String?
 @@unique([tenantId, registerIdempotencyKey])
+
+TreasuryEntry.provenanceKey String?
+@@unique([tenantId, provenanceKey])
 ```
 
-- Nullable: legacy / unkeyed manual sales remain valid (PostgreSQL UNIQUE allows multiple NULLs).
-- Future AI: `ai-action-run:<actionRunId>`
-- Manual UI: optional `registerIdempotencyKey` on DTO; omit ⇒ null
-- Same tenant + key + compatible payload → return existing sale (`replayed: true`)
-- Same key + conflicting payload → `409 Conflict`
-- Concurrent same key → DB unique + P2002 recovery → one Deal
+- Deal key: future AI `ai-action-run:<actionRunId>`; manual optional
+- Treasury legs (one Payment may own two rows; `dealPaymentId` is unique so fee cannot share it):
+  - `deal-payment:<paymentId>:inflow` — gross INFLOW (`dealPaymentId` set)
+  - `deal-payment:<paymentId>:bank-fee` — fee OUTFLOW (`dealPaymentId` null)
+- Replay / concurrent: no duplicate Deal, Payment, INFLOW, or fee OUTFLOW
 
 Migration (local / additive only): `prisma/migrations/20260807120000_deal_register_idempotency_key/`
 

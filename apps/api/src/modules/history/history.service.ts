@@ -1,8 +1,18 @@
 import { Injectable } from '@nestjs/common';
-import { DealStage, OperatingExpenseCategory, PaymentStatus, Prisma, Watch, WatchExpense, WatchStatus } from '@prisma/client';
+import {
+  DealStage,
+  OperatingExpenseCategory,
+  PaymentStatus,
+  Prisma,
+  TreasuryDirection,
+  Watch,
+  WatchExpense,
+  WatchStatus,
+} from '@prisma/client';
 import { computeEffectiveCost } from '../../common/utils/effective-cost';
 import { effectiveSaleDate } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
+import { dealPaymentBankFeeProvenanceKey } from '../treasury/treasury.service';
 import {
   HistoricalWatchSnapshot,
   isSettledHistoricalSaleSnapshot,
@@ -17,7 +27,8 @@ export class HistoryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getSummary(tenantId: string) {
-    const [totalAcquired, currentStock, soldDeals, bankFeeAgg] = await Promise.all([
+    const [totalAcquired, currentStock, soldDeals, legacyBankFeeAgg, saleTreasuryFeeAgg] =
+      await Promise.all([
       this.prisma.watch.count({ where: { tenantId } }),
       this.prisma.watch.count({
         where: { tenantId, deletedAt: null, status: { not: WatchStatus.SOLD } },
@@ -35,10 +46,25 @@ export class HistoryService {
           },
         },
       }),
-      // Sum all bank fee expenses to deduct from gross profit
+      // Legacy Ventas bank fees (pre–Treasury fee OUTFLOW path).
       this.prisma.operatingExpense.aggregate({
-        where: { tenantId, category: OperatingExpenseCategory.BANK_FEES },
+        where: {
+          tenantId,
+          category: OperatingExpenseCategory.BANK_FEES,
+          dealId: { not: null },
+        },
         _sum: { amount: true },
+      }),
+      // Canonical sale bank-fee OUTFLOWs (provenance deal-payment:*:bank-fee).
+      this.prisma.treasuryEntry.aggregate({
+        where: {
+          tenantId,
+          deletedAt: null,
+          direction: TreasuryDirection.OUTFLOW,
+          provenanceKey: { startsWith: 'deal-payment:', endsWith: ':bank-fee' },
+          commission: { gt: 0 },
+        },
+        _sum: { commission: true },
       }),
     ]);
 
@@ -50,7 +76,9 @@ export class HistoryService {
       const expenseSum = d.watch.expenses.reduce((es, e) => es + Number(e.amount), 0);
       return sum + Number(d.watch.cost) + expenseSum;
     }, 0);
-    const totalBankFees = Number(bankFeeAgg._sum.amount ?? 0);
+    const totalBankFees =
+      Number(legacyBankFeeAgg._sum.amount ?? 0) +
+      Number(saleTreasuryFeeAgg._sum.commission ?? 0);
 
     return {
       totalAcquired,
@@ -75,12 +103,37 @@ export class HistoryService {
       orderBy: [{ soldAt: 'desc' }, { updatedAt: 'desc' }],
     });
 
+    const feeProvenanceKeys = deals.flatMap((deal) =>
+      deal.payments.map((p) => dealPaymentBankFeeProvenanceKey(p.id)),
+    );
+    const treasuryFeeRows =
+      feeProvenanceKeys.length === 0
+        ? []
+        : await this.prisma.treasuryEntry.findMany({
+            where: {
+              tenantId,
+              deletedAt: null,
+              provenanceKey: { in: feeProvenanceKeys },
+            },
+            select: { provenanceKey: true, commission: true, amount: true },
+          });
+    const treasuryFeeByKey = new Map(
+      treasuryFeeRows.map((row) => [
+        row.provenanceKey!,
+        row.commission ?? row.amount,
+      ]),
+    );
+
     return deals.map((deal) => {
-      // Bank fees: sum BANK_FEES expenses linked to this deal via dealId FK.
-      const bankFeeDecimal = deal.operatingExpenses.reduce(
+      // Bank fees: legacy OpEx BANK_FEES + canonical Treasury fee OUTFLOWs.
+      let bankFeeDecimal = deal.operatingExpenses.reduce(
         (acc, e) => acc.plus(e.amount),
         new Prisma.Decimal(0),
       );
+      for (const payment of deal.payments) {
+        const fee = treasuryFeeByKey.get(dealPaymentBankFeeProvenanceKey(payment.id));
+        if (fee) bankFeeDecimal = bankFeeDecimal.plus(fee);
+      }
       const netReceivedDecimal = deal.agreedPrice.minus(bankFeeDecimal);
 
       // Payment summary computed from the payments already loaded.

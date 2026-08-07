@@ -62,7 +62,7 @@ function serviceFor(deals: ReturnType<typeof baseDeal>[]) {
     payment: { create: jest.fn(), update: jest.fn() },
     accountEntry: { create: jest.fn(), update: jest.fn() },
     watch: { create: jest.fn(), update: jest.fn() },
-    treasuryEntry: { create: jest.fn() },
+    treasuryEntry: { create: jest.fn(), findMany: jest.fn(async () => []) },
   };
   return { service: new HistoryService(prisma as never), prisma };
 }

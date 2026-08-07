@@ -182,24 +182,71 @@ describe('SaleRegistrationService — canonical sale registration', () => {
           if (where.dealPaymentId) {
             return (
               [...state.treasury.values()].find(
-                (t) => t.dealPaymentId === where.dealPaymentId,
+                (t) => t.dealPaymentId === where.dealPaymentId && !t.deletedAt,
               ) ?? null
             );
           }
           return null;
         }),
         findFirst: jest.fn(async ({ where }: any) => {
-          return (
-            [...state.treasury.values()].find((t) => {
-              if (where.dealPaymentId && t.dealPaymentId !== where.dealPaymentId) return false;
-              if (where.deletedAt === null && t.deletedAt) return false;
-              return true;
-            }) ?? null
-          );
+          const rows = [...state.treasury.values()].filter((t) => {
+            if (where.deletedAt === null && t.deletedAt) return false;
+            if (where.tenantId && t.tenantId !== where.tenantId) return false;
+            if (where.provenanceKey && t.provenanceKey !== where.provenanceKey) return false;
+            if (where.dealPaymentId && t.dealPaymentId !== where.dealPaymentId) return false;
+            if (where.OR) {
+              return where.OR.some((clause: any) => {
+                if (clause.dealPaymentId) return t.dealPaymentId === clause.dealPaymentId;
+                if (clause.provenanceKey)
+                  return (
+                    t.tenantId === clause.tenantId &&
+                    t.provenanceKey === clause.provenanceKey
+                  );
+                return false;
+              });
+            }
+            return true;
+          });
+          return rows[0] ?? null;
         }),
         create: jest.fn(async ({ data }: any) => {
           if (state.failTreasury) throw new Error('treasury failed');
-          const entry = { id: id('tre'), deletedAt: null, ...data, amount: d(data.amount), amountMxn: d(data.amountMxn) };
+          if (data.provenanceKey) {
+            const clash = [...state.treasury.values()].find(
+              (t) =>
+                t.tenantId === data.tenantId &&
+                t.provenanceKey === data.provenanceKey &&
+                !t.deletedAt,
+            );
+            if (clash) {
+              throw new Prisma.PrismaClientKnownRequestError('Unique constraint', {
+                code: 'P2002',
+                clientVersion: 'test',
+              });
+            }
+          }
+          if (data.dealPaymentId) {
+            const clash = [...state.treasury.values()].find(
+              (t) => t.dealPaymentId === data.dealPaymentId && !t.deletedAt,
+            );
+            if (clash) {
+              throw new Prisma.PrismaClientKnownRequestError('Unique constraint', {
+                code: 'P2002',
+                clientVersion: 'test',
+              });
+            }
+          }
+          const entry = {
+            id: id('tre'),
+            deletedAt: null,
+            ...data,
+            amount: d(data.amount),
+            amountMxn: d(data.amountMxn),
+            commission:
+              data.commission === null || data.commission === undefined
+                ? null
+                : d(data.commission),
+          };
           state.treasury.set(entry.id, entry);
           return entry;
         }),
@@ -210,30 +257,10 @@ describe('SaleRegistrationService — canonical sale registration', () => {
         }),
       },
       operatingExpense: {
-        create: jest.fn(async ({ data }: any) => {
-          const row = {
-            id: id('opex'),
-            tenantId: data.tenant.connect.id,
-            dealId: data.deal.connect.id,
-            category: data.category,
-            amount: d(data.amount),
-            expenseDate: data.expenseDate,
-            notes: data.notes,
-            createdAt: new Date(),
-          };
-          state.expenses.set(row.id, row);
-          return row;
+        create: jest.fn(async () => {
+          throw new Error('OpEx BANK_FEES must not be created for canonical sale fees');
         }),
-        findFirst: jest.fn(async ({ where }: any) => {
-          return (
-            [...state.expenses.values()].find(
-              (e) =>
-                e.tenantId === where.tenantId &&
-                e.dealId === where.dealId &&
-                e.category === where.category,
-            ) ?? null
-          );
-        }),
+        findFirst: jest.fn(async () => null),
       },
       accountEntry: {
         findFirst: jest.fn(async ({ where }: any) => {
@@ -382,7 +409,91 @@ describe('SaleRegistrationService — canonical sale registration', () => {
     };
   }
 
-  it('PAID: Deal CLOSED_WON, Watch SOLD, Payment, Treasury inflow, no outstanding CXC, bank fee once', async () => {
+  function bankDelta(state: State): Prisma.Decimal {
+    let net = d(0);
+    for (const t of state.treasury.values()) {
+      if (t.account !== TreasuryAccount.BANK || t.deletedAt) continue;
+      net =
+        t.direction === TreasuryDirection.INFLOW
+          ? net.plus(t.amountMxn)
+          : net.minus(t.amountMxn);
+    }
+    return net;
+  }
+
+  function pnlBankFeeOnce(state: State): {
+    treasuryCommission: Prisma.Decimal;
+    opexBankFees: Prisma.Decimal;
+  } {
+    let treasuryCommission = d(0);
+    for (const t of state.treasury.values()) {
+      if (t.commission && d(t.commission).greaterThan(0)) {
+        treasuryCommission = treasuryCommission.plus(t.commission);
+      }
+    }
+    let opexBankFees = d(0);
+    for (const e of state.expenses.values()) {
+      if (e.category === OperatingExpenseCategory.BANK_FEES) {
+        opexBankFees = opexBankFees.plus(e.amount);
+      }
+    }
+    return { treasuryCommission, opexBankFees };
+  }
+
+  it('A. BANCOS without bankChannel is rejected', async () => {
+    const state = emptyState();
+    seedTenant(state);
+    const { service } = build(state);
+
+    await expect(
+      service.register('t1', {
+        watchId: 'w1',
+        clientId: 'c1',
+        agreedPrice: 100000,
+        currency: 'MXN',
+        payment: { amountReceived: 100000, method: 'BANCOS' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('B. BANCOS fee 2k: Payment 100k, INFLOW +100k, OUTFLOW -2k, BANK +98k, P&L -2k once', async () => {
+    const state = emptyState();
+    seedTenant(state);
+    const { service } = build(state);
+
+    const result = await service.register('t1', {
+      watchId: 'w1',
+      clientId: 'c1',
+      agreedPrice: 100000,
+      currency: 'MXN',
+      payment: {
+        amountReceived: 100000,
+        method: 'BANCOS',
+        bankChannel: 'JOSE',
+      },
+    });
+
+    expect(result.payment?.amount.toString()).toBe('100000');
+    expect(result.treasuryEntry?.direction).toBe(TreasuryDirection.INFLOW);
+    expect(result.treasuryEntry?.amount.toString()).toBe('100000');
+    expect(result.treasuryEntry?.commission).toBeNull();
+    expect(result.bankFeeTreasuryEntry?.direction).toBe(TreasuryDirection.OUTFLOW);
+    expect(result.bankFeeTreasuryEntry?.amount.toString()).toBe('2000');
+    expect(result.bankFeeTreasuryEntry?.commission?.toString()).toBe('2000');
+    expect(result.bankFeeTreasuryEntry?.dealPaymentId).toBeNull();
+    expect(result.bankFeeAmount.toString()).toBe('2000');
+    expect(bankDelta(state).toString()).toBe('98000');
+    expect(state.treasury.size).toBe(2);
+    expect(state.expenses.size).toBe(0);
+
+    const pnl = pnlBankFeeOnce(state);
+    expect(pnl.treasuryCommission.toString()).toBe('2000');
+    expect(pnl.opexBankFees.toString()).toBe('0');
+    // monthly profit fee impact = commissions + opex bank fees = 2000 exactly once
+    expect(pnl.treasuryCommission.plus(pnl.opexBankFees).toString()).toBe('2000');
+  });
+
+  it('PAID BANCOS: Deal CLOSED_WON, Watch SOLD, Payment, dual Treasury legs, no OpEx', async () => {
     const state = emptyState();
     seedTenant(state);
     const { service } = build(state);
@@ -402,19 +513,103 @@ describe('SaleRegistrationService — canonical sale registration', () => {
     expect(result.deal.stage).toBe(DealStage.CLOSED_WON);
     expect(state.watches.get('w1')!.status).toBe(WatchStatus.SOLD);
     expect(result.payment?.amount.toString()).toBe('100000');
-    expect(result.treasuryEntry?.account).toBe(TreasuryAccount.BANK);
-    expect(result.treasuryEntry?.direction).toBe(TreasuryDirection.INFLOW);
-    expect(result.treasuryEntry?.amount.toString()).toBe('100000');
-    expect(result.treasuryEntry?.commission).toBeNull();
     expect(result.receivable?.status).toBe(AccountEntryStatus.PAID);
-    expect(result.bankFee?.category).toBe(OperatingExpenseCategory.BANK_FEES);
-    expect(result.bankFeeAmount.toString()).toBe('2000');
     expect(result.computedStatus).toBe('PAGADO');
-    expect(state.expenses.size).toBe(1);
+    expect(state.expenses.size).toBe(0);
+    expect(state.treasury.size).toBe(2);
+  });
+
+  it('C. CASH: Payment 100k, Cash +100k, no bank fee', async () => {
+    const state = emptyState();
+    seedTenant(state);
+    const { service } = build(state);
+
+    const result = await service.register('t1', {
+      watchId: 'w1',
+      clientId: 'c1',
+      agreedPrice: 100000,
+      currency: 'MXN',
+      payment: { amountReceived: 100000, method: 'CASH' },
+    });
+
+    expect(result.treasuryEntry?.account).toBe(TreasuryAccount.CASH);
+    expect(result.treasuryEntry?.amount.toString()).toBe('100000');
+    expect(result.bankFeeTreasuryEntry).toBeNull();
+    expect(result.bankFeeAmount.toString()).toBe('0');
+    expect(state.treasury.size).toBe(1);
+    expect(bankDelta(state).toString()).toBe('0');
+  });
+
+  it('D. CESAR: Payment 100k, César +100k, no bank fee', async () => {
+    const state = emptyState();
+    seedTenant(state);
+    const { service } = build(state);
+
+    const result = await service.register('t1', {
+      watchId: 'w1',
+      clientId: 'c1',
+      agreedPrice: 100000,
+      currency: 'MXN',
+      payment: { amountReceived: 100000, method: 'CESAR' },
+    });
+
+    expect(result.treasuryEntry?.account).toBe(TreasuryAccount.CESAR);
+    expect(result.bankFeeTreasuryEntry).toBeNull();
     expect(state.treasury.size).toBe(1);
   });
 
-  it('CREDIT: no Payment, no Treasury, full AccountEntry CXC', async () => {
+  it('F. PARTIAL BANCOS: 40k received, fee on 40k, CXC 60k, net BANK +39200', async () => {
+    const state = emptyState();
+    seedTenant(state);
+    const { service } = build(state);
+
+    const result = await service.register('t1', {
+      watchId: 'w1',
+      clientId: 'c1',
+      agreedPrice: 100000,
+      currency: 'MXN',
+      payment: {
+        amountReceived: 40000,
+        method: 'BANCOS',
+        bankChannel: 'JOSE',
+      },
+    });
+
+    expect(result.payment?.amount.toString()).toBe('40000');
+    expect(result.bankFeeAmount.toString()).toBe('800');
+    expect(result.pendingAmount.toString()).toBe('60000');
+    expect(result.receivable?.status).toBe(AccountEntryStatus.PARTIAL);
+    expect(bankDelta(state).toString()).toBe('39200');
+  });
+
+  it('G. Replay: no duplicate payment / inflow / fee / OpEx', async () => {
+    const state = emptyState();
+    seedTenant(state);
+    const { service } = build(state);
+    const input = {
+      watchId: 'w1',
+      clientId: 'c1',
+      agreedPrice: 100000,
+      currency: 'MXN' as const,
+      payment: {
+        amountReceived: 100000,
+        method: 'BANCOS' as const,
+        bankChannel: 'JOSE' as const,
+      },
+      registerIdempotencyKey: 'ai-action-run:fee-replay',
+    };
+
+    await service.register('t1', input);
+    await service.register('t1', input);
+
+    expect(state.deals.size).toBe(1);
+    expect(state.payments.size).toBe(1);
+    expect(state.treasury.size).toBe(2);
+    expect(state.expenses.size).toBe(0);
+    expect(bankDelta(state).toString()).toBe('98000');
+  });
+
+  it('E. CREDIT: No Payment, No Treasury, CXC +100k', async () => {
     const state = emptyState();
     seedTenant(state);
     const { service } = build(state);
@@ -806,6 +1001,8 @@ describe('SaleRegistrationService — canonical sale registration', () => {
     });
 
     expect(result.bankFeeAmount.toFixed(2)).toBe('333.33');
-    expect(state.expenses.size).toBe(1);
+    expect(state.expenses.size).toBe(0);
+    expect(state.treasury.size).toBe(2);
+    expect(bankDelta(state).toFixed(2)).toBe('33000.00');
   });
 });

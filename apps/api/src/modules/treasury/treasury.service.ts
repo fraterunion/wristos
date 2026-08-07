@@ -37,11 +37,30 @@ export type CreateFromDealPaymentArgs = {
   exchangeRateUsed?: CoercibleDecimal | null;
   transactionDate: Date;
   description?: string | null;
-  /** Structured bank commission (Control Bancos). Leave unset for sale OpEx fees. */
+  /** Structured bank commission (Control Bancos). Leave null on gross sale inflows. */
   commission?: CoercibleDecimal | null;
   /** Optional transaction client for atomic sale registration. */
   tx?: Prisma.TransactionClient;
 };
+
+export type CreateDealPaymentBankFeeOutflowArgs = {
+  tenantId: string;
+  dealPaymentId: string;
+  amount: CoercibleDecimal;
+  transactionDate: Date;
+  description?: string | null;
+  tx?: Prisma.TransactionClient;
+};
+
+/** Typed provenance keys — one Payment may own multiple Treasury legs. */
+export function dealPaymentInflowProvenanceKey(dealPaymentId: string): string {
+  return `deal-payment:${dealPaymentId}:inflow`;
+}
+
+export function dealPaymentBankFeeProvenanceKey(dealPaymentId: string): string {
+  return `deal-payment:${dealPaymentId}:bank-fee`;
+}
+
 
 export type UpdateFromAccountPaymentArgs = {
   tenantId: string;
@@ -123,20 +142,28 @@ export class TreasuryService {
   }
 
   /**
-   * Canonical treasury write for deal Payment rows (sale / add-payment).
-   * Idempotent on unique `dealPaymentId`. Accepts optional transaction client.
+   * Canonical Treasury INFLOW for a deal Payment (gross customer amount).
+   * Idempotent on unique `dealPaymentId` and `provenanceKey` (`…:inflow`).
    *
-   * Sale bank fees remain OperatingExpense BANK_FEES (Ventas semantics).
-   * Do not set `commission` on sale-originated inflows unless intentionally
-   * migrating fee accounting off OpEx — setting both double-counts monthly profit.
+   * Bank-fee cash effect is a separate OUTFLOW via `createBankFeeOutflowFromDealPayment`.
+   * Do not set `commission` on the gross inflow — analytics embed fee cash in OUTFLOW amountMxn
+   * and read P&L from OUTFLOW.commission (never add commission on top of amountMxn).
    */
   async createFromDealPayment(args: CreateFromDealPaymentArgs) {
     const db: DbClient = args.tx ?? this.prisma;
-    const existing = await db.treasuryEntry.findUnique({
-      where: { dealPaymentId: args.dealPaymentId },
+    const provenanceKey = dealPaymentInflowProvenanceKey(args.dealPaymentId);
+
+    const existing = await db.treasuryEntry.findFirst({
+      where: {
+        OR: [
+          { dealPaymentId: args.dealPaymentId },
+          { tenantId: args.tenantId, provenanceKey },
+        ],
+        deletedAt: null,
+      },
     });
 
-    if (existing && existing.deletedAt === null) {
+    if (existing) {
       return existing;
     }
 
@@ -146,11 +173,6 @@ export class TreasuryService {
       args.exchangeRateUsed,
     );
 
-    const commission =
-      args.commission === undefined || args.commission === null
-        ? null
-        : new Prisma.Decimal(args.commission.toString());
-
     const data = {
       tenantId: args.tenantId,
       account: args.account,
@@ -159,19 +181,13 @@ export class TreasuryService {
       currency: args.currency,
       amountMxn,
       exchangeRate,
-      commission,
+      commission: null as Prisma.Decimal | null,
       transactionDate: args.transactionDate,
       description: args.description ?? null,
       dealPaymentId: args.dealPaymentId,
+      provenanceKey,
       deletedAt: null,
     };
-
-    if (existing) {
-      return db.treasuryEntry.update({
-        where: { id: existing.id },
-        data,
-      });
-    }
 
     try {
       return await db.treasuryEntry.create({ data });
@@ -180,12 +196,71 @@ export class TreasuryService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        const raced = await db.treasuryEntry.findUnique({
-          where: { dealPaymentId: args.dealPaymentId },
+        const raced = await db.treasuryEntry.findFirst({
+          where: {
+            OR: [
+              { dealPaymentId: args.dealPaymentId },
+              { tenantId: args.tenantId, provenanceKey },
+            ],
+            deletedAt: null,
+          },
         });
-        if (raced && raced.deletedAt === null) {
-          return raced;
-        }
+        if (raced) return raced;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Canonical bank-fee cash OUTFLOW for a BANCOS deal payment.
+   * - amountMxn reduces BANK liquidity (Σ INFLOW − Σ OUTFLOW)
+   * - commission = fee for monthly profit / capital (exactly once; no OpEx BANK_FEES)
+   * Idempotent on provenanceKey `deal-payment:<id>:bank-fee` (dealPaymentId stays on inflow only).
+   */
+  async createBankFeeOutflowFromDealPayment(
+    args: CreateDealPaymentBankFeeOutflowArgs,
+  ) {
+    const db: DbClient = args.tx ?? this.prisma;
+    const provenanceKey = dealPaymentBankFeeProvenanceKey(args.dealPaymentId);
+
+    const existing = await db.treasuryEntry.findFirst({
+      where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
+    });
+    if (existing) return existing;
+
+    const { amount, amountMxn } = this.resolveAmounts(
+      args.amount,
+      Currency.MXN,
+      null,
+    );
+
+    const data = {
+      tenantId: args.tenantId,
+      account: TreasuryAccount.BANK,
+      direction: TreasuryDirection.OUTFLOW,
+      amount,
+      currency: Currency.MXN,
+      amountMxn,
+      exchangeRate: null as Prisma.Decimal | null,
+      commission: amount,
+      transactionDate: args.transactionDate,
+      description: args.description ?? null,
+      dealPaymentId: null as string | null,
+      provenanceKey,
+      deletedAt: null,
+    };
+
+    try {
+      return await db.treasuryEntry.create({ data });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await db.treasuryEntry.findFirst({
+          where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
+        });
+        if (raced) return raced;
       }
       throw error;
     }
@@ -201,6 +276,14 @@ export class TreasuryService {
     throw new BadRequestException(
       `Unsupported payment method for treasury: ${method}`,
     );
+  }
+
+  static bankFeeProvenanceKey(dealPaymentId: string): string {
+    return dealPaymentBankFeeProvenanceKey(dealPaymentId);
+  }
+
+  static inflowProvenanceKey(dealPaymentId: string): string {
+    return dealPaymentInflowProvenanceKey(dealPaymentId);
   }
 
   async updateFromAccountPayment(
