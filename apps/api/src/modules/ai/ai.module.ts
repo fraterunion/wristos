@@ -31,6 +31,7 @@ import { createIntentAdapterProvider } from './intent-adapter/providers/intent-p
 import { IntentAdapterRateLimitGuard } from './intent-adapter/rate-limit.guard';
 import { ReferenceResolverService } from './context/reference-resolver.service';
 import { WorkingContextService } from './context/working-context.service';
+import { OperationalIntelligenceService } from './operational-intelligence/operational-intelligence.service';
 
 @Module({
   imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule, DealsModule],
@@ -40,6 +41,7 @@ import { WorkingContextService } from './context/working-context.service';
     ConversationService,
     RuntimeService,
     WorkspaceService,
+    OperationalIntelligenceService,
     ToolRegistry,
     ToolExecutionService,
     BusinessActionCatalog,
@@ -65,6 +67,27 @@ import { WorkingContextService } from './context/working-context.service';
     NaturalLanguageAssistantService,
     IntentAdapterRateLimitGuard,
   ],
-  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner, WriteCapabilityBindingRegistry, WritePlanRunner, AIRequestService, StructuredAssistantService, IntentAdapterService, NaturalLanguageAssistantService],
+  exports: [
+    AUDIT_STORE,
+    CONVERSATION_STORE,
+    RUNTIME_STORE,
+    WORKSPACE_STORE,
+    RuntimeService,
+    ToolRegistry,
+    ToolExecutionService,
+    BusinessActionCatalog,
+    BusinessCapabilityCatalog,
+    PlannerService,
+    CapabilityBindingRegistry,
+    CapabilityBindingService,
+    ReadPlanRunner,
+    WriteCapabilityBindingRegistry,
+    WritePlanRunner,
+    AIRequestService,
+    StructuredAssistantService,
+    IntentAdapterService,
+    NaturalLanguageAssistantService,
+    OperationalIntelligenceService,
+  ],
 })
 export class AIModule {}

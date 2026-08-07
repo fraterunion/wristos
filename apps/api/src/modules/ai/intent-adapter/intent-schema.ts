@@ -14,6 +14,15 @@ export const READ_INTENTS = [
   'SEARCH_INVENTORY',
   'SEARCH_CLIENT',
   'GET_CLIENT_ACCOUNTS',
+  'GET_INVENTORY_AGING',
+  'GET_TOP_INVENTORY_CAPITAL',
+  'GET_TOP_DEBTORS',
+  'GET_RECEIVABLE_SUMMARY',
+  'GET_SALES_MARGIN_SUMMARY',
+  'GET_PROFIT_BY_BRAND',
+  'GET_TOP_SALES',
+  'GET_ATTENTION_ITEMS',
+  'GET_BUSINESS_SUMMARY',
 ] as const;
 
 export const WRITE_INTENTS = [
@@ -136,6 +145,65 @@ export const entitySchemas = {
       status: z.enum(['OPEN', 'PARTIAL', 'PAID', 'ALL']).optional(),
     })
     .strip(),
+
+
+  GET_INVENTORY_AGING: z
+    .object({
+      minAgeDays: z.number().int().min(0).max(3650).optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strip(),
+
+  GET_TOP_INVENTORY_CAPITAL: z
+    .object({
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strip(),
+
+  GET_TOP_DEBTORS: z
+    .object({
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strip(),
+
+  GET_RECEIVABLE_SUMMARY: z.object({}).strip(),
+
+  GET_SALES_MARGIN_SUMMARY: z
+    .object({
+      period: z.enum(['CURRENT_MONTH', 'YEAR', 'ALL', 'CUSTOM']).optional(),
+      year: z.number().int().min(2000).max(2200).optional(),
+      month: z.number().int().min(1).max(12).optional(),
+      brand: z.string().trim().min(1).max(80).optional(),
+    })
+    .strip(),
+
+  GET_PROFIT_BY_BRAND: z
+    .object({
+      period: z.enum(['CURRENT_MONTH', 'YEAR', 'ALL', 'CUSTOM']).optional(),
+      year: z.number().int().min(2000).max(2200).optional(),
+      month: z.number().int().min(1).max(12).optional(),
+      brand: z.string().trim().min(1).max(80).optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strip(),
+
+  GET_TOP_SALES: z
+    .object({
+      period: z.enum(['CURRENT_MONTH', 'YEAR', 'ALL', 'CUSTOM']).optional(),
+      year: z.number().int().min(2000).max(2200).optional(),
+      month: z.number().int().min(1).max(12).optional(),
+      sortBy: z.enum(['GROSS_PROFIT', 'AGREED_PRICE', 'GROSS_MARGIN_PERCENT']).optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    })
+    .strip(),
+
+  GET_ATTENTION_ITEMS: z
+    .object({
+      limit: z.number().int().min(1).max(8).optional(),
+    })
+    .strip(),
+
+  GET_BUSINESS_SUMMARY: z.object({}).strip(),
 
   // Write intents: detection-only at the LLM boundary. Trusted *Id values may
   // be injected later by ReferenceResolver for preview preparation only —

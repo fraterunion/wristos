@@ -34,6 +34,28 @@ export const EVAL_DATASET: EvalCase[] = [
   { category: 'READ', text: 'Busca a José Hernández.', expectedIntent: 'SEARCH_CLIENT', expectedEntityKeys: ['query'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
   { category: 'READ', text: '¿Qué cuentas tiene Oleg?', expectedIntent: 'GET_CLIENT_ACCOUNTS', expectedEntityKeys: ['clientQuery'], expectedMissingIncludes: ['clientId'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
 
+  // ─── OPERATIONAL INTELLIGENCE READS ────────────────────────────────────
+  { category: 'READ', text: '¿Qué reloj lleva más tiempo parado?', expectedIntent: 'GET_INVENTORY_AGING', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Qué tengo con más de 120 días?', expectedIntent: 'GET_INVENTORY_AGING', expectedEntityKeys: ['minAgeDays'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cuáles son mis relojes más caros?', expectedIntent: 'GET_TOP_INVENTORY_CAPITAL', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Dónde tengo más capital en inventario?', expectedIntent: 'GET_TOP_INVENTORY_CAPITAL', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Quién me debe más?', expectedIntent: 'GET_TOP_DEBTORS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: 'Top deudores', expectedIntent: 'GET_TOP_DEBTORS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cuánto me deben?', expectedIntent: 'GET_RECEIVABLE_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cuánto tengo atorado en cuentas?', expectedIntent: 'GET_RECEIVABLE_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cuál fue mi venta más rentable?', expectedIntent: 'GET_TOP_SALES', expectedEntityKeys: ['sortBy'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Qué margen tuve en julio?', expectedIntent: 'GET_SALES_MARGIN_SUMMARY', expectedEntityKeys: ['month', 'year'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cuál es mi margen en Rolex?', expectedIntent: 'GET_PROFIT_BY_BRAND', expectedEntityKeys: ['brand'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Qué marca me deja más dinero?', expectedIntent: 'GET_PROFIT_BY_BRAND', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cuáles fueron mis mejores ventas este mes?', expectedIntent: 'GET_TOP_SALES', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Qué debería revisar hoy?', expectedIntent: 'GET_ATTENTION_ITEMS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Qué necesita mi atención?', expectedIntent: 'GET_ATTENTION_ITEMS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Hay algo importante que deba ver?', expectedIntent: 'GET_ATTENTION_ITEMS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cómo va el negocio?', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: 'Dame un resumen.', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cómo vamos este mes?', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: 'Resumen del negocio.', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+
   // ─── WRITE DETECTION ONLY ───────────────────────────────────────────────
   { category: 'WRITE_DETECTION_ONLY', text: 'Vendí Batman en 350 mil.', expectedIntent: 'REGISTER_SALE', expectedEntityKeys: ['watchQuery', 'price', 'currency'], expectedMissingIncludes: ['watchId', 'customerId'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: true },
   { category: 'WRITE_DETECTION_ONLY', text: 'José me pagó 35 mil.', expectedIntent: 'REGISTER_RECEIVABLE_PAYMENT', expectedEntityKeys: ['customerQuery', 'amount'], expectedMissingIncludes: ['accountId'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: true },
@@ -50,6 +72,9 @@ export const EVAL_DATASET: EvalCase[] = [
   // NEEDS_CLARIFICATION (asking for the watch/customer/price/etc.), never
   // READY_FOR_CONFIRMATION. "Ambiguous" here describes the sparse *input*,
   // not a silently-guessed output.
+  { category: 'AMBIGUOUS', text: '¿Qué está mal?', expectedIntent: 'UNKNOWN', allowedConfidence: ['LOW'], mayProceedToOrchestrator: false, executionMustBeImpossible: false },
+  { category: 'AMBIGUOUS', text: '¿Qué hago?', expectedIntent: 'UNKNOWN', allowedConfidence: ['LOW'], mayProceedToOrchestrator: false, executionMustBeImpossible: false },
+  { category: 'AMBIGUOUS', text: '¿Cómo voy?', expectedIntent: 'UNKNOWN', allowedConfidence: ['LOW'], mayProceedToOrchestrator: false, executionMustBeImpossible: false },
   { category: 'AMBIGUOUS', text: 'Vendí Batman.', expectedIntent: 'REGISTER_SALE', expectedEntityKeys: ['watchQuery'], allowedConfidence: ['MEDIUM', 'LOW'], mayProceedToOrchestrator: true, executionMustBeImpossible: true },
   { category: 'AMBIGUOUS', text: 'José me pagó.', expectedIntent: 'REGISTER_RECEIVABLE_PAYMENT', expectedEntityKeys: ['customerQuery'], allowedConfidence: ['MEDIUM', 'LOW'], mayProceedToOrchestrator: true, executionMustBeImpossible: true },
   { category: 'AMBIGUOUS', text: 'Compré AP.', expectedIntent: 'REGISTER_PURCHASE', expectedEntityKeys: ['watchQuery'], allowedConfidence: ['MEDIUM', 'LOW'], mayProceedToOrchestrator: true, executionMustBeImpossible: true },

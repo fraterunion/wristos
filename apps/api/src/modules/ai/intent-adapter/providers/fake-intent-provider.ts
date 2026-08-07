@@ -35,8 +35,76 @@ function classify(text: string, currentDate: string): FakeOutput {
     return { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es' };
   }
 
+  // --- Operational intelligence reads (before generic liquidity "cuánto tengo") ---
+  if (/c[oó]mo va( el negocio)?|c[oó]mo vamos( hoy| este mes)?|dame (un )?resumen|resumen del negocio/.test(t)) {
+    return { intent: 'GET_BUSINESS_SUMMARY', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/lleva m[aá]s tiempo parado|inventario viejo|m[aá]s de \d+ d[ií]as|tiempo sin venderse|reloj.*m[aá]s tiempo/.test(t)) {
+    const days = t.match(/m[aá]s de (\d+)\s*d[ií]as/);
+    return {
+      intent: 'GET_INVENTORY_AGING',
+      entities: days ? { minAgeDays: Number(days[1]) } : {},
+      missingEntities: [],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
+  }
+  if (/m[aá]s (dinero )?parado|relojes m[aá]s caros|capital en inventario|inventario.*pesa|d[oó]nde tengo m[aá]s (dinero|capital)/.test(t)) {
+    return { intent: 'GET_TOP_INVENTORY_CAPITAL', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/qui[eé]n me debe|clientes me deben|top deudores|deudores/.test(t)) {
+    return { intent: 'GET_TOP_DEBTORS', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/cu[aá]nto.*(cxc|cuentas por cobrar|me deben)|atorado en (cxc|cuentas)|cu[aá]ntas cuentas.*(abiertas|tengo)/.test(t)) {
+    return { intent: 'GET_RECEIVABLE_SUMMARY', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/margen.*(julio|enero|febrero|marzo|abril|mayo|junio|agosto|septiembre|octubre|noviembre|diciembre|este mes)|qu[eé] margen|tan rentables fueron/.test(t)) {
+    const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const m = t.match(/(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/);
+    const entities: Record<string, unknown> = {};
+    if (m) {
+      entities.month = months.indexOf(m[1]) + 1;
+      entities.year = Number(currentDate.slice(0, 4));
+      entities.period = 'CUSTOM';
+    } else {
+      entities.period = 'CURRENT_MONTH';
+    }
+    return { intent: 'GET_SALES_MARGIN_SUMMARY', entities, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/marca.*(utilidad|margen|deja m[aá]s)|rolex o ap|mejor margen|margen en ([a-z]+)/.test(t)) {
+    const brandMatch = t.match(/margen en ([a-z0-9]+)|marca ([a-z0-9]+)/);
+    const entities: Record<string, unknown> = { period: 'CURRENT_MONTH' };
+    if (brandMatch) entities.brand = (brandMatch[1] ?? brandMatch[2] ?? '').toUpperCase();
+    if (/rolex/.test(t) && !entities.brand) entities.brand = 'ROLEX';
+    return { intent: 'GET_PROFIT_BY_BRAND', entities, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/venta m[aá]s rentable|mejores ventas|top ventas|m[aá]s rentable/.test(t)) {
+    return {
+      intent: 'GET_TOP_SALES',
+      entities: { sortBy: 'GROSS_PROFIT', period: 'CURRENT_MONTH', limit: /m[aá]s rentable/.test(t) ? 1 : 10 },
+      missingEntities: [],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
+  }
+  if (/deber[ií]a revisar|necesita mi atenci[oó]n|algo importante|qu[eé] ves raro|revisar hoy/.test(t)) {
+    return { intent: 'GET_ATTENTION_ITEMS', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+  if (/^qu[eé] est[aá] mal|^qu[eé] hago$/.test(t)) {
+    return {
+      intent: 'UNKNOWN',
+      entities: {},
+      missingEntities: [],
+      ambiguities: [{ field: 'intent', reason: 'ambiguous operational ask; prefer GET_ATTENTION_ITEMS, GET_BUSINESS_SUMMARY or GET_MONTHLY_PROFIT', candidates: ['GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY', 'GET_MONTHLY_PROFIT', 'GET_LIQUIDITY'] }],
+      confidence: 'LOW',
+      language: 'es',
+    };
+  }
+
   // --- Reads ---
-  if (/cu[aá]nto (dinero )?tengo|dime mi liquidez|mi liquidez|liquidez total/.test(t)) {
+  if (/cu[aá]nto (dinero )?tengo(?! atorado)|dime mi liquidez|mi liquidez|liquidez total/.test(t)) {
     return { intent: 'GET_LIQUIDITY', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
   }
   if (/qu[eé] ap tengo|cuentas por pagar/.test(t)) {

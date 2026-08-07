@@ -26,7 +26,9 @@ describe('structured assistant architecture boundaries', () => {
 
   it('contains an explicit read allowlist and no write execution path', () => {
     const orchestrator = source('structured-assistant.service.ts');
-    expect(orchestrator).toContain("const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS'])");
+    expect(orchestrator).toContain("GET_INVENTORY_AGING");
+    expect(orchestrator).toContain("GET_ATTENTION_ITEMS");
+    expect(orchestrator).toContain("const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS', 'GET_INVENTORY_AGING', 'GET_TOP_INVENTORY_CAPITAL', 'GET_TOP_DEBTORS', 'GET_RECEIVABLE_SUMMARY', 'GET_SALES_MARGIN_SUMMARY', 'GET_PROFIT_BY_BRAND', 'GET_TOP_SALES', 'GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY'])");
     expect(orchestrator).toContain('Esta acción todavía no está habilitada para ejecución desde el asistente.');
   });
 });

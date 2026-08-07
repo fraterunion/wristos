@@ -231,6 +231,244 @@ function accountEntriesList(response: StructuredAssistantResponse, entries: Json
   return blocks;
 }
 
+function receivableSummaryBreakdown(response: StructuredAssistantResponse): ConversationBlock[] {
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const currencies = isRecord(data.currencies) ? data.currencies : {};
+  const mxn = isRecord(currencies.MXN) ? currencies.MXN : {};
+  const outstanding = formatMoney(mxn.outstanding);
+  const blocks: ConversationBlock[] = [
+    { kind: 'text', id: blockId(response, 'text'), text: 'Esto es lo que tienes atorado en cuentas por cobrar:' },
+  ];
+  if (outstanding) blocks.push({ kind: 'summary', id: blockId(response, 'summary'), value: outstanding });
+  const rows: Array<{ label: string; value: string }> = [];
+  const paid = formatMoney(mxn.paidTotal);
+  const original = formatMoney(mxn.originalTotal);
+  if (original) rows.push({ label: 'Original MXN', value: original });
+  if (paid) rows.push({ label: 'Cobrado MXN', value: paid });
+  if (typeof mxn.activeAccountCount === 'number') {
+    rows.push({ label: 'Cuentas activas MXN', value: String(mxn.activeAccountCount) });
+  }
+  const usd = isRecord(currencies.USD) ? currencies.USD : {};
+  const usdOut = formatNonZeroMoney(usd.outstanding, 'USD');
+  if (usdOut) rows.push({ label: 'Pendiente USD', value: usdOut });
+  if (rows.length) blocks.push({ kind: 'breakdown', id: blockId(response, 'breakdown'), items: rows });
+  return blocks;
+}
+
+function salesMarginBreakdown(response: StructuredAssistantResponse): ConversationBlock[] {
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const period = asString(data.period);
+  const gross = formatMoney(data.grossProfit);
+  const blocks: ConversationBlock[] = [
+    {
+      kind: 'text',
+      id: blockId(response, 'text'),
+      text: period ? `El margen bruto de ${period} es:` : 'El margen bruto del periodo es:',
+    },
+  ];
+  if (gross) blocks.push({ kind: 'summary', id: blockId(response, 'summary'), value: gross });
+  const rows: Array<{ label: string; value: string }> = [];
+  const revenue = formatMoney(data.revenue);
+  const cogs = formatMoney(data.cogs);
+  if (revenue) rows.push({ label: 'Ingresos', value: revenue });
+  if (cogs) rows.push({ label: 'Costo (COGS)', value: cogs });
+  if (typeof data.grossMarginPercent === 'string' || typeof data.grossMarginPercent === 'number') {
+    rows.push({ label: 'Margen %', value: `${data.grossMarginPercent}%` });
+  }
+  if (typeof data.unitsSold === 'number') rows.push({ label: 'Unidades', value: String(data.unitsSold) });
+  rows.push({ label: 'Nota', value: 'Margen bruto ≠ utilidad neta' });
+  if (rows.length) blocks.push({ kind: 'breakdown', id: blockId(response, 'breakdown'), items: rows });
+  return blocks;
+}
+
+function attentionBreakdown(response: StructuredAssistantResponse): ConversationBlock[] {
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const items = asArray(data.items);
+  const count = items.length;
+  const blocks: ConversationBlock[] = [
+    {
+      kind: 'text',
+      id: blockId(response, 'text'),
+      text: count
+        ? `Veo ${count} ${plural(count, 'cosa', 'cosas')} que vale la pena revisar.`
+        : 'No veo alertas operativas relevantes ahora.',
+    },
+  ];
+  const rows = items.flatMap((item, index) => {
+    if (!isRecord(item)) return [];
+    const title = asString(item.title) ?? `Punto ${index + 1}`;
+    const explanation = asString(item.explanation) ?? '—';
+    const severity = asString(item.severity);
+    return [{ label: `${index + 1}. ${title}${severity ? ` (${severity})` : ''}`, value: explanation }];
+  });
+  if (rows.length) blocks.push({ kind: 'list', id: blockId(response, 'list'), items: rows.map((r) => ({ label: r.label, value: r.value })) });
+  return blocks;
+}
+
+function businessSummaryBreakdown(response: StructuredAssistantResponse): ConversationBlock[] {
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const liquidity = isRecord(data.liquidity) ? data.liquidity : {};
+  const inventory = isRecord(data.inventory) ? data.inventory : {};
+  const receivables = isRecord(data.receivables) ? data.receivables : {};
+  const monthly = isRecord(data.monthlyPerformance) ? data.monthlyPerformance : {};
+  const attention = asArray(data.attentionItems);
+  const period = asString(monthly.period) ?? 'este mes';
+  const blocks: ConversationBlock[] = [
+    {
+      kind: 'text',
+      id: blockId(response, 'text'),
+      text: `Así va Wrist Caviar (${period}):`,
+    },
+    {
+      kind: 'breakdown',
+      id: blockId(response, 'breakdown'),
+      items: [
+        { label: 'Liquidez', value: formatMoney(liquidity.totalLiquidityMxn) ?? '—' },
+        {
+          label: 'Inventario',
+          value:
+            typeof inventory.activeItemCount === 'number'
+              ? `${inventory.activeItemCount} piezas · ${formatMoney(inventory.activeCapital) ?? '—'} de capital`
+              : formatMoney(inventory.activeCapital) ?? '—',
+        },
+        { label: 'CXC MXN', value: formatMoney(receivables.MXN) ?? '—' },
+        { label: 'CXC USD', value: formatMoney(receivables.USD) ?? '—' },
+        { label: 'Utilidad del mes', value: formatMoney(monthly.netProfit) ?? '—' },
+      ],
+    },
+  ];
+  if (attention.length) {
+    blocks.push({
+      kind: 'text',
+      id: blockId(response, 'attention-intro'),
+      text: `Veo ${attention.length} ${plural(attention.length, 'cosa', 'cosas')} que vale la pena revisar.`,
+    });
+    const rows = attention.slice(0, 5).flatMap((item, index) => {
+      if (!isRecord(item)) return [];
+      const title = asString(item.title) ?? `Punto ${index + 1}`;
+      const explanation = asString(item.explanation) ?? '—';
+      return [{ label: `${index + 1}. ${title}`, value: explanation }];
+    });
+    if (rows.length) {
+      blocks.push({ kind: 'list', id: blockId(response, 'attention-list'), items: rows });
+    }
+  }
+  return blocks;
+}
+
+function agingList(response: StructuredAssistantResponse, items: JsonValue[]): ConversationBlock[] {
+  const count = items.length;
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const capital = formatMoney(data.totalCapitalAtRisk);
+  const blocks: ConversationBlock[] = [
+    {
+      kind: 'text',
+      id: blockId(response, 'text'),
+      text: count
+        ? 'Inventario más antiguo por días registrados en WristOS:'
+        : 'No hay inventario activo que coincida con ese filtro de antigüedad.',
+    },
+  ];
+  const rows = items.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const label =
+      asString(item.label) ||
+      [asString(item.brand), asString(item.reference)].filter(Boolean).join(' ') ||
+      'Reloj';
+    const age =
+      typeof item.ageDays === 'number' ? `${item.ageDays} días en WristOS` : '—';
+    const cost = formatMoney(item.cost);
+    return [{ label, value: age, meta: cost ?? undefined }];
+  });
+  if (rows.length) blocks.push({ kind: 'list', id: blockId(response, 'list'), items: rows });
+  if (capital) {
+    blocks.push({
+      kind: 'note',
+      id: blockId(response, 'note-capital'),
+      text: `Capital en este filtro: ${capital}. Edad = días desde el registro en WristOS (no fecha de compra física garantizada).`,
+    });
+  }
+  return blocks;
+}
+
+function capitalList(response: StructuredAssistantResponse, items: JsonValue[]): ConversationBlock[] {
+  const blocks: ConversationBlock[] = [
+    { kind: 'text', id: blockId(response, 'text'), text: 'Donde tienes más capital en inventario activo:' },
+  ];
+  const rows = items.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const label = asString(item.label) ?? 'Reloj';
+    const cost = formatMoney(item.cost) ?? '—';
+    const pctRaw =
+      item.percentOfActiveInventoryCapital ?? item.percentOfInventoryCapital;
+    const pct =
+      typeof pctRaw === 'string' || typeof pctRaw === 'number'
+        ? `${pctRaw}% del capital activo en inventario`
+        : undefined;
+    return [{ label, value: cost, meta: pct }];
+  });
+  if (rows.length) blocks.push({ kind: 'list', id: blockId(response, 'list'), items: rows });
+  return blocks;
+}
+
+function debtorsList(response: StructuredAssistantResponse): ConversationBlock[] {
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const currencies = isRecord(data.currencies) ? data.currencies : {};
+  const mxn = asArray(currencies.MXN);
+  const blocks: ConversationBlock[] = [
+    { kind: 'text', id: blockId(response, 'text'), text: 'En MXN, los mayores saldos pendientes:' },
+  ];
+  const rows = mxn.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const label = asString(item.clientLabel) ?? 'Cliente';
+    const outstanding = formatMoney(item.outstanding) ?? '—';
+    const accounts =
+      typeof item.openAccountCount === 'number' ? `${item.openAccountCount} cuentas` : undefined;
+    return [{ label, value: outstanding, meta: accounts }];
+  });
+  if (rows.length) blocks.push({ kind: 'list', id: blockId(response, 'list'), items: rows });
+  else blocks.push({ kind: 'note', id: blockId(response, 'empty'), text: 'No hay saldos CXC pendientes en MXN.' });
+  return blocks;
+}
+
+function brandProfitList(response: StructuredAssistantResponse, items: JsonValue[]): ConversationBlock[] {
+  const blocks: ConversationBlock[] = [
+    { kind: 'text', id: blockId(response, 'text'), text: 'Utilidad bruta por marca:' },
+  ];
+  const rows = items.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const brand = asString(item.brand) ?? 'Sin marca';
+    const profit = formatMoney(item.grossProfit) ?? '—';
+    const margin =
+      typeof item.grossMarginPercent === 'string' || typeof item.grossMarginPercent === 'number'
+        ? `${item.grossMarginPercent}% · ${item.unitsSold ?? 0} u.`
+        : undefined;
+    return [{ label: brand, value: profit, meta: margin }];
+  });
+  if (rows.length) blocks.push({ kind: 'list', id: blockId(response, 'list'), items: rows });
+  return blocks;
+}
+
+function topSalesList(response: StructuredAssistantResponse, items: JsonValue[]): ConversationBlock[] {
+  const blocks: ConversationBlock[] = [
+    { kind: 'text', id: blockId(response, 'text'), text: 'Mejores ventas (margen bruto):' },
+  ];
+  const rows = items.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const label = asString(item.watchLabel) ?? 'Venta';
+    const profit = formatMoney(item.grossProfit) ?? '—';
+    const metaParts = [
+      formatMoney(item.saleAmount) ?? null,
+      typeof item.grossMarginPercent === 'string' || typeof item.grossMarginPercent === 'number'
+        ? `${item.grossMarginPercent}%`
+        : null,
+    ].filter(Boolean);
+    return [{ label, value: profit, meta: metaParts.join(' · ') || undefined }];
+  });
+  if (rows.length) blocks.push({ kind: 'list', id: blockId(response, 'list'), items: rows });
+  return blocks;
+}
+
 function entityListBlocks(intent: BusinessActionId, response: StructuredAssistantResponse): ConversationBlock[] {
   const data = isRecord(response.payload.data) ? response.payload.data : null;
   const items = asArray(data?.items);
@@ -238,6 +476,11 @@ function entityListBlocks(intent: BusinessActionId, response: StructuredAssistan
   if (entries.length) return accountEntriesList(response, entries);
   if (intent === 'SEARCH_INVENTORY') return inventoryList(response, items);
   if (intent === 'SEARCH_CLIENT' || intent === 'GET_CLIENT_ACCOUNTS') return clientChoices(response, items);
+  if (intent === 'GET_INVENTORY_AGING') return agingList(response, items);
+  if (intent === 'GET_TOP_INVENTORY_CAPITAL') return capitalList(response, items);
+  if (intent === 'GET_TOP_DEBTORS') return debtorsList(response);
+  if (intent === 'GET_PROFIT_BY_BRAND') return brandProfitList(response, items);
+  if (intent === 'GET_TOP_SALES') return topSalesList(response, items);
   if (items.length) return inventoryList(response, items);
   return [{ kind: 'text', id: blockId(response, 'text'), text: 'No encontré resultados.' }];
 }
@@ -372,11 +615,20 @@ export function responseToConversationBlocks(
       main = missingFieldsBlocks(response);
       break;
     case 'METRIC_BREAKDOWN':
-      main = intent === 'GET_LIQUIDITY'
-        ? liquidityBreakdown(response)
-        : intent === 'GET_MONTHLY_PROFIT'
-          ? monthlyProfitBreakdown(response)
-          : genericBreakdown(response);
+      main =
+        intent === 'GET_LIQUIDITY'
+          ? liquidityBreakdown(response)
+          : intent === 'GET_MONTHLY_PROFIT'
+            ? monthlyProfitBreakdown(response)
+            : intent === 'GET_RECEIVABLE_SUMMARY'
+              ? receivableSummaryBreakdown(response)
+              : intent === 'GET_SALES_MARGIN_SUMMARY'
+                ? salesMarginBreakdown(response)
+                : intent === 'GET_ATTENTION_ITEMS'
+                  ? attentionBreakdown(response)
+                  : intent === 'GET_BUSINESS_SUMMARY'
+                    ? businessSummaryBreakdown(response)
+                  : genericBreakdown(response);
       break;
     case 'ENTITY_LIST':
     case 'ENTITY_PICKER':

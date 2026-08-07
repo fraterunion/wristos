@@ -125,8 +125,16 @@ export function hashEntityId(id: string): string {
 }
 
 export function intentToCandidateEntityType(intent: string | undefined): ContextEntityType | null {
-  if (intent === 'SEARCH_CLIENT' || intent === 'GET_CLIENT_ACCOUNTS') return 'CLIENT';
-  if (intent === 'SEARCH_INVENTORY') return 'WATCH';
+  if (intent === 'SEARCH_CLIENT' || intent === 'GET_CLIENT_ACCOUNTS' || intent === 'GET_TOP_DEBTORS') {
+    return 'CLIENT';
+  }
+  if (
+    intent === 'SEARCH_INVENTORY' ||
+    intent === 'GET_INVENTORY_AGING' ||
+    intent === 'GET_TOP_INVENTORY_CAPITAL'
+  ) {
+    return 'WATCH';
+  }
   if (intent === 'REGISTER_SALE' || intent === 'REGISTER_PURCHASE') return 'WATCH';
   if (intent === 'REGISTER_RECEIVABLE_PAYMENT' || intent === 'REGISTER_SETTLEMENT') return 'ACCOUNT_ENTRY';
   return null;
@@ -140,7 +148,15 @@ export function extractPresentedCandidatesFromEntityList(payload: {
   if (!type) return null;
   if (!payload.data || typeof payload.data !== 'object') return null;
   const data = payload.data as Record<string, unknown>;
-  const items = Array.isArray(data.items) ? data.items : null;
+
+  let items: unknown[] | null = Array.isArray(data.items) ? data.items : null;
+  // Top debtors are nested by currency — prefer MXN then USD for ordinal follow-ups.
+  if (!items && data.currencies && typeof data.currencies === 'object') {
+    const currencies = data.currencies as Record<string, unknown>;
+    const mxn = Array.isArray(currencies.MXN) ? currencies.MXN : [];
+    const usd = Array.isArray(currencies.USD) ? currencies.USD : [];
+    items = [...mxn, ...usd];
+  }
   if (!items || items.length === 0) return null;
 
   const candidates: PresentedCandidate[] = [];
@@ -148,10 +164,15 @@ export function extractPresentedCandidatesFromEntityList(payload: {
     const item = items[i];
     if (!item || typeof item !== 'object') continue;
     const row = item as Record<string, unknown>;
-    const id = typeof row.id === 'string' ? row.id : null;
+    const id =
+      (typeof row.id === 'string' && row.id) ||
+      (typeof row.watchId === 'string' && row.watchId) ||
+      (typeof row.clientId === 'string' && row.clientId) ||
+      null;
     if (!id) continue;
     const label =
       (typeof row.name === 'string' && row.name) ||
+      (typeof row.clientLabel === 'string' && row.clientLabel) ||
       (typeof row.label === 'string' && row.label) ||
       (typeof row.displayName === 'string' && row.displayName) ||
       [row.brand, row.model, row.reference].filter((v) => typeof v === 'string').join(' ').trim() ||
