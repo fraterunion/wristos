@@ -51,6 +51,10 @@ export const EVAL_DATASET: EvalCase[] = [
   { category: 'READ', text: '¿Qué debería revisar hoy?', expectedIntent: 'GET_ATTENTION_ITEMS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
   { category: 'READ', text: '¿Qué necesita mi atención?', expectedIntent: 'GET_ATTENTION_ITEMS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
   { category: 'READ', text: '¿Hay algo importante que deba ver?', expectedIntent: 'GET_ATTENTION_ITEMS', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cómo va el negocio?', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: 'Dame un resumen.', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: '¿Cómo vamos este mes?', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
+  { category: 'READ', text: 'Resumen del negocio.', expectedIntent: 'GET_BUSINESS_SUMMARY', allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: false },
 
   // ─── WRITE DETECTION ONLY ───────────────────────────────────────────────
   { category: 'WRITE_DETECTION_ONLY', text: 'Vendí Batman en 350 mil.', expectedIntent: 'REGISTER_SALE', expectedEntityKeys: ['watchQuery', 'price', 'currency'], expectedMissingIncludes: ['watchId', 'customerId'], allowedConfidence: ['HIGH', 'MEDIUM'], mayProceedToOrchestrator: true, executionMustBeImpossible: true },

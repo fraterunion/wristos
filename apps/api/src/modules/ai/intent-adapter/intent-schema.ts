@@ -22,6 +22,7 @@ export const READ_INTENTS = [
   'GET_PROFIT_BY_BRAND',
   'GET_TOP_SALES',
   'GET_ATTENTION_ITEMS',
+  'GET_BUSINESS_SUMMARY',
 ] as const;
 
 export const WRITE_INTENTS = [
@@ -201,6 +202,8 @@ export const entitySchemas = {
       limit: z.number().int().min(1).max(8).optional(),
     })
     .strip(),
+
+  GET_BUSINESS_SUMMARY: z.object({}).strip(),
 
   // Write intents: detection-only at the LLM boundary. Trusted *Id values may
   // be injected later by ReferenceResolver for preview preparation only —

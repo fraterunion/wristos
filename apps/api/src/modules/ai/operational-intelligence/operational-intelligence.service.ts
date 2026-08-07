@@ -12,9 +12,13 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { CuentasService } from '../../cuentas/cuentas.service';
 import {
   ATTENTION_POLICY,
+  ATTENTION_RULE_CATEGORY,
+  AttentionCategory,
   AttentionRuleId,
   AttentionSeverity,
 } from './attention-policy';
+import { AnalyticsService } from '../../analytics/analytics.service';
+import { InventoryService } from '../../inventory/inventory.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ZERO = new Prisma.Decimal(0);
@@ -119,6 +123,7 @@ export type SalesSortBy = 'GROSS_PROFIT' | 'AGREED_PRICE' | 'GROSS_MARGIN_PERCEN
 
 export interface AttentionItem {
   type: AttentionRuleId;
+  category: AttentionCategory;
   severity: AttentionSeverity;
   title: string;
   explanation: string;
@@ -131,11 +136,17 @@ export class OperationalIntelligenceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cuentas: CuentasService,
+    private readonly analytics: AnalyticsService,
+    private readonly inventory: InventoryService,
   ) {}
 
   /**
-   * Age source: Watch has no acquisitionDate field.
-   * Documented fallback: createdAt (inventory entry / first system record).
+   * Inventory *record age* (not guaranteed physical acquisition age).
+   *
+   * Age source: Watch.createdAt — schema has no canonical acquisitionDate.
+   * TODO(future): replace with canonical acquisitionDate / purchase date when
+   * the domain field exists (requires schema + migration — out of scope here).
+   *
    * Active inventory only: deletedAt null AND status ≠ SOLD.
    */
   async getInventoryAging(
@@ -192,8 +203,9 @@ export class OperationalIntelligenceService {
     return {
       asOf: now.toISOString(),
       ageSource: 'Watch.createdAt' as const,
+      ageMetric: 'inventory_record_age' as const,
       ageSourceNote:
-        'No acquisitionDate on Watch; ageDays uses createdAt as documented fallback.',
+        'Inventory record age (not guaranteed physical acquisition age). Until WristOS has a canonical acquisitionDate, ageDays is calculated from Watch.createdAt.',
       minAgeDays,
       items: sliced.map((row) => { const { _cost, ...rest } = row; void _cost; return rest; }),
       totalCapitalAtRisk: money(totalCapitalAtRisk),
@@ -242,7 +254,7 @@ export class OperationalIntelligenceService {
           brand: w.brand,
           reference: w.reference,
           cost: money(cost),
-          percentOfInventoryCapital: pct.toFixed(2),
+          percentOfActiveInventoryCapital: pct.toFixed(2),
           ageDays: ageDays(w.createdAt, now),
           status: w.status,
           _cost: cost,
@@ -258,9 +270,10 @@ export class OperationalIntelligenceService {
 
     return {
       asOf: now.toISOString(),
-      totalInventoryCapital: money(totalCapital),
+      totalActiveInventoryCapital: money(totalCapital),
       items: ranked,
       count: ranked.length,
+      concentrationFormula: 'item cost / total active inventory cost',
     };
   }
 
@@ -489,6 +502,16 @@ export class OperationalIntelligenceService {
     };
   }
 
+  /**
+   * Gross profit by brand from canonical realized sales only:
+   * - Deal.stage = CLOSED_WON
+   * - revenue = Deal.agreedPrice (actual agreed sale price)
+   * - COGS = watch.cost + WatchExpense, else historicalCost
+   *
+   * Must NOT use asking price, inventory market value, crypto/FX assumptions,
+   * estimated future sale value, or unsold inventory. Unsold watches never
+   * appear because the query is deal-scoped CLOSED_WON only.
+   */
   async getProfitByBrand(
     tenantId: string,
     args: {
@@ -589,7 +612,7 @@ export class OperationalIntelligenceService {
       items,
       count: items.length,
       definition:
-        'Gross profit by brand = revenue − COGS. Not net profit (excludes commissions/OpEx).',
+        'Gross profit by brand from CLOSED_WON realized sales only: agreedPrice − canonical COGS. Not net profit (excludes commissions/OpEx). Unsold inventory never included.',
     };
   }
 
@@ -711,7 +734,7 @@ export class OperationalIntelligenceService {
 
   /**
    * Deterministic attention rules. No LLM diagnosis.
-   * Phrasing is observational (“vale la pena revisar”), never prescriptive sells.
+   * Phrasing is observational only — never prescriptive financial advice.
    */
   async getAttentionItems(
     tenantId: string,
@@ -737,16 +760,18 @@ export class OperationalIntelligenceService {
       if (cost.gte(ATTENTION_POLICY.HIGH_VALUE_INVENTORY_MXN)) {
         items.push({
           type: 'AGED_HIGH_VALUE_INVENTORY',
+          category: ATTENTION_RULE_CATEGORY.AGED_HIGH_VALUE_INVENTORY,
           severity: cost.gte(ATTENTION_POLICY.HIGH_VALUE_INVENTORY_MXN * 2)
             ? 'IMPORTANT'
             : 'WATCH',
-          title: 'Inventario antiguo de alto valor',
-          explanation: `Vale la pena revisar ${row.label}: lleva ${row.ageDays} días en inventario con costo ${row.cost} MXN.`,
+          title: 'Inventario registrado antiguo de alto valor',
+          explanation: `Este reloj (${row.label}) lleva ${row.ageDays} días registrado en el inventario de WristOS con costo ${row.cost} MXN.`,
           evidence: {
             watchIdHash: row.watchId.slice(0, 8),
             ageDays: row.ageDays,
             costMxn: row.cost,
             thresholdDays: ATTENTION_POLICY.AGED_INVENTORY_DAYS,
+            ageMetric: 'inventory_record_age',
           },
           suggestedReadAction: 'GET_INVENTORY_AGING',
         });
@@ -754,17 +779,19 @@ export class OperationalIntelligenceService {
     }
 
     for (const row of capital.items.slice(0, 2)) {
-      const pct = Number(row.percentOfInventoryCapital);
+      const pct = Number(row.percentOfActiveInventoryCapital);
       if (pct >= ATTENTION_POLICY.CONCENTRATION_PERCENT) {
         items.push({
           type: 'INVENTORY_CONCENTRATION',
+          category: ATTENTION_RULE_CATEGORY.INVENTORY_CONCENTRATION,
           severity: pct >= ATTENTION_POLICY.CONCENTRATION_PERCENT * 2 ? 'IMPORTANT' : 'WATCH',
           title: 'Concentración de capital en inventario',
-          explanation: `${row.label} concentra ${row.percentOfInventoryCapital}% del capital de inventario activo.`,
+          explanation: `Este reloj (${row.label}) concentra ${row.percentOfActiveInventoryCapital}% del capital activo en inventario y lleva ${row.ageDays} días registrado.`,
           evidence: {
             watchIdHash: row.watchId.slice(0, 8),
-            percentOfInventoryCapital: row.percentOfInventoryCapital,
+            percentOfActiveInventoryCapital: row.percentOfActiveInventoryCapital,
             costMxn: row.cost,
+            ageDays: row.ageDays,
             thresholdPercent: ATTENTION_POLICY.CONCENTRATION_PERCENT,
           },
           suggestedReadAction: 'GET_TOP_INVENTORY_CAPITAL',
@@ -780,11 +807,12 @@ export class OperationalIntelligenceService {
       if (outstanding.gte(ATTENTION_POLICY.LARGE_RECEIVABLE_MXN)) {
         items.push({
           type: 'LARGE_RECEIVABLE',
+          category: ATTENTION_RULE_CATEGORY.LARGE_RECEIVABLE,
           severity: outstanding.gte(ATTENTION_POLICY.LARGE_RECEIVABLE_MXN * 3)
             ? 'IMPORTANT'
             : 'WATCH',
           title: 'Saldo CXC relevante',
-          explanation: `${row.clientLabel} tiene ${row.outstanding} MXN pendientes en ${row.openAccountCount} cuenta(s). Vale la pena revisar.`,
+          explanation: `Este cliente (${row.clientLabel}) tiene ${row.outstanding} MXN pendientes en ${row.openAccountCount} cuenta(s).`,
           evidence: {
             clientIdHash: row.clientId ? row.clientId.slice(0, 8) : null,
             outstandingMxn: row.outstanding,
@@ -799,9 +827,10 @@ export class OperationalIntelligenceService {
         if (share.gte(ATTENTION_POLICY.CONCENTRATION_PERCENT * 1.5)) {
           items.push({
             type: 'RECEIVABLE_CONCENTRATION',
+            category: ATTENTION_RULE_CATEGORY.RECEIVABLE_CONCENTRATION,
             severity: 'INFO',
             title: 'Concentración de CXC',
-            explanation: `${row.clientLabel} concentra ${share.toFixed(2)}% de tus CXC en MXN.`,
+            explanation: `Este cliente (${row.clientLabel}) concentra ${share.toFixed(2)}% de las CXC en MXN.`,
             evidence: {
               clientIdHash: row.clientId ? row.clientId.slice(0, 8) : null,
               sharePercent: share.toFixed(2),
@@ -834,12 +863,13 @@ export class OperationalIntelligenceService {
       if (latestByTicker.size === 0 || stale.length > 0) {
         items.push({
           type: 'STALE_CRYPTO_VALUATION',
+          category: ATTENTION_RULE_CATEGORY.STALE_CRYPTO_VALUATION,
           severity: latestByTicker.size === 0 ? 'WATCH' : 'INFO',
           title: 'Valuación crypto desactualizada',
           explanation:
             latestByTicker.size === 0
-              ? 'Hay posiciones crypto sin precio registrado. Vale la pena actualizar la valuación.'
-              : `${stale.length} ticker(s) con precio de más de ${staleHours}h. Vale la pena revisar.`,
+              ? `Hay ${holdings} posición(es) crypto sin precio registrado.`
+              : `${stale.length} ticker(s) tienen precio con más de ${staleHours}h de antigüedad.`,
           evidence: {
             holdingCount: holdings,
             staleTickerCount: latestByTicker.size === 0 ? holdings : stale.length,
@@ -902,9 +932,10 @@ export class OperationalIntelligenceService {
     for (const row of lowMargin) {
       items.push({
         type: 'LOW_MARGIN_RECENT_SALE',
+        category: ATTENTION_RULE_CATEGORY.LOW_MARGIN_RECENT_SALE,
         severity: 'INFO',
-        title: 'Venta reciente con margen bajo',
-        explanation: `${row.watchLabel} se vendió con margen bruto ${row.grossMarginPercent}%. Vale la pena revisarla si no era esperado.`,
+        title: 'Venta reciente con margen bruto bajo',
+        explanation: `${row.watchLabel} se vendió con margen bruto ${row.grossMarginPercent}% (umbral ${ATTENTION_POLICY.LOW_MARGIN_PERCENT}%).`,
         evidence: {
           dealIdHash: row.dealId.slice(0, 8),
           grossMarginPercent: row.grossMarginPercent,
@@ -948,6 +979,59 @@ export class OperationalIntelligenceService {
       count: Math.min(deduped.length, limit),
       policyVersion: '1.0.0',
       note: 'Observaciones operativas deterministas. No son órdenes de venta ni consejos financieros automáticos.',
+    };
+  }
+
+  /**
+   * Small composition of existing canonical intelligence — no new financial formulas.
+   * Default period: current UTC calendar month (same deterministic policy as GET_MONTHLY_PROFIT defaults).
+   */
+  async getBusinessSummary(tenantId: string, args: { now?: Date } = {}) {
+    const now = args.now ?? new Date();
+    const year = now.getUTCFullYear();
+    const month = now.getUTCMonth() + 1;
+
+    const [liquidity, inventorySummary, receivables, monthlyPerformance, attention] =
+      await Promise.all([
+        this.analytics.getLiquidity(tenantId, now),
+        this.inventory.getSummary(tenantId),
+        this.getReceivableSummary(tenantId),
+        this.analytics.getMonthlyProfit(tenantId, year, month),
+        this.getAttentionItems(tenantId, { now }),
+      ]);
+
+    return {
+      asOf: now.toISOString(),
+      liquidity: {
+        totalLiquidityMxn: liquidity.totalLiquidityMxn,
+        cashMxn: liquidity.cashMxn,
+        bankMxn: liquidity.bankMxn,
+        cryptoMxn: liquidity.cryptoMxn,
+        cesarMxn: liquidity.cesarMxn,
+        warnings: liquidity.warnings,
+      },
+      inventory: {
+        activeItemCount: inventorySummary.activeItemCount,
+        activeCapital: inventorySummary.totalInventoryValue,
+      },
+      receivables: {
+        MXN: receivables.currencies.MXN.outstanding,
+        USD: receivables.currencies.USD.outstanding,
+      },
+      monthlyPerformance: {
+        period: monthlyPerformance.period,
+        netProfit: monthlyPerformance.netProfitMxn,
+        saleCount: monthlyPerformance.saleCount,
+      },
+      attentionItems: attention.items,
+      composition: [
+        'AnalyticsService.getLiquidity',
+        'InventoryService.getSummary',
+        'OperationalIntelligenceService.getReceivableSummary',
+        'AnalyticsService.getMonthlyProfit',
+        'OperationalIntelligenceService.getAttentionItems',
+      ],
+      note: 'Hechos + observaciones deterministas. Sin recomendaciones generadas ni conversión FX.',
     };
   }
 }

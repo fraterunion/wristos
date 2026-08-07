@@ -166,6 +166,7 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
   define({ id: 'GET_PROFIT_BY_BRAND', name: 'Get Profit By Brand', category: 'ANALYTICS', tier: 'NONE', optional: ['period', 'year', 'month', 'brand', 'limit'] }),
   define({ id: 'GET_TOP_SALES', name: 'Get Top Sales', category: 'SALES', tier: 'NONE', optional: ['period', 'year', 'month', 'sortBy', 'limit', 'includeCustomerLabel'] }),
   define({ id: 'GET_ATTENTION_ITEMS', name: 'Get Attention Items', category: 'ANALYTICS', tier: 'NONE', optional: ['limit'] }),
+  define({ id: 'GET_BUSINESS_SUMMARY', name: 'Get Business Summary', category: 'ANALYTICS', tier: 'NONE' }),
   define({
     id: 'REGISTER_SALE',
     name: 'Register Sale',

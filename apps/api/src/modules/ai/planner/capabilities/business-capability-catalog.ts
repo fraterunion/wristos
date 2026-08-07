@@ -24,6 +24,7 @@ export const BUSINESS_CAPABILITIES: readonly BusinessCapabilityDefinition[] = [
   capability('GET_PROFIT_BY_BRAND', 'Get Profit By Brand', 'ANALYTICS'),
   capability('GET_TOP_SALES', 'Get Top Sales', 'SALES'),
   capability('GET_ATTENTION_ITEMS', 'Get Attention Items', 'ANALYTICS'),
+  capability('GET_BUSINESS_SUMMARY', 'Get Business Summary', 'ANALYTICS'),
   capability('REGISTER_SALE', 'Register Sale', 'SALES'),
   capability('REGISTER_RECEIVABLE_PAYMENT', 'Register Receivable Payment', 'ACCOUNTS'),
   capability('REGISTER_PURCHASE', 'Register Purchase', 'INVENTORY'),

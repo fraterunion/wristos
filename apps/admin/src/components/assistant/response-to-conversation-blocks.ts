@@ -305,6 +305,57 @@ function attentionBreakdown(response: StructuredAssistantResponse): Conversation
   return blocks;
 }
 
+function businessSummaryBreakdown(response: StructuredAssistantResponse): ConversationBlock[] {
+  const data = isRecord(response.payload.data) ? response.payload.data : {};
+  const liquidity = isRecord(data.liquidity) ? data.liquidity : {};
+  const inventory = isRecord(data.inventory) ? data.inventory : {};
+  const receivables = isRecord(data.receivables) ? data.receivables : {};
+  const monthly = isRecord(data.monthlyPerformance) ? data.monthlyPerformance : {};
+  const attention = asArray(data.attentionItems);
+  const period = asString(monthly.period) ?? 'este mes';
+  const blocks: ConversationBlock[] = [
+    {
+      kind: 'text',
+      id: blockId(response, 'text'),
+      text: `Así va Wrist Caviar (${period}):`,
+    },
+    {
+      kind: 'breakdown',
+      id: blockId(response, 'breakdown'),
+      items: [
+        { label: 'Liquidez', value: formatMoney(liquidity.totalLiquidityMxn) ?? '—' },
+        {
+          label: 'Inventario',
+          value:
+            typeof inventory.activeItemCount === 'number'
+              ? `${inventory.activeItemCount} piezas · ${formatMoney(inventory.activeCapital) ?? '—'} de capital`
+              : formatMoney(inventory.activeCapital) ?? '—',
+        },
+        { label: 'CXC MXN', value: formatMoney(receivables.MXN) ?? '—' },
+        { label: 'CXC USD', value: formatMoney(receivables.USD) ?? '—' },
+        { label: 'Utilidad del mes', value: formatMoney(monthly.netProfit) ?? '—' },
+      ],
+    },
+  ];
+  if (attention.length) {
+    blocks.push({
+      kind: 'text',
+      id: blockId(response, 'attention-intro'),
+      text: `Veo ${attention.length} ${plural(attention.length, 'cosa', 'cosas')} que vale la pena revisar.`,
+    });
+    const rows = attention.slice(0, 5).flatMap((item, index) => {
+      if (!isRecord(item)) return [];
+      const title = asString(item.title) ?? `Punto ${index + 1}`;
+      const explanation = asString(item.explanation) ?? '—';
+      return [{ label: `${index + 1}. ${title}`, value: explanation }];
+    });
+    if (rows.length) {
+      blocks.push({ kind: 'list', id: blockId(response, 'attention-list'), items: rows });
+    }
+  }
+  return blocks;
+}
+
 function agingList(response: StructuredAssistantResponse, items: JsonValue[]): ConversationBlock[] {
   const count = items.length;
   const data = isRecord(response.payload.data) ? response.payload.data : {};
@@ -314,7 +365,7 @@ function agingList(response: StructuredAssistantResponse, items: JsonValue[]): C
       kind: 'text',
       id: blockId(response, 'text'),
       text: count
-        ? 'El inventario más antiguo (días desde registro):'
+        ? 'Inventario más antiguo por días registrados en WristOS:'
         : 'No hay inventario activo que coincida con ese filtro de antigüedad.',
     },
   ];
@@ -324,7 +375,8 @@ function agingList(response: StructuredAssistantResponse, items: JsonValue[]): C
       asString(item.label) ||
       [asString(item.brand), asString(item.reference)].filter(Boolean).join(' ') ||
       'Reloj';
-    const age = typeof item.ageDays === 'number' ? `${item.ageDays} días` : '—';
+    const age =
+      typeof item.ageDays === 'number' ? `${item.ageDays} días en WristOS` : '—';
     const cost = formatMoney(item.cost);
     return [{ label, value: age, meta: cost ?? undefined }];
   });
@@ -333,7 +385,7 @@ function agingList(response: StructuredAssistantResponse, items: JsonValue[]): C
     blocks.push({
       kind: 'note',
       id: blockId(response, 'note-capital'),
-      text: `Capital en este filtro: ${capital}.`,
+      text: `Capital en este filtro: ${capital}. Edad = días desde el registro en WristOS (no fecha de compra física garantizada).`,
     });
   }
   return blocks;
@@ -341,15 +393,17 @@ function agingList(response: StructuredAssistantResponse, items: JsonValue[]): C
 
 function capitalList(response: StructuredAssistantResponse, items: JsonValue[]): ConversationBlock[] {
   const blocks: ConversationBlock[] = [
-    { kind: 'text', id: blockId(response, 'text'), text: 'Donde tienes más capital parado en inventario:' },
+    { kind: 'text', id: blockId(response, 'text'), text: 'Donde tienes más capital en inventario activo:' },
   ];
   const rows = items.flatMap((item) => {
     if (!isRecord(item)) return [];
     const label = asString(item.label) ?? 'Reloj';
     const cost = formatMoney(item.cost) ?? '—';
+    const pctRaw =
+      item.percentOfActiveInventoryCapital ?? item.percentOfInventoryCapital;
     const pct =
-      typeof item.percentOfInventoryCapital === 'string' || typeof item.percentOfInventoryCapital === 'number'
-        ? `${item.percentOfInventoryCapital}% del inventario`
+      typeof pctRaw === 'string' || typeof pctRaw === 'number'
+        ? `${pctRaw}% del capital activo en inventario`
         : undefined;
     return [{ label, value: cost, meta: pct }];
   });
@@ -572,6 +626,8 @@ export function responseToConversationBlocks(
                 ? salesMarginBreakdown(response)
                 : intent === 'GET_ATTENTION_ITEMS'
                   ? attentionBreakdown(response)
+                  : intent === 'GET_BUSINESS_SUMMARY'
+                    ? businessSummaryBreakdown(response)
                   : genericBreakdown(response);
       break;
     case 'ENTITY_LIST':

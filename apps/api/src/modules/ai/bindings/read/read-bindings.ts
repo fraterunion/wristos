@@ -30,6 +30,7 @@ const schemas = {
     includeCustomerLabel: z.boolean().optional(),
   }).strict(),
   GET_ATTENTION_ITEMS: z.object({ limit: z.number().int().min(1).max(8).optional() }).strict(),
+  GET_BUSINESS_SUMMARY: z.object({}).strict(),
 } as const;
 
 const toolNames: Record<keyof typeof schemas, string> = {
@@ -46,6 +47,7 @@ const toolNames: Record<keyof typeof schemas, string> = {
   GET_PROFIT_BY_BRAND: 'get_profit_by_brand',
   GET_TOP_SALES: 'get_top_sales',
   GET_ATTENTION_ITEMS: 'get_attention_items',
+  GET_BUSINESS_SUMMARY: 'get_business_summary',
 };
 
 const binding = <C extends keyof typeof schemas>(capability: C): CapabilityBindingDefinition => {

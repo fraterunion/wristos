@@ -16,6 +16,7 @@ describe('ToolRegistry', () => {
     getProfitByBrand: jest.fn(),
     getTopSales: jest.fn(),
     getAttentionItems: jest.fn(),
+    getBusinessSummary: jest.fn(),
   };
   const registry = new ToolRegistry(
     analytics as never,
@@ -26,13 +27,14 @@ describe('ToolRegistry', () => {
     oi as never,
   );
 
-  it('lists seventeen unique, versioned, read-only tools including operational intelligence', () => {
+  it('lists eighteen unique, versioned, read-only tools including operational intelligence', () => {
     const tools = registry.listDefinitions();
-    expect(tools).toHaveLength(17);
-    expect(new Set(tools.map((tool) => tool.name))).toHaveProperty('size', 17);
+    expect(tools).toHaveLength(18);
+    expect(new Set(tools.map((tool) => tool.name))).toHaveProperty('size', 18);
     expect(tools.every((tool) => tool.version === '1.0.0' && tool.mode === 'READ' && tool.confirmationTier === 0)).toBe(true);
     expect(tools.map((tool) => tool.name)).toEqual([
       'get_attention_items',
+      'get_business_summary',
       'get_client_accounts',
       'get_inventory_aging',
       'get_inventory_summary',
@@ -96,5 +98,17 @@ describe('ToolRegistry', () => {
     oi.getAttentionItems.mockResolvedValue({ count: 0, items: [], asOf: context.now.toISOString(), policyVersion: '1.0.0', note: 'n' });
     await registry.getDefinition('get_attention_items').execute(context, {});
     expect(oi.getAttentionItems).toHaveBeenCalled();
+    oi.getBusinessSummary.mockResolvedValue({
+      asOf: context.now.toISOString(),
+      liquidity: { totalLiquidityMxn: '1.00', cashMxn: '1.00', bankMxn: '0.00', cryptoMxn: '0.00', cesarMxn: '0.00', warnings: [] },
+      inventory: { activeItemCount: 0, activeCapital: '0.00' },
+      receivables: { MXN: '0.00', USD: '0.00' },
+      monthlyPerformance: { period: '2026-08', netProfit: '0.00', saleCount: 0 },
+      attentionItems: [],
+      composition: [],
+      note: 'n',
+    });
+    await registry.getDefinition('get_business_summary').execute(context, {});
+    expect(oi.getBusinessSummary).toHaveBeenCalledWith('t1', expect.objectContaining({ now: context.now }));
   });
 });

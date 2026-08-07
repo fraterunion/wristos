@@ -28,7 +28,7 @@ export function createOperationalIntelligenceTools(
   return [
     definition({
       name: 'get_inventory_aging',
-      description: 'Active inventory ranked by days since Watch.createdAt (documented age source).',
+      description: 'Active inventory ranked by inventory record age (Watch.createdAt until acquisitionDate exists).',
       category: 'INVENTORY',
       permission: null,
       canonicalService: 'OperationalIntelligenceService.getInventoryAging',
@@ -36,6 +36,7 @@ export function createOperationalIntelligenceTools(
       outputValidator: z.object({
         asOf: z.string(),
         ageSource: z.string(),
+        ageMetric: z.string().optional(),
         ageSourceNote: z.string(),
         minAgeDays: z.number(),
         items: z.array(z.object({
@@ -64,18 +65,19 @@ export function createOperationalIntelligenceTools(
       inputValidator: z.object({ limit }).strict(),
       outputValidator: z.object({
         asOf: z.string(),
-        totalInventoryCapital: money,
+        totalActiveInventoryCapital: money,
         items: z.array(z.object({
           watchId: z.string(),
           label: z.string(),
           brand: z.string().nullable(),
           reference: z.string().nullable(),
           cost: money,
-          percentOfInventoryCapital: money,
+          percentOfActiveInventoryCapital: money,
           ageDays: z.number().int(),
           status: z.string(),
         })),
         count: z.number().int(),
+        concentrationFormula: z.string().optional(),
       }).passthrough(),
       execute: async (ctx, input) => {
         const data = await oi.getTopInventoryCapital(ctx.tenantId, { ...input, now: ctx.now });
@@ -177,7 +179,7 @@ export function createOperationalIntelligenceTools(
     }),
     definition({
       name: 'get_profit_by_brand',
-      description: 'Gross profit aggregated by watch brand.',
+      description: 'Gross profit by brand from CLOSED_WON realized sales only (agreedPrice − canonical COGS).',
       category: 'ANALYTICS',
       permission: null,
       canonicalService: 'OperationalIntelligenceService.getProfitByBrand',
@@ -246,6 +248,7 @@ export function createOperationalIntelligenceTools(
         asOf: z.string(),
         items: z.array(z.object({
           type: z.string(),
+          category: z.enum(['INVENTORY', 'RECEIVABLES', 'LIQUIDITY', 'SALES', 'CAPITAL', 'CRYPTO']),
           severity: z.enum(['INFO', 'WATCH', 'IMPORTANT']),
           title: z.string(),
           explanation: z.string(),
@@ -259,6 +262,53 @@ export function createOperationalIntelligenceTools(
       execute: async (ctx, input) => {
         const data = await oi.getAttentionItems(ctx.tenantId, { ...input, now: ctx.now });
         return { data, summary: `${data.count} attention items` };
+      },
+    }),
+    definition({
+      name: 'get_business_summary',
+      description: 'Compact composition of liquidity, inventory, CXC, monthly net profit, and attention items.',
+      category: 'ANALYTICS',
+      permission: null,
+      canonicalService: 'OperationalIntelligenceService.getBusinessSummary',
+      inputValidator: z.object({}).strict(),
+      outputValidator: z.object({
+        asOf: z.string(),
+        liquidity: z.object({
+          totalLiquidityMxn: money,
+          cashMxn: money,
+          bankMxn: money,
+          cryptoMxn: money,
+          cesarMxn: money,
+          warnings: z.array(z.string()),
+        }).passthrough(),
+        inventory: z.object({
+          activeItemCount: z.number().int(),
+          activeCapital: money,
+        }),
+        receivables: z.object({ MXN: money, USD: money }),
+        monthlyPerformance: z.object({
+          period: z.string(),
+          netProfit: money,
+          saleCount: z.number().int().optional(),
+        }).passthrough(),
+        attentionItems: z.array(z.object({
+          type: z.string(),
+          category: z.enum(['INVENTORY', 'RECEIVABLES', 'LIQUIDITY', 'SALES', 'CAPITAL', 'CRYPTO']),
+          severity: z.enum(['INFO', 'WATCH', 'IMPORTANT']),
+          title: z.string(),
+          explanation: z.string(),
+          evidence: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
+          suggestedReadAction: z.string().optional(),
+        })),
+        composition: z.array(z.string()),
+        note: z.string(),
+      }).passthrough(),
+      execute: async (ctx) => {
+        const data = await oi.getBusinessSummary(ctx.tenantId, { now: ctx.now });
+        return {
+          data,
+          summary: `Business summary ${data.monthlyPerformance.period}: liquidity ${data.liquidity.totalLiquidityMxn}, net ${data.monthlyPerformance.netProfit}`,
+        };
       },
     }),
   ];

@@ -1,14 +1,47 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, DealStage } from '@prisma/client';
 import { OperationalIntelligenceService } from './operational-intelligence.service';
-import { ATTENTION_POLICY } from './attention-policy';
+import {
+  ATTENTION_CATEGORIES,
+  ATTENTION_POLICY,
+  ATTENTION_RULE_CATEGORY,
+} from './attention-policy';
 
 const d = (n: string | number) => new Prisma.Decimal(n);
 
 describe('OperationalIntelligenceService', () => {
   const now = new Date('2026-08-07T12:00:00.000Z');
 
-  function makeService(prisma: any, cuentas: any = {}) {
-    return new OperationalIntelligenceService(prisma, cuentas);
+  function makeService(
+    prisma: any,
+    cuentas: any = {},
+    analytics: any = {
+      getLiquidity: jest.fn(async () => ({
+        cashMxn: '1.00',
+        bankMxn: '2.00',
+        cryptoMxn: '0.00',
+        cesarMxn: '0.00',
+        totalLiquidityMxn: '3.00',
+        warnings: [],
+      })),
+      getMonthlyProfit: jest.fn(async () => ({
+        period: '2026-08',
+        salesMxn: '10.00',
+        cogsMxn: '2.00',
+        bankCommissionsMxn: '1.00',
+        operatingExpensesMxn: '1.00',
+        netProfitMxn: '6.00',
+        saleCount: 1,
+      })),
+    },
+    inventory: any = {
+      getSummary: jest.fn(async () => ({
+        totalInventoryValue: '100.00',
+        activeItemCount: 2,
+        averageCost: '50.00',
+      })),
+    },
+  ) {
+    return new OperationalIntelligenceService(prisma, cuentas, analytics, inventory);
   }
 
   it('ranks inventory aging DESC and excludes SOLD/deleted', async () => {
@@ -27,10 +60,27 @@ describe('OperationalIntelligenceService', () => {
       where: expect.objectContaining({ tenantId: 't1', deletedAt: null, status: { not: 'SOLD' } }),
     }));
     expect(result.ageSource).toBe('Watch.createdAt');
+    expect(result.ageMetric).toBe('inventory_record_age');
+    expect(result.ageSourceNote).toMatch(/not guaranteed physical acquisition/i);
+    expect(result.ageSourceNote).not.toMatch(/comprado|acquisition age guaranteed/i);
     expect(result.items[0].watchId).toBe('w-tie'); // same age, higher cost
     expect(result.items[1].watchId).toBe('w-old');
     expect(result.items.map((i) => i.watchId)).not.toContain('sold');
     expect(result.items[0].ageDays).toBeGreaterThan(result.items[2].ageDays);
+  });
+
+  it('ageDays uses createdAt fallback (inventory record age)', async () => {
+    const createdAt = new Date('2026-02-07T12:00:00.000Z');
+    const prisma = {
+      watch: {
+        findMany: jest.fn(async () => [
+          { id: 'w1', brand: 'A', model: '1', reference: null, cost: d(10), status: 'AVAILABLE', createdAt },
+        ]),
+      },
+    };
+    const result = await makeService(prisma).getInventoryAging('t1', { now });
+    expect(result.items[0].ageDays).toBe(181);
+    expect(result.ageSource).toBe('Watch.createdAt');
   });
 
   it('filters by minAgeDays threshold', async () => {
@@ -47,7 +97,7 @@ describe('OperationalIntelligenceService', () => {
     expect(result.items[0].watchId).toBe('w2');
   });
 
-  it('ranks inventory capital and computes percent Decimal-safe', async () => {
+  it('ranks inventory capital and exposes percentOfActiveInventoryCapital Decimal-safe', async () => {
     const prisma = {
       watch: {
         findMany: jest.fn(async () => [
@@ -57,8 +107,15 @@ describe('OperationalIntelligenceService', () => {
       },
     };
     const result = await makeService(prisma).getTopInventoryCapital('t1', { now });
-    expect(result.totalInventoryCapital).toBe('100.00');
-    expect(result.items[0]).toEqual(expect.objectContaining({ watchId: 'a', percentOfInventoryCapital: '75.00' }));
+    expect(result.totalActiveInventoryCapital).toBe('100.00');
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        watchId: 'a',
+        cost: '75.00',
+        percentOfActiveInventoryCapital: '75.00',
+      }),
+    );
+    expect(result.concentrationFormula).toBe('item cost / total active inventory cost');
   });
 
   it('keeps top debtors currency-separated via CuentasService', async () => {
@@ -134,7 +191,7 @@ describe('OperationalIntelligenceService', () => {
     expect(result.definition).toMatch(/Excludes bank commissions/);
   });
 
-  it('aggregates profit by brand with stable ranking', async () => {
+  it('aggregates profit by brand with stable ranking from CLOSED_WON only', async () => {
     const prisma = {
       deal: {
         findMany: jest.fn(async () => [
@@ -145,9 +202,41 @@ describe('OperationalIntelligenceService', () => {
       },
     };
     const result = await makeService(prisma).getProfitByBrand('t1', { period: 'ALL', now });
+    expect(prisma.deal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 't1',
+          deletedAt: null,
+          stage: DealStage.CLOSED_WON,
+        }),
+      }),
+    );
     expect(result.items[0].brand).toBe('Rolex');
     expect(result.items[0].grossProfit).toBe('90.00');
     expect(result.items[0].unitsSold).toBe(2);
+  });
+
+  it('proves unsold inventory cannot enter brand-profit aggregation', async () => {
+    const prisma = {
+      watch: {
+        findMany: jest.fn(async () => {
+          throw new Error('getProfitByBrand must not query Watch inventory');
+        }),
+      },
+      deal: {
+        findMany: jest.fn(async (args: { where: { stage?: string } }) => {
+          expect(args.where.stage).toBe(DealStage.CLOSED_WON);
+          return [
+            { agreedPrice: d(100), historicalCost: null, watch: { brand: 'Rolex', cost: d(40), expenses: [] } },
+          ];
+        }),
+      },
+    };
+    const result = await makeService(prisma).getProfitByBrand('t1', { period: 'ALL', now });
+    expect(prisma.watch.findMany).not.toHaveBeenCalled();
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].unitsSold).toBe(1);
+    expect(result.definition).toMatch(/CLOSED_WON|gross/i);
   });
 
   it('ranks top sales by gross profit by default', async () => {
@@ -183,7 +272,7 @@ describe('OperationalIntelligenceService', () => {
     expect(result.items[0].grossProfit).toBe('90.00');
   });
 
-  it('emits deterministic attention items with evidence and no mutation hooks', async () => {
+  it('emits attention items with allowed category and observational language', async () => {
     const prisma = {
       watch: {
         findMany: jest.fn(async () => [
@@ -217,8 +306,95 @@ describe('OperationalIntelligenceService', () => {
     const result = await makeService(prisma, cuentas).getAttentionItems('t1', { now });
     expect(result.items.length).toBeGreaterThan(0);
     expect(result.items.every((i) => ['INFO', 'WATCH', 'IMPORTANT'].includes(i.severity))).toBe(true);
-    expect(result.items.some((i) => i.type === 'AGED_HIGH_VALUE_INVENTORY' || i.type === 'LARGE_RECEIVABLE' || i.type === 'INVENTORY_CONCENTRATION')).toBe(true);
-    expect(JSON.stringify(result)).not.toMatch(/Debes vender|vende ya|automatically sell/i);
+    expect(result.items.every((i) => (ATTENTION_CATEGORIES as readonly string[]).includes(i.category))).toBe(true);
+    for (const item of result.items) {
+      expect(item.category).toBe(ATTENTION_RULE_CATEGORY[item.type]);
+    }
+    expect(result.items.some((i) => i.type === 'AGED_HIGH_VALUE_INVENTORY')).toBe(true);
+    const blob = JSON.stringify(result);
+    expect(blob).not.toMatch(/Debes vender|Conviene cobrar|Compra menos|Vende esta posición|automatically sell/i);
+    expect(blob).toMatch(/días registrado|concentra|pendientes/i);
+    expect(ATTENTION_POLICY.AGED_INVENTORY_DAYS).toBe(120);
+    expect(ATTENTION_POLICY.HIGH_VALUE_INVENTORY_MXN).toBe(200_000);
+    expect(ATTENTION_POLICY.LARGE_RECEIVABLE_MXN).toBe(100_000);
+    expect(ATTENTION_POLICY.CONCENTRATION_PERCENT).toBe(15);
+    expect(ATTENTION_POLICY.LOW_MARGIN_PERCENT).toBe(8);
+    expect(ATTENTION_POLICY.CRYPTO_STALE_HOURS).toBe(72);
+  });
+
+  it('composes GET_BUSINESS_SUMMARY from canonical sources without duplicate formulas', async () => {
+    const analytics = {
+      getLiquidity: jest.fn(async () => ({
+        cashMxn: '10.00',
+        bankMxn: '20.00',
+        cryptoMxn: '5.00',
+        cesarMxn: '1.00',
+        totalLiquidityMxn: '36.00',
+        warnings: [],
+      })),
+      getMonthlyProfit: jest.fn(async () => ({
+        period: '2026-08',
+        salesMxn: '100.00',
+        cogsMxn: '40.00',
+        bankCommissionsMxn: '5.00',
+        operatingExpensesMxn: '10.00',
+        netProfitMxn: '45.00',
+        saleCount: 2,
+      })),
+    };
+    const inventory = {
+      getSummary: jest.fn(async () => ({
+        totalInventoryValue: '500.00',
+        activeItemCount: 4,
+        averageCost: '125.00',
+      })),
+    };
+    const prisma = {
+      watch: { findMany: jest.fn(async () => []) },
+      accountEntry: {
+        findMany: jest.fn(async () => [
+          {
+            currency: 'MXN',
+            totalAmount: d(200),
+            status: 'OPEN',
+            dealId: null,
+            deal: null,
+            payments: [],
+          },
+          {
+            currency: 'USD',
+            totalAmount: d(50),
+            status: 'OPEN',
+            dealId: null,
+            deal: null,
+            payments: [],
+          },
+        ]),
+      },
+      deal: { findMany: jest.fn(async () => []) },
+      assetPriceSnapshot: { findMany: jest.fn(async () => []) },
+      assetHolding: { count: jest.fn(async () => 0) },
+    };
+    const cuentas = { getTopDebtors: jest.fn(async () => []) };
+    const result = await makeService(prisma, cuentas, analytics, inventory).getBusinessSummary('t1', { now });
+    expect(analytics.getLiquidity).toHaveBeenCalledWith('t1', now);
+    expect(analytics.getMonthlyProfit).toHaveBeenCalledWith('t1', 2026, 8);
+    expect(inventory.getSummary).toHaveBeenCalledWith('t1');
+    expect(result.liquidity.totalLiquidityMxn).toBe('36.00');
+    expect(result.inventory).toEqual({ activeItemCount: 4, activeCapital: '500.00' });
+    expect(result.receivables).toEqual({ MXN: '200.00', USD: '50.00' });
+    expect(result.monthlyPerformance).toEqual(
+      expect.objectContaining({ period: '2026-08', netProfit: '45.00' }),
+    );
+    expect(result.composition).toEqual([
+      'AnalyticsService.getLiquidity',
+      'InventoryService.getSummary',
+      'OperationalIntelligenceService.getReceivableSummary',
+      'AnalyticsService.getMonthlyProfit',
+      'OperationalIntelligenceService.getAttentionItems',
+    ]);
+    expect(Array.isArray(result.attentionItems)).toBe(true);
+    expect(result.note).toMatch(/Sin recomendaciones/i);
   });
 
   it('isolates tenantId in every query path sampled', async () => {
@@ -235,6 +411,7 @@ describe('OperationalIntelligenceService', () => {
     await svc.getReceivableSummary('tenant-A');
     await svc.getSalesMarginSummary('tenant-A', { period: 'ALL', now });
     await svc.getTopDebtors('tenant-A');
+    await svc.getBusinessSummary('tenant-A', { now });
     expect(prisma.watch.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: 'tenant-A' }) }));
     expect(prisma.accountEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: 'tenant-A' }) }));
     expect(prisma.deal.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: 'tenant-A' }) }));

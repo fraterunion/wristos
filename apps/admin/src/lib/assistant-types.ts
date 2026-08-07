@@ -20,6 +20,7 @@ export const READ_ACTIONS = [
   'GET_PROFIT_BY_BRAND',
   'GET_TOP_SALES',
   'GET_ATTENTION_ITEMS',
+  'GET_BUSINESS_SUMMARY',
 ] as const;
 
 export const WRITE_PREVIEW_ACTIONS = [

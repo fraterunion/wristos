@@ -36,6 +36,9 @@ function classify(text: string, currentDate: string): FakeOutput {
   }
 
   // --- Operational intelligence reads (before generic liquidity "cuánto tengo") ---
+  if (/c[oó]mo va( el negocio)?|c[oó]mo vamos( hoy| este mes)?|dame (un )?resumen|resumen del negocio/.test(t)) {
+    return { intent: 'GET_BUSINESS_SUMMARY', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
   if (/lleva m[aá]s tiempo parado|inventario viejo|m[aá]s de \d+ d[ií]as|tiempo sin venderse|reloj.*m[aá]s tiempo/.test(t)) {
     const days = t.match(/m[aá]s de (\d+)\s*d[ií]as/);
     return {
@@ -89,12 +92,12 @@ function classify(text: string, currentDate: string): FakeOutput {
   if (/deber[ií]a revisar|necesita mi atenci[oó]n|algo importante|qu[eé] ves raro|revisar hoy/.test(t)) {
     return { intent: 'GET_ATTENTION_ITEMS', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
   }
-  if (/^qu[eé] est[aá] mal|^qu[eé] hago|^c[oó]mo voy/.test(t)) {
+  if (/^qu[eé] est[aá] mal|^qu[eé] hago$/.test(t)) {
     return {
       intent: 'UNKNOWN',
       entities: {},
       missingEntities: [],
-      ambiguities: [{ field: 'intent', reason: 'ambiguous operational ask; prefer GET_ATTENTION_ITEMS or GET_MONTHLY_PROFIT', candidates: ['GET_ATTENTION_ITEMS', 'GET_MONTHLY_PROFIT', 'GET_LIQUIDITY'] }],
+      ambiguities: [{ field: 'intent', reason: 'ambiguous operational ask; prefer GET_ATTENTION_ITEMS, GET_BUSINESS_SUMMARY or GET_MONTHLY_PROFIT', candidates: ['GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY', 'GET_MONTHLY_PROFIT', 'GET_LIQUIDITY'] }],
       confidence: 'LOW',
       language: 'es',
     };

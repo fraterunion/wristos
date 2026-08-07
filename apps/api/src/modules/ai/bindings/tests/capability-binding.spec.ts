@@ -14,19 +14,21 @@ const toolRegistry = () =>
     getProfitByBrand: jest.fn(),
     getTopSales: jest.fn(),
     getAttentionItems: jest.fn(),
+    getBusinessSummary: jest.fn(),
   } as never);
 const step = (capability: BusinessCapability, args: Record<string, any> = {}): BusinessPlanStep => ({ stepId: 's1', capability, arguments: args, dependsOn: [], estimatedEffects: [], reversibility: 'FULL' });
 const context = { tenantId: 't1', userId: 'u1', permissions: [], conversationId: null, workspaceId: null, actionRunId: null, requestId: 'trace-1', locale: 'en', timezone: 'UTC', now: new Date('2026-08-06T00:00:00Z') };
 const pendingAudit = (capability: BusinessCapability) => ({ planFingerprint: 'a'.repeat(64), stepId: 's1', capability });
 
 describe('CapabilityBindingRegistry', () => {
-  it('contains thirteen unique, verified read bindings including operational intelligence', () => {
+  it('contains fourteen unique, verified read bindings including operational intelligence', () => {
     const registry = new CapabilityBindingRegistry(toolRegistry());
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(13);
-    expect(new Set(bindings.map((binding) => binding.capability)).size).toBe(13);
+    expect(bindings).toHaveLength(14);
+    expect(new Set(bindings.map((binding) => binding.capability)).size).toBe(14);
     expect(bindings.every((binding) => binding.mode === 'READ' && binding.version === '1.0.0' && binding.toolVersion === '1.0.0')).toBe(true);
     expect(registry.hasBinding('GET_ATTENTION_ITEMS')).toBe(true);
+    expect(registry.hasBinding('GET_BUSINESS_SUMMARY')).toBe(true);
     expect(registry).not.toHaveProperty('register');
   });
 
