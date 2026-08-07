@@ -110,7 +110,7 @@ describe('responseToConversationBlocks', () => {
     assert.equal(blocks.length, 1);
     assert.equal(blocks[0].kind, 'question');
     const question = blocks[0] as { text: string; fields: Array<{ key: string; question: string }> };
-    assert.equal(question.text, 'Necesito algunos datos para continuar.');
+    assert.equal(question.text, 'Completa los campos indicados.');
     assert.deepEqual(question.fields.map((field) => field.key), ['clientId', 'currency']);
   });
 

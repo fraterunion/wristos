@@ -38,7 +38,15 @@ describe('StructuredAssistantService', () => {
     expect(response.responseType).toBe('MISSING_FIELDS_CARD');
     expect(response.payload.groups).toHaveLength(1);
     expect(readRunner.run).not.toHaveBeenCalled();
-    expect(persistence.complete).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), 2, expect.anything(), AIRequestStatus.NEEDS_CLARIFICATION);
+    expect(persistence.complete).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      2,
+      expect.anything(),
+      AIRequestStatus.NEEDS_CLARIFICATION,
+      expect.objectContaining({ intent: 'GET_MONTHLY_PROFIT' }),
+    );
   });
 
   it('returns a truthful write preview without resolving or executing a binding', async () => {

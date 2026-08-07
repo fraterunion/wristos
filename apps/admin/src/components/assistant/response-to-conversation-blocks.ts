@@ -237,11 +237,17 @@ function missingFieldsBlocks(response: StructuredAssistantResponse): Conversatio
       return [{ key: field.key, question: asString(field.question) ?? field.key }];
     });
   });
+  const message =
+    asString(response.payload.message) ??
+    'Necesito algunos datos para continuar.';
+  if (!fields.length) {
+    return [{ kind: 'text', id: blockId(response, 'text'), text: message }];
+  }
   return [
     {
       kind: 'question',
       id: blockId(response, 'question'),
-      text: 'Necesito algunos datos para continuar.',
+      text: message,
       fields,
     },
   ];

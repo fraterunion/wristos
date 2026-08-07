@@ -65,15 +65,21 @@ describe('safety: text limits and bounded context', () => {
   it('caps context list sizes and string lengths, never widening the input', () => {
     const sanitized = sanitizeConversationContext({
       lastIntent: 'SEARCH_CLIENT',
-      lastPresentedCandidateIds: Array.from({ length: 50 }, (_, i) => `id-${i}`),
+      presentedCandidates: Array.from({ length: 50 }, (_, i) => ({
+        ordinal: i + 1,
+        type: 'CLIENT' as const,
+        label: 'x'.repeat(500),
+      })),
       pendingMissingFields: Array.from({ length: 50 }, (_, i) => `field-${i}`),
+      lastPresentedCandidateIds: Array.from({ length: 50 }, (_, i) => `id-${i}`),
       lastResolvedEntities: Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`key${i}`, 'x'.repeat(500)])),
     });
-    expect(sanitized?.lastPresentedCandidateIds?.length).toBeLessThanOrEqual(5);
+    expect(sanitized?.presentedCandidates?.length).toBeLessThanOrEqual(5);
     expect(sanitized?.pendingMissingFields?.length).toBeLessThanOrEqual(5);
+    expect(sanitized?.lastPresentedCandidateIds?.length).toBeLessThanOrEqual(5);
     expect(Object.keys(sanitized?.lastResolvedEntities ?? {}).length).toBeLessThanOrEqual(10);
-    for (const value of Object.values(sanitized?.lastResolvedEntities ?? {})) {
-      if (typeof value === 'string') expect(value.length).toBeLessThanOrEqual(120);
+    for (const candidate of sanitized?.presentedCandidates ?? []) {
+      expect(candidate.label.length).toBeLessThanOrEqual(120);
     }
   });
 

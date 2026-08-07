@@ -2,19 +2,29 @@ import { KnownIntent } from './intent-schema';
 
 /**
  * Bounded conversational context (Part 8). Deliberately a small, flat,
- * structured record — never a raw message transcript. Every field here is
- * either an id/enum (safe to pass) or already-sanitized text bounded to a
- * short length.
+ * structured record — never a raw message transcript. Provider-facing
+ * fields use labels/ordinals only — never trusted entity IDs.
  */
 export interface BoundedConversationContext {
   lastIntent?: KnownIntent;
-  /** Already-sanitized (see safety.ts) — ids/enums/short scalars only. */
-  lastResolvedEntities?: Record<string, string | number | boolean | null>;
-  /** e.g. entity ids previously shown to the user as A/B/C choices, for "the first one" / "that one". */
-  lastPresentedCandidateIds?: string[];
+  /** Labels only — never trusted database IDs. */
+  selectedEntity?: {
+    type: 'WATCH' | 'CLIENT' | 'ACCOUNT_ENTRY';
+    label: string;
+  };
+  /** Ordinal + label only — never trusted database IDs. */
+  presentedCandidates?: Array<{
+    ordinal: number;
+    type: 'WATCH' | 'CLIENT' | 'ACCOUNT_ENTRY';
+    label: string;
+  }>;
   /** Field names the previous turn was still waiting on. */
   pendingMissingFields?: string[];
   conversationLanguage?: string;
+  /** @deprecated Prefer presentedCandidates labels; never send trusted IDs. */
+  lastPresentedCandidateIds?: string[];
+  /** @deprecated Prefer selectedEntity labels; never send trusted IDs. */
+  lastResolvedEntities?: Record<string, string | number | boolean | null>;
 }
 
 export interface IntentInterpretationInput {

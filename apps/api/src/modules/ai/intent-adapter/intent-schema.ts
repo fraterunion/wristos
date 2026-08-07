@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { intentReferenceSchema } from '../context/reference-schema';
 
 /**
  * The LLM's ONLY allowed output shape. Nothing outside this schema ever
@@ -77,6 +78,8 @@ export const rawIntentCandidateSchema = z
     confidence: z.enum(CONFIDENCE_VALUES),
     language: z.string().min(2).max(10).default('es'),
     normalizedUserText: z.string().max(2000).optional(),
+    /** Relative reference only — never carries arbitrary entity IDs. */
+    reference: intentReferenceSchema.optional(),
   })
   .strict();
 
@@ -126,21 +129,17 @@ export const entitySchemas = {
 
   GET_CLIENT_ACCOUNTS: z
     .object({
-      // A real clientId is never fabricated by the LLM — it may only ever
-      // appear here if it was echoed back from bounded conversation context
-      // (see prompt-policy.ts / context.ts), never invented from free text.
-      clientId: z.string().min(1).max(128).optional(),
+      // clientId is never accepted from the LLM. Trusted clientId values are
+      // injected after interpretation by ReferenceResolver / workspace context.
       clientQuery: query.optional(),
       type: z.enum(['RECEIVABLE', 'PAYABLE', 'ALL']).optional(),
       status: z.enum(['OPEN', 'PARTIAL', 'PAID', 'ALL']).optional(),
     })
     .strip(),
 
-  // Write intents: detection-only. None of these ever carry a real
-  // <entity>Id — only *Query fields, which the existing planner's
-  // requiredEntities (watchId, customerId, accountId, ...) can never treat
-  // as satisfied. This is what structurally forces every write candidate
-  // into NEEDS_CLARIFICATION rather than READY_FOR_CONFIRMATION.
+  // Write intents: detection-only at the LLM boundary. Trusted *Id values may
+  // be injected later by ReferenceResolver for preview preparation only —
+  // never for execution. Query fields alone cannot satisfy planner requiredEntities.
   REGISTER_SALE: z
     .object({
       watchQuery: query.optional(),

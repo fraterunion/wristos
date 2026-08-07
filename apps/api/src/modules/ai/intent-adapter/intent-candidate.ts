@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { IntentReference } from '../context/reference-schema';
 import { normalizeEntities } from './normalization';
 import {
   Ambiguity,
@@ -26,6 +27,8 @@ export interface StructuredIntentCandidate {
   normalizedUserText?: string;
   isReadIntent: boolean;
   isWriteIntent: boolean;
+  /** Relative reference only — never carries entity IDs. */
+  reference?: IntentReference;
   /** Stable hash of the candidate's own content — used for audit, never for security decisions. */
   candidateHash: string;
 }
@@ -73,6 +76,7 @@ export function buildIntentCandidate(rawOutput: unknown, currentDate: string): I
         normalizedUserText: raw.normalizedUserText,
         isReadIntent: false,
         isWriteIntent: false,
+        ...(raw.reference ? { reference: raw.reference } : {}),
         candidateHash: hashCandidate(raw),
       },
     };
@@ -107,7 +111,8 @@ export function buildIntentCandidate(rawOutput: unknown, currentDate: string): I
     normalizedUserText: raw.normalizedUserText,
     isReadIntent: isReadIntent(intent),
     isWriteIntent: isWriteIntent(intent),
-    candidateHash: hashCandidate({ intent, entities: resolvedEntities, missingEntities, confidence: raw.confidence }),
+    ...(raw.reference ? { reference: raw.reference } : {}),
+    candidateHash: hashCandidate({ intent, entities: resolvedEntities, missingEntities, confidence: raw.confidence, reference: raw.reference ?? null }),
   };
   return { kind: 'VALID', candidate };
 }

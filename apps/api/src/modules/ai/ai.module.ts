@@ -25,6 +25,8 @@ import { IntentAdapterService, INTENT_ADAPTER_PROVIDER } from './intent-adapter/
 import { NaturalLanguageAssistantService } from './intent-adapter/natural-language-assistant.service';
 import { createIntentAdapterProvider } from './intent-adapter/providers/intent-provider.factory';
 import { IntentAdapterRateLimitGuard } from './intent-adapter/rate-limit.guard';
+import { ReferenceResolverService } from './context/reference-resolver.service';
+import { WorkingContextService } from './context/working-context.service';
 
 @Module({
   imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule],
@@ -51,6 +53,8 @@ import { IntentAdapterRateLimitGuard } from './intent-adapter/rate-limit.guard';
     { provide: WORKSPACE_STORE, useExisting: WorkspaceService },
     { provide: INTENT_ADAPTER_PROVIDER, useFactory: createIntentAdapterProvider },
     IntentAdapterService,
+    ReferenceResolverService,
+    WorkingContextService,
     NaturalLanguageAssistantService,
     IntentAdapterRateLimitGuard,
   ],
