@@ -8,7 +8,7 @@ import { AIRequestService } from './ai-request.service';
 import { PreparedAssistantRequest, StructuredAssistantPersistence } from './structured-assistant.persistence';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
 
-const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS']);
+const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS', 'GET_INVENTORY_AGING', 'GET_TOP_INVENTORY_CAPITAL', 'GET_TOP_DEBTORS', 'GET_RECEIVABLE_SUMMARY', 'GET_SALES_MARGIN_SUMMARY', 'GET_PROFIT_BY_BRAND', 'GET_TOP_SALES', 'GET_ATTENTION_ITEMS']);
 
 @Injectable()
 export class StructuredAssistantService {
@@ -109,7 +109,7 @@ export class StructuredAssistantService {
       code: 'READ_EXECUTION_FAILED', message: 'No fue posible completar la consulta.', unchanged: 'No se modificaron datos de negocio.', nextAction: 'Intenta nuevamente con un clientRequestId nuevo.',
     }, plan);
     const capability = result.stepResults[0]?.result;
-    const responseType = intent === 'GET_LIQUIDITY' || intent === 'GET_MONTHLY_PROFIT' ? 'METRIC_BREAKDOWN' : 'ENTITY_LIST';
+    const responseType = ['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'GET_RECEIVABLE_SUMMARY', 'GET_SALES_MARGIN_SUMMARY', 'GET_ATTENTION_ITEMS'].includes(intent) ? 'METRIC_BREAKDOWN' : 'ENTITY_LIST';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'COMPLETED', responseType, {
       data: this.toJson(capability?.data ?? null),
       summary: capability?.summary ?? 'Consulta completada.',

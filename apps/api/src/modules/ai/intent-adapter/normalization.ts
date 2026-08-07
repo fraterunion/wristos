@@ -283,5 +283,58 @@ export function normalizeEntities(
     }
   }
 
+  const periodIntents = new Set([
+    'GET_SALES_MARGIN_SUMMARY',
+    'GET_PROFIT_BY_BRAND',
+    'GET_TOP_SALES',
+  ]);
+  if (periodIntents.has(candidate.intent)) {
+    const month = normalizeMonth(out.month as string | number | null | undefined);
+    const year = normalizeYear(out.year as string | number | null | undefined);
+    if (month !== null) out.month = month;
+    else delete out.month;
+    if (year !== null) out.year = year;
+    else delete out.year;
+
+    if (typeof out.period === 'string') {
+      const p = out.period.toUpperCase();
+      if (['CURRENT_MONTH', 'YEAR', 'ALL', 'CUSTOM'].includes(p)) out.period = p;
+      else delete out.period;
+    }
+
+    if (typeof out.brand === 'string') {
+      const brand = normalizeQueryText(out.brand);
+      if (brand) out.brand = brand.toUpperCase();
+      else delete out.brand;
+    }
+
+    if (candidate.intent === 'GET_TOP_SALES' && typeof out.sortBy === 'string') {
+      const sort = out.sortBy.toUpperCase().replace(/\s+/g, '_');
+      if (['GROSS_PROFIT', 'AGREED_PRICE', 'GROSS_MARGIN_PERCENT'].includes(sort)) out.sortBy = sort;
+      else delete out.sortBy;
+    }
+
+    // Safe default: current month when no period/year/month provided.
+    if (out.period === undefined && out.month === undefined && out.year === undefined) {
+      out.period = 'CURRENT_MONTH';
+      const current = resolveCurrentPeriod(context);
+      out.month = current.month;
+      out.year = current.year;
+    } else if (out.period === undefined && (out.month !== undefined || out.year !== undefined)) {
+      out.period = 'CUSTOM';
+      if (out.year === undefined || out.month === undefined) {
+        const current = resolveCurrentPeriod(context);
+        if (out.year === undefined) out.year = current.year;
+        if (out.month === undefined) out.month = current.month;
+      }
+    }
+  }
+
+  if (candidate.intent === 'GET_INVENTORY_AGING' && 'minAgeDays' in out) {
+    const n = typeof out.minAgeDays === 'number' ? out.minAgeDays : Number(out.minAgeDays);
+    if (Number.isFinite(n) && n >= 0) out.minAgeDays = Math.floor(n);
+    else delete out.minAgeDays;
+  }
+
   return out;
 }
