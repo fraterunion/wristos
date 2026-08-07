@@ -1,10 +1,11 @@
 'use client';
 
-import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from 'lucide-react';
+import { Info, ShieldAlert } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import Link from 'next/link';
 import { validateAssistantResponse } from '@/lib/assistant-response-validation';
 import type { BusinessActionId, JsonValue, StructuredAssistantResponse } from '@/lib/assistant-types';
+import { AssistantBubble, ChoiceBubble, PreviewBubble, QuestionBubble, ReceiptBubble } from '@/components/assistant/bubbles';
 
 function text(value: JsonValue | undefined): string | null {
   return typeof value === 'string' ? value : null;
@@ -18,14 +19,14 @@ function displayLabel(key: string): string {
 }
 
 function SafeValue({ value }: { value: JsonValue }) {
-  if (value === null) return <span className="text-muted">—</span>;
+  if (value === null) return <span className="text-white/40">—</span>;
   if (typeof value === 'boolean') return <span>{value ? 'Sí' : 'No'}</span>;
   if (typeof value === 'string' || typeof value === 'number') return <span>{String(value)}</span>;
   if (Array.isArray(value)) {
     return (
       <div className="space-y-2">
         {value.slice(0, 25).map((item, index) => (
-          <div key={index} className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div key={index} className="rounded-lg bg-white/[0.05] p-2.5">
             <SafeValue value={item} />
           </div>
         ))}
@@ -35,11 +36,11 @@ function SafeValue({ value }: { value: JsonValue }) {
   return (
     <dl className="grid gap-2 sm:grid-cols-2">
       {Object.entries(value).slice(0, 30).map(([key, item]) => (
-        <div key={key} className="min-w-0 rounded-lg bg-white/[0.035] px-3 py-2">
-          <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">
+        <div key={key} className="min-w-0 rounded-lg bg-white/[0.05] px-2.5 py-1.5">
+          <dt className="text-[10.5px] font-medium uppercase tracking-wide text-white/40">
             {displayLabel(key)}
           </dt>
-          <dd className="mt-1 break-words text-sm text-white"><SafeValue value={item} /></dd>
+          <dd className="mt-0.5 break-words text-[13px] text-white"><SafeValue value={item} /></dd>
         </div>
       ))}
     </dl>
@@ -65,7 +66,7 @@ function MissingFieldsForm({
         });
       })
     : [];
-  if (!parsed.length) return <div className="mt-4"><SafeValue value={groups} /></div>;
+  if (!parsed.length) return <div className="mt-3"><SafeValue value={groups} /></div>;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -73,12 +74,12 @@ function MissingFieldsForm({
   };
 
   return (
-    <form className="mt-4 space-y-3" onSubmit={submit}>
+    <form className="mt-1 space-y-2.5" onSubmit={submit}>
       {parsed.map((field) => (
-        <label key={field.key}>
-          <span className="ui-field-label normal-case tracking-normal">{field.question}</span>
+        <label key={field.key} className="block">
+          <span className="mb-1 block text-[11px] font-medium text-white/50">{field.question}</span>
           <input
-            className="ui-input min-h-11"
+            className="w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm outline-none ring-emerald-400/30 focus:ring-2"
             value={values[field.key] ?? ''}
             onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
             required
@@ -86,7 +87,7 @@ function MissingFieldsForm({
           />
         </label>
       ))}
-      <button type="submit" className="ui-btn-primary min-h-11 w-full">Continuar con datos estructurados</button>
+      <button type="submit" className="min-h-9 rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black">Continuar</button>
     </form>
   );
 }
@@ -94,10 +95,20 @@ function MissingFieldsForm({
 function ValidatedAssistantResponse({
   response,
   onSelectClient,
+  onSearchAgain,
+  onEdit,
+  onDismiss,
+  manualHref,
+  busy,
   onContinue,
 }: {
   response: StructuredAssistantResponse;
   onSelectClient?: (id: string, label: string) => void;
+  onSearchAgain?: () => void;
+  onEdit?: () => void;
+  onDismiss?: () => void;
+  manualHref?: string;
+  busy?: boolean;
   onContinue?: (entities: Record<string, JsonValue>) => void;
 }) {
   const { payload } = response;
@@ -106,6 +117,22 @@ function ValidatedAssistantResponse({
   const isError = response.responseType === 'ERROR_RECOVERY_CARD';
   const isPreview = response.responseType === 'ACTION_PREVIEW_CARD';
   const isMissing = response.responseType === 'MISSING_FIELDS_CARD';
+  const isReceipt = response.responseType === 'SUCCESS_RECEIPT';
+
+  const warningsBlock = response.warnings.length ? (
+    <ul className="space-y-1.5">
+      {response.warnings.map((warning) => (
+        <li key={warning.code} className="flex gap-1.5 text-[12.5px] text-amber-200">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{warning.message}</span>
+        </li>
+      ))}
+    </ul>
+  ) : null;
+
+  const unchangedNote = text(payload.unchanged) ? (
+    <p className="text-[12px] text-white/45">{text(payload.unchanged)}</p>
+  ) : null;
 
   const clientItems =
     response.responseType === 'ENTITY_LIST' &&
@@ -116,91 +143,94 @@ function ValidatedAssistantResponse({
       ? data.items
       : [];
 
+  if (isError) {
+    return (
+      <AssistantBubble tone="error">
+        <div className="space-y-2">
+          <p>{message ?? 'Algo no salió bien y no se hizo ningún cambio.'}</p>
+          {warningsBlock}
+        </div>
+      </AssistantBubble>
+    );
+  }
+
+  if (isPreview) {
+    return (
+      <PreviewBubble
+        intro={message ?? 'Esto es lo que voy a registrar:'}
+        summary={
+          <div className="space-y-2">
+            {data !== undefined ? <SafeValue value={data} /> : null}
+            {payload.preview !== undefined ? <SafeValue value={payload.preview} /> : null}
+          </div>
+        }
+        confirmHref={manualHref}
+        onEdit={onEdit}
+        onCancel={onDismiss}
+        busy={busy}
+      >
+        {warningsBlock}
+      </PreviewBubble>
+    );
+  }
+
+  if (isMissing) {
+    return (
+      <QuestionBubble question={message ?? 'Necesito algunos datos para continuar.'}>
+        {payload.groups !== undefined && onContinue ? (
+          <MissingFieldsForm groups={payload.groups} onContinue={onContinue} />
+        ) : payload.groups !== undefined ? (
+          <SafeValue value={payload.groups} />
+        ) : null}
+        {warningsBlock}
+      </QuestionBubble>
+    );
+  }
+
+  const chips = clientItems.length && onSelectClient
+    ? clientItems.flatMap((item, index) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+        const id = typeof item.id === 'string' ? item.id : null;
+        if (!id) return [];
+        const label =
+          typeof item.name === 'string'
+            ? item.name
+            : typeof item.label === 'string'
+              ? item.label
+              : `Cliente ${index + 1}`;
+        return [{ id, label }];
+      })
+    : [];
+  if (onSearchAgain && chips.length) chips.push({ id: '__none__', label: 'Otro cliente' });
+
+  // When the entity list resolves to selectable chips, they replace the raw
+  // data table — showing both would repeat the same clients twice over.
+  const content = (
+    <div className="space-y-2.5">
+      {!isReceipt && message ? <p>{message}</p> : null}
+      {data !== undefined && !chips.length ? <SafeValue value={data} /> : null}
+      {warningsBlock}
+      {unchangedNote}
+    </div>
+  );
+
   return (
-    <article
-      className={`rounded-2xl border p-4 ${
-        isError
-          ? 'border-rose-400/30 bg-rose-500/[0.07]'
-          : isPreview
-            ? 'border-amber-400/30 bg-amber-500/[0.07]'
-            : 'border-white/10 bg-panel'
-      }`}
-      aria-live="polite"
-    >
-      <div className="flex items-start gap-3">
-        {isError ? (
-          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" aria-hidden />
-        ) : isPreview || isMissing ? (
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden />
-        ) : (
-          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" aria-hidden />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">
-            {isError
-              ? 'No se pudo completar'
-              : isPreview
-                ? 'Vista previa — no ejecutada'
-                : isMissing
-                  ? 'Necesito más información'
-                  : 'Consulta completada'}
-          </p>
-          {message ? <p className="mt-1 text-sm leading-6 text-white/75">{message}</p> : null}
-        </div>
-      </div>
-
-      {data !== undefined ? <div className="mt-4"><SafeValue value={data} /></div> : null}
-      {isPreview && payload.preview !== undefined ? (
-        <div className="mt-4"><SafeValue value={payload.preview} /></div>
+    <>
+      {isReceipt ? <ReceiptBubble title={message ?? 'Listo.'}>{content}</ReceiptBubble> : <AssistantBubble>{content}</AssistantBubble>}
+      {chips.length ? (
+        <ChoiceBubble
+          options={chips}
+          disabled={busy}
+          onSelect={(id, label) => {
+            if (id === '__none__') {
+              onSearchAgain?.();
+              return;
+            }
+            onSelectClient?.(id, label);
+          }}
+        />
       ) : null}
-      {isMissing && payload.groups !== undefined && onContinue ? (
-        <MissingFieldsForm groups={payload.groups} onContinue={onContinue} />
-      ) : isMissing && payload.groups !== undefined ? (
-        <div className="mt-4"><SafeValue value={payload.groups} /></div>
-      ) : null}
-
-      {clientItems.length && onSelectClient ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {clientItems.map((item, index) => {
-            if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-            const id = typeof item.id === 'string' ? item.id : null;
-            const label =
-              typeof item.name === 'string'
-                ? item.name
-                : typeof item.label === 'string'
-                  ? item.label
-                  : `Cliente ${index + 1}`;
-            return id ? (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onSelectClient(id, label)}
-                className="ui-btn-secondary min-h-11"
-              >
-                Ver cuentas de {label}
-              </button>
-            ) : null;
-          })}
-        </div>
-      ) : null}
-
-      {response.warnings.length ? (
-        <ul className="mt-4 space-y-2">
-          {response.warnings.map((warning) => (
-            <li key={warning.code} className="flex gap-2 text-sm text-amber-200">
-              <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-              <span>{warning.message}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {text(payload.unchanged) ? (
-        <p className="mt-4 border-t border-white/10 pt-3 text-xs text-white/55">
-          {text(payload.unchanged)}
-        </p>
-      ) : null}
-    </article>
+    </>
   );
 }
 
@@ -209,29 +239,41 @@ export function AssistantResponseRenderer({
   response,
   onSelectClient,
   onContinue,
+  onSearchAgain,
+  onEdit,
+  onDismiss,
+  manualHref,
+  busy,
 }: {
   intent: BusinessActionId;
   response: StructuredAssistantResponse;
   onSelectClient?: (id: string, label: string) => void;
   onContinue?: (entities: Record<string, JsonValue>) => void;
+  onSearchAgain?: () => void;
+  onEdit?: () => void;
+  onDismiss?: () => void;
+  manualHref?: string;
+  busy?: boolean;
 }) {
   const validation = validateAssistantResponse(intent, response);
   if (validation.kind === 'FAIL_CLOSED') {
     return (
-      <article className="rounded-2xl border border-rose-400/30 bg-rose-500/[0.07] p-4" role="alert">
-        <div className="flex items-start gap-3">
-          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" aria-hidden />
-          <div>
-            <p className="text-sm font-semibold text-white">{validation.title}</p>
-            <p className="mt-1 text-sm leading-6 text-white/70">{validation.message}</p>
-            {validation.manualHref ? (
-              <Link href={validation.manualHref} className="ui-btn-secondary mt-3 min-h-11">
-                Abrir flujo manual
-              </Link>
-            ) : null}
+      <AssistantBubble tone="error">
+        <div className="space-y-2">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <div>
+              <p className="font-medium">{validation.title}</p>
+              <p className="mt-0.5 text-[13px] text-rose-100/85">{validation.message}</p>
+            </div>
           </div>
+          {validation.manualHref ? (
+            <Link href={validation.manualHref} className="inline-flex min-h-9 items-center rounded-full border border-rose-200/25 px-3.5 py-1.5 text-[13px] font-medium text-rose-100">
+              Abrir flujo manual
+            </Link>
+          ) : null}
         </div>
-      </article>
+      </AssistantBubble>
     );
   }
   return (
@@ -239,6 +281,11 @@ export function AssistantResponseRenderer({
       response={validation.response}
       onSelectClient={onSelectClient}
       onContinue={onContinue}
+      onSearchAgain={onSearchAgain}
+      onEdit={onEdit}
+      onDismiss={onDismiss}
+      manualHref={manualHref}
+      busy={busy}
     />
   );
 }

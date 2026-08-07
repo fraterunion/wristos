@@ -9,19 +9,16 @@ import {
   ChevronDown,
   CircleDollarSign,
   Landmark,
-  LoaderCircle,
-  Mic,
   PackagePlus,
   ReceiptText,
-  RefreshCw,
   Search,
-  Send,
   ShoppingCart,
   UserRoundSearch,
   WalletCards,
 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { AssistantResponseRenderer } from '@/components/assistant/assistant-response-renderer';
+import { ConversationComposer } from '@/components/assistant/conversation-composer';
+import { ConversationThread } from '@/components/assistant/conversation-thread';
 import {
   AssistantRequestError,
   clearResumeHint,
@@ -36,7 +33,6 @@ import type {
   BusinessActionId,
   JsonValue,
   ReadAction,
-  StructuredAssistantResponse,
   WritePreviewAction,
 } from '@/lib/assistant-types';
 
@@ -101,13 +97,13 @@ export default function AssistantPage() {
   const [activeRead, setActiveRead] = useState<ReadAction | null>(null);
   const [history, setHistory] = useState<AssistantHistoryItem[]>([]);
   const [pending, setPending] = useState<AssistantAction | null>(null);
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<AssistantAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [composerNotice, setComposerNotice] = useState(false);
   const [composerValue, setComposerValue] = useState('');
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [writeActionsOpen, setWriteActionsOpen] = useState(false);
-  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('ACTIVE');
   const [limit, setLimit] = useState(10);
@@ -155,6 +151,7 @@ export default function AssistantPage() {
   const runAction = useCallback(async (action: AssistantAction, label: string) => {
     if (pending) return;
     setPending(action);
+    setPendingLabel(label);
     setRetryAction(null);
     setError(null);
     try {
@@ -179,6 +176,7 @@ export default function AssistantPage() {
       }
     } finally {
       setPending(null);
+      setPendingLabel(null);
     }
   }, [pending, refreshWorkspaceVersion]);
 
@@ -221,6 +219,16 @@ export default function AssistantPage() {
     makeAction('GET_CLIENT_ACCOUNTS', { clientId: id }, `Cuentas de ${label}`);
   };
 
+  const continueItem = useCallback((item: AssistantHistoryItem, entities: Record<string, JsonValue>) => {
+    makeAction(item.intent, { ...item.entities, ...entities }, item.label);
+  }, [makeAction]);
+
+  const restartItem = useCallback((item: AssistantHistoryItem) => {
+    makeAction(item.intent, {}, item.label);
+  }, [makeAction]);
+
+  const manualHrefFor = useCallback((item: AssistantHistoryItem) => writeCards.find((card) => card.id === item.intent)?.href, []);
+
   const submitComposer = (event: FormEvent) => {
     event.preventDefault();
     setComposerNotice(true);
@@ -255,13 +263,23 @@ export default function AssistantPage() {
     </section>
   ) : null;
 
-  const pendingIndicator = pending ? (
-    <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-panel p-5 text-sm text-muted" role="status"><LoaderCircle className="h-4 w-4 animate-spin" />Consultando datos autorizados…</div>
-  ) : null;
-
-  const errorBlock = error ? (
-    <div className="rounded-2xl border border-rose-400/25 bg-rose-500/[0.07] p-4"><p className="text-sm text-rose-100">{error}</p>{retryAction ? <button type="button" className="ui-btn-secondary mt-3 min-h-11 gap-2" onClick={() => void runAction(retryAction, 'Reintento seguro')}><RefreshCw className="h-4 w-4" />Reintentar la misma solicitud</button> : null}</div>
-  ) : null;
+  const emptyState = (
+    <section aria-label="Sin actividad todavía" className="space-y-2 px-1">
+      <p className="text-sm font-medium text-white/70">¿Qué necesitas hacer?</p>
+      <div className="grid grid-cols-1 gap-1.5">
+        {composerExamples.map((example) => (
+          <button
+            key={example}
+            type="button"
+            onClick={() => setComposerValue(example)}
+            className="rounded-xl border border-white/10 bg-panel px-3.5 py-2.5 text-left text-sm text-white/70 transition hover:border-emerald-300/25 hover:text-white"
+          >
+            {example}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
 
   return (
     <div className="mx-auto max-w-6xl pb-4">
@@ -278,18 +296,14 @@ export default function AssistantPage() {
             <span className="shrink-0 rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[11px] text-emerald-200">Solo lectura</span>
           </div>
 
-          <form onSubmit={submitComposer} className="flex items-center gap-2 rounded-2xl border border-white/15 bg-panel p-2.5 shadow-lg shadow-black/20">
-            <input
-              className="min-w-0 flex-1 bg-transparent px-2.5 py-2.5 text-[15px] outline-none placeholder:text-white/35"
-              value={composerValue}
-              onChange={(event) => setComposerValue(event.target.value)}
-              placeholder={composerExamples[placeholderIndex]}
-              aria-label="Solicitud en lenguaje natural, próximamente"
-            />
-            <button type="button" disabled className="rounded-xl p-2.5 text-white/20" aria-label="Micrófono no disponible" title="Próximamente"><Mic className="h-5 w-5" /></button>
-            <button type="submit" className="rounded-xl bg-white p-2.5 text-black" aria-label="Enviar"><Send className="h-5 w-5" /></button>
-          </form>
-          {composerNotice ? <p className="px-1 text-xs text-amber-200">La entrada libre estará disponible más adelante. Usa una acción estructurada.</p> : null}
+          <ConversationComposer
+            variant="hero"
+            value={composerValue}
+            onChange={setComposerValue}
+            onSubmit={submitComposer}
+            placeholder={composerExamples[placeholderIndex]}
+            notice={composerNotice ? 'La entrada libre estará disponible más adelante. Usa una acción estructurada.' : null}
+          />
         </section>
 
         <section aria-label="Sugerencias rápidas" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
@@ -307,58 +321,20 @@ export default function AssistantPage() {
         </section>
 
         {activeReadForm}
-        {pendingIndicator}
-        {errorBlock}
 
-        {history.length ? (
-          <section aria-labelledby="mobile-activity-title" className="space-y-1.5">
-            <h2 id="mobile-activity-title" className="px-1 text-[11px] font-medium uppercase tracking-wide text-white/40">Hoy</h2>
-            <div className="divide-y divide-white/[0.06] overflow-hidden rounded-2xl border border-white/10 bg-panel">
-              {history.map((item) => {
-                const expanded = expandedHistoryId === item.id;
-                return (
-                  <div key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedHistoryId(expanded ? null : item.id)}
-                      className="flex min-h-11 w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left text-sm"
-                      aria-expanded={expanded}
-                    >
-                      <span className="truncate text-white/80">{item.label}</span>
-                      <ChevronDown className={`h-4 w-4 shrink-0 text-white/35 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden />
-                    </button>
-                    {expanded ? (
-                      <div className="px-3.5 pb-3.5">
-                        <AssistantResponseRenderer
-                          intent={item.intent}
-                          response={item.response}
-                          onSelectClient={selectClient}
-                          onContinue={(entities) => makeAction(item.intent, { ...item.entities, ...entities }, item.label)}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ) : (
-          <section aria-label="Sin actividad todavía" className="space-y-2 px-1">
-            <p className="text-sm font-medium text-white/70">¿Qué necesitas hacer?</p>
-            <div className="grid grid-cols-1 gap-1.5">
-              {composerExamples.map((example) => (
-                <button
-                  key={example}
-                  type="button"
-                  onClick={() => setComposerValue(example)}
-                  className="rounded-xl border border-white/10 bg-panel px-3.5 py-2.5 text-left text-sm text-white/70 transition hover:border-emerald-300/25 hover:text-white"
-                >
-                  {example}
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
+        <ConversationThread
+          history={history}
+          pending={!!pending}
+          pendingLabel={pendingLabel}
+          error={error}
+          onRetry={retryAction ? () => void runAction(retryAction, 'Reintento seguro') : undefined}
+          selectClient={selectClient}
+          onContinue={continueItem}
+          onRestart={restartItem}
+          onSearchAgain={() => openRead('SEARCH_CLIENT')}
+          manualHrefFor={manualHrefFor}
+          emptyState={emptyState}
+        />
 
         <section aria-labelledby="mobile-write-actions-title" className="overflow-hidden rounded-2xl border border-amber-300/15 bg-amber-400/[0.035]">
           <button
@@ -400,7 +376,7 @@ export default function AssistantPage() {
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* Desktop — unchanged.                                              */}
+      {/* Desktop — layout unchanged; response rendering is conversational. */}
       {/* ---------------------------------------------------------------- */}
       <div className="hidden space-y-5 lg:block">
         <section className="overflow-hidden rounded-3xl border border-emerald-300/15 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.15),transparent_42%),linear-gradient(145deg,#171717,#0f0f0f)] p-5 sm:p-7">
@@ -437,10 +413,26 @@ export default function AssistantPage() {
         </section>
 
         {activeReadForm}
-        {pendingIndicator}
-        {errorBlock}
 
-        {history.length ? <section className="space-y-3" aria-labelledby="results-title"><div><h2 id="results-title" className="text-lg font-semibold">Actividad reciente</h2><p className="mt-1 text-xs text-muted">Solo esta sesión. La conversación canónica permanece en el servidor.</p></div>{history.map((item) => <div key={item.id}><p className="mb-2 text-xs font-medium uppercase tracking-wide text-white/40">{item.label}</p><AssistantResponseRenderer intent={item.intent} response={item.response} onSelectClient={selectClient} onContinue={(entities) => makeAction(item.intent, { ...item.entities, ...entities }, item.label)} /></div>)}</section> : null}
+        {history.length || pending || error ? (
+          <section className="space-y-3" aria-labelledby="results-title">
+            <div>
+              <h2 id="results-title" className="text-lg font-semibold">Actividad reciente</h2>
+              <p className="mt-1 text-xs text-muted">Solo esta sesión. La conversación canónica permanece en el servidor.</p>
+            </div>
+            <ConversationThread
+              history={history}
+              pending={!!pending}
+              error={error}
+              onRetry={retryAction ? () => void runAction(retryAction, 'Reintento seguro') : undefined}
+              selectClient={selectClient}
+              onContinue={continueItem}
+              onRestart={restartItem}
+              onSearchAgain={() => openRead('SEARCH_CLIENT')}
+              manualHrefFor={manualHrefFor}
+            />
+          </section>
+        ) : null}
 
         <section aria-labelledby="write-actions-title" className="rounded-3xl border border-amber-300/15 bg-amber-400/[0.035] p-4 sm:p-5">
           <div className="flex items-start justify-between gap-3"><div><h2 id="write-actions-title" className="text-lg font-semibold">Preparar una acción</h2><p className="mt-1 text-sm text-white/55">Crea una vista previa o pide aclaraciones. Nunca ejecuta cambios.</p></div><ChevronDown className="mt-1 h-5 w-5 text-amber-200/70" aria-hidden /></div>
@@ -454,14 +446,14 @@ export default function AssistantPage() {
           </div>
         </section>
 
-        <section className="sticky bottom-3 z-20 rounded-2xl border border-white/15 bg-panel/95 p-3 shadow-2xl shadow-black/40 backdrop-blur" aria-label="Compositor del asistente">
-          <form onSubmit={submitComposer} className="flex items-center gap-2">
-            <input className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm outline-none placeholder:text-white/35" placeholder="Escribe una solicitud…" aria-label="Solicitud en lenguaje natural, próximamente" />
-            <button type="button" disabled className="rounded-xl p-3 text-white/20" aria-label="Micrófono no disponible" title="Próximamente"><Mic className="h-5 w-5" /></button>
-            <button type="submit" className="rounded-xl bg-white p-3 text-black" aria-label="Enviar"><Send className="h-5 w-5" /></button>
-          </form>
-          {composerNotice ? <p className="mt-2 px-2 text-xs text-amber-200">La entrada libre estará disponible más adelante. Usa una acción estructurada.</p> : null}
-        </section>
+        <ConversationComposer
+          variant="bar"
+          value={composerValue}
+          onChange={setComposerValue}
+          onSubmit={submitComposer}
+          placeholder={composerExamples[placeholderIndex]}
+          notice={composerNotice ? 'La entrada libre estará disponible más adelante. Usa una acción estructurada.' : null}
+        />
       </div>
     </div>
   );
