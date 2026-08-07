@@ -20,7 +20,9 @@ const questions: Record<string, string> = {
 
 interface ActionOptions {
   id: BusinessActionId; name: string; category: string; tier: ConfirmationTier; required?: string[]; optional?: string[]; capabilities?: BusinessCapability[];
-  effects?: Array<{ area: string; description: string }>; warnings?: WarningRule[]; reversibility?: 'FULL' | 'PARTIAL' | 'NONE';
+  effects?: Array<{ area: string; description: string }>;
+  effectsBuilder?: (entities: StructuredEntities) => Array<{ area: string; description: string }>;
+  warnings?: WarningRule[]; reversibility?: 'FULL' | 'PARTIAL' | 'NONE';
 }
 
 const define = (options: ActionOptions): BusinessActionDefinition => {
@@ -28,6 +30,7 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
   const optional = options.optional ?? [];
   const capabilities = options.capabilities ?? [options.id];
   const effects = options.effects ?? [];
+  const effectsFor = options.effectsBuilder ?? (() => effects);
   return {
     id: options.id,
     name: options.name,
@@ -38,12 +41,49 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
     optionalEntities: optional,
     clarificationQuestions: Object.fromEntries(required.map((key) => [key, questions[key] ?? `Provide ${key}.`])),
     warningRules: options.warnings ?? [],
-    previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({ title: options.name, category: options.category, fields: fields(entities, [...required, ...optional]), warnings, confirmationTier: options.tier, estimatedEffects: effects }),
-    planningStrategy: (entities: StructuredEntities) => capabilities.map((capability, index) => ({ stepId: `${capability.toLowerCase().replaceAll('_', '-')}-${index + 1}`, capability, arguments: args(entities), dependsOn: index === 0 ? [] : [`${capabilities[index - 1]!.toLowerCase().replaceAll('_', '-')}-${index}`], estimatedEffects: effects, reversibility: options.reversibility ?? (options.tier === 'NONE' ? 'FULL' : 'PARTIAL') })),
+    previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({ title: options.name, category: options.category, fields: fields(entities, [...required, ...optional]), warnings, confirmationTier: options.tier, estimatedEffects: effectsFor(entities) }),
+    planningStrategy: (entities: StructuredEntities) => capabilities.map((capability, index) => ({ stepId: `${capability.toLowerCase().replaceAll('_', '-')}-${index + 1}`, capability, arguments: args(entities), dependsOn: index === 0 ? [] : [`${capabilities[index - 1]!.toLowerCase().replaceAll('_', '-')}-${index}`], estimatedEffects: effectsFor(entities), reversibility: options.reversibility ?? (options.tier === 'NONE' ? 'FULL' : 'PARTIAL') })),
     capabilities,
     resultSchema: z.unknown(),
   };
 };
+
+/** Preview effects must match SaleRegistrationService canonical semantics. */
+function registerSaleEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
+  const mode = typeof entities.paymentMode === 'string' ? entities.paymentMode : null;
+  const inventory = { area: 'Inventory', description: 'Selected watch becomes SOLD.' };
+  const capital = { area: 'Capital', description: 'Profit is recalculated.' };
+  if (mode === 'CREDIT') {
+    return [
+      inventory,
+      { area: 'Treasury', description: 'Sin movimiento — no payment received.' },
+      { area: 'CxC', description: 'Full sale balance outstanding as receivable.' },
+      capital,
+    ];
+  }
+  if (mode === 'PARTIAL') {
+    return [
+      inventory,
+      { area: 'Treasury', description: 'Inflow of amount received to selected destination (Efectivo / Bancos / César).' },
+      { area: 'CxC', description: 'Remaining outstanding balance as receivable.' },
+      capital,
+    ];
+  }
+  if (mode === 'PAID') {
+    return [
+      inventory,
+      { area: 'Treasury', description: 'Inflow of amount received to selected destination (Efectivo / Bancos / César).' },
+      { area: 'CxC', description: 'No open receivable after sync (fully paid).' },
+      capital,
+    ];
+  }
+  return [
+    inventory,
+    { area: 'Treasury', description: 'Inflow only when payment is received (Efectivo / Bancos / César); credit sales leave treasury unchanged.' },
+    { area: 'CxC', description: 'Receivable reflects outstanding balance after any initial payment.' },
+    capital,
+  ];
+}
 
 export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
   define({ id: 'GET_LIQUIDITY', name: 'Get Liquidity', category: 'FINANCE', tier: 'NONE' }),
@@ -51,7 +91,16 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
   define({ id: 'SEARCH_INVENTORY', name: 'Search Inventory', category: 'INVENTORY', tier: 'NONE', required: ['query'], optional: ['status', 'limit'] }),
   define({ id: 'SEARCH_CLIENT', name: 'Search Client', category: 'CRM', tier: 'NONE', required: ['query'], optional: ['limit'] }),
   define({ id: 'GET_CLIENT_ACCOUNTS', name: 'Get Client Accounts', category: 'ACCOUNTS', tier: 'NONE', required: ['clientId'], optional: ['type', 'status'] }),
-  define({ id: 'REGISTER_SALE', name: 'Register Sale', category: 'SALES', tier: 'HIGH', required: ['watchId', 'customerId', 'price', 'currency'], optional: ['date', 'watchLabel', 'customerName', 'watchStatus'], effects: [{ area: 'Inventory', description: 'Selected watch becomes SOLD.' }, { area: 'Treasury', description: 'Sale proceeds are recorded in the selected currency.' }, { area: 'Capital', description: 'Profit is recalculated.' }], warnings: [warning('WATCH_RESERVED', 'The selected watch is reserved.', (e) => e.watchStatus === 'RESERVED')] }),
+  define({
+    id: 'REGISTER_SALE',
+    name: 'Register Sale',
+    category: 'SALES',
+    tier: 'HIGH',
+    required: ['watchId', 'customerId', 'price', 'currency'],
+    optional: ['date', 'watchLabel', 'customerName', 'watchStatus', 'paymentMode', 'amountReceived', 'destination', 'bankChannel'],
+    effectsBuilder: registerSaleEffects,
+    warnings: [warning('WATCH_RESERVED', 'The selected watch is reserved.', (e) => e.watchStatus === 'RESERVED')],
+  }),
   define({ id: 'REGISTER_RECEIVABLE_PAYMENT', name: 'Register Receivable Payment', category: 'ACCOUNTS', tier: 'HIGH', required: ['accountId', 'amount', 'destination'], optional: ['currency', 'date', 'outstandingAmount'], effects: [{ area: 'Accounts', description: 'Outstanding receivable is reduced.' }, { area: 'Treasury', description: 'Destination balance increases.' }], warnings: [warning('AMOUNT_EXCEEDS_OUTSTANDING', 'Payment amount exceeds the outstanding balance.', (e) => typeof e.amount === 'number' && typeof e.outstandingAmount === 'number' && e.amount > e.outstandingAmount)] }),
   define({ id: 'REGISTER_PURCHASE', name: 'Register Purchase', category: 'INVENTORY', tier: 'HIGH', required: ['watch', 'cost', 'currency'], optional: ['date', 'serial', 'duplicateSerial'], effects: [{ area: 'Inventory', description: 'A purchased watch is added to inventory.' }, { area: 'Treasury', description: 'Purchase funding is recorded.' }], warnings: [warning('DUPLICATE_SERIAL', 'The supplied serial already exists.', (e) => e.duplicateSerial === true)] }),
   define({ id: 'REGISTER_EXPENSE', name: 'Register Expense', category: 'EXPENSES', tier: 'MEDIUM', required: ['concept', 'amount', 'currency'], optional: ['date', 'sourceAccountId'], effects: [{ area: 'Expenses', description: 'Operating expense is recorded.' }, { area: 'Treasury', description: 'Source balance is reduced.' }] }),

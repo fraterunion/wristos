@@ -47,6 +47,8 @@ type PaymentWithSettlement = AccountPayment & Partial<SettlementPaymentLinks>;
 
 type EntryWithPayments = AccountEntry & { payments: PaymentWithSettlement[] };
 
+type DbClient = Prisma.TransactionClient | PrismaService;
+
 const paymentIncludeSettlement = {
   settlementAsReceivablePayment: {
     include: {
@@ -1048,8 +1050,18 @@ export class CuentasService {
 
   // ─── Deal sync ───────────────────────────────────────────────────────────────
 
-  async syncDealReceivable(dealId: string, tenantId: string): Promise<void> {
-    const deal = await this.prisma.deal.findFirst({
+  /**
+   * Canonical deal → AccountEntry RECEIVABLE sync.
+   * Pass `tx` to participate in an outer Prisma transaction (sale registration).
+   * Returns the active receivable row when one exists after sync, otherwise null.
+   */
+  async syncDealReceivable(
+    dealId: string,
+    tenantId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<AccountEntry | null> {
+    const db: DbClient = tx ?? this.prisma;
+    const deal = await db.deal.findFirst({
       where: { id: dealId, tenantId, deletedAt: null },
       include: {
         client: { select: { name: true } },
@@ -1058,24 +1070,24 @@ export class CuentasService {
     });
 
     if (!deal) {
-      await this.cancelDealEntries(dealId, tenantId);
-      return;
+      await this.cancelDealEntries(dealId, tenantId, db);
+      return null;
     }
 
     // Completed historical sales snapshots must never become live AR.
     if (isHistoricalDealSourceTag(deal.sourceTag)) {
-      return;
+      return null;
     }
 
     if (
       deal.stage !== DealStage.PENDING_PAYMENT &&
       deal.stage !== DealStage.CLOSED_WON
     ) {
-      await this.cancelDealEntries(dealId, tenantId);
-      return;
+      await this.cancelDealEntries(dealId, tenantId, db);
+      return null;
     }
 
-    const existing = await this.prisma.accountEntry.findFirst({
+    const existing = await db.accountEntry.findFirst({
       where: {
         tenantId,
         dealId,
@@ -1084,11 +1096,12 @@ export class CuentasService {
       },
     });
 
+    let entry = existing;
     if (!existing) {
       const watchLabel = deal.watch
         ? `${deal.watch.brand} ${deal.watch.model}`
         : 'Histórico';
-      await this.prisma.accountEntry.create({
+      entry = await db.accountEntry.create({
         data: {
           tenant: { connect: { id: tenantId } },
           type: AccountEntryType.RECEIVABLE,
@@ -1108,17 +1121,23 @@ export class CuentasService {
         },
       });
     } else if (!existing.totalAmount.equals(deal.agreedPrice)) {
-      await this.prisma.accountEntry.update({
+      entry = await db.accountEntry.update({
         where: { id: existing.id },
         data: { totalAmount: deal.agreedPrice },
       });
     }
 
-    await this.refreshEntryStatusForDeal(dealId, tenantId);
+    void entry;
+    return this.refreshEntryStatusForDeal(dealId, tenantId, db);
   }
 
-  async refreshEntryStatusForDeal(dealId: string, tenantId: string): Promise<void> {
-    const entry = await this.prisma.accountEntry.findFirst({
+  async refreshEntryStatusForDeal(
+    dealId: string,
+    tenantId: string,
+    tx?: Prisma.TransactionClient | DbClient,
+  ): Promise<AccountEntry | null> {
+    const db: DbClient = tx ?? this.prisma;
+    const entry = await db.accountEntry.findFirst({
       where: {
         tenantId,
         dealId,
@@ -1127,24 +1146,30 @@ export class CuentasService {
       },
     });
 
-    if (!entry) return;
+    if (!entry) return null;
 
-    const paidTotal = await this.getDealPaidTotal(tenantId, dealId);
+    const paidTotal = await this.getDealPaidTotal(tenantId, dealId, db);
     const { status, closedAt } = this.resolveStatus(entry, paidTotal);
 
     if (
       entry.status !== status ||
       entry.closedAt?.getTime() !== closedAt?.getTime()
     ) {
-      await this.prisma.accountEntry.update({
+      return db.accountEntry.update({
         where: { id: entry.id },
         data: { status, closedAt },
       });
     }
+
+    return entry;
   }
 
-  private async cancelDealEntries(dealId: string, tenantId: string): Promise<void> {
-    const entries = await this.prisma.accountEntry.findMany({
+  private async cancelDealEntries(
+    dealId: string,
+    tenantId: string,
+    db: DbClient = this.prisma,
+  ): Promise<void> {
+    const entries = await db.accountEntry.findMany({
       where: {
         tenantId,
         dealId,
@@ -1155,10 +1180,10 @@ export class CuentasService {
 
     const now = new Date();
     for (const entry of entries) {
-      const paidTotal = await this.getDealPaidTotal(tenantId, dealId);
+      const paidTotal = await this.getDealPaidTotal(tenantId, dealId, db);
       const { status } = this.resolveStatus(entry, paidTotal);
       if (status !== AccountEntryStatus.PAID) {
-        await this.prisma.accountEntry.update({
+        await db.accountEntry.update({
           where: { id: entry.id },
           data: { deletedAt: now },
         });
@@ -1265,10 +1290,11 @@ export class CuentasService {
   private async getDealPaidTotals(
     tenantId: string,
     dealIds: string[],
+    db: DbClient = this.prisma,
   ): Promise<Map<string, Prisma.Decimal>> {
     if (dealIds.length === 0) return new Map();
 
-    const aggs = await this.prisma.payment.groupBy({
+    const aggs = await db.payment.groupBy({
       by: ['dealId'],
       where: {
         tenantId,
@@ -1284,8 +1310,12 @@ export class CuentasService {
     );
   }
 
-  private async getDealPaidTotal(tenantId: string, dealId: string): Promise<Prisma.Decimal> {
-    const map = await this.getDealPaidTotals(tenantId, [dealId]);
+  private async getDealPaidTotal(
+    tenantId: string,
+    dealId: string,
+    db: DbClient = this.prisma,
+  ): Promise<Prisma.Decimal> {
+    const map = await this.getDealPaidTotals(tenantId, [dealId], db);
     return map.get(dealId) ?? new Prisma.Decimal(0);
   }
 

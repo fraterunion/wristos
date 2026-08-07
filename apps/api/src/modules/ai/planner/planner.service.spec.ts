@@ -53,7 +53,20 @@ describe('PlannerService', () => {
     expect(plan.state).toBe('READY_FOR_CONFIRMATION');
     expect(plan.warnings).toEqual([{ code: 'WATCH_RESERVED', message: 'The selected watch is reserved.' }]);
     expect(plan.preview).toEqual(expect.objectContaining({ title: 'Register Sale', confirmationTier: 'HIGH', warnings: plan.warnings }));
-    expect(plan.preview?.estimatedEffects.map((effect) => effect.area)).toEqual(['Inventory', 'Treasury', 'Capital']);
+    expect(plan.preview?.estimatedEffects.map((effect) => effect.area)).toEqual(['Inventory', 'Treasury', 'CxC', 'Capital']);
+  });
+
+  it('REGISTER_SALE preview matches payment-mode canonical semantics', () => {
+    const credit = planner.plan({ intent: 'REGISTER_SALE', entities: { ...saleEntities, paymentMode: 'CREDIT' } }, context);
+    expect(credit.preview?.estimatedEffects).toEqual([
+      { area: 'Inventory', description: 'Selected watch becomes SOLD.' },
+      { area: 'Treasury', description: 'Sin movimiento — no payment received.' },
+      { area: 'CxC', description: 'Full sale balance outstanding as receivable.' },
+      { area: 'Capital', description: 'Profit is recalculated.' },
+    ]);
+    const paid = planner.plan({ intent: 'REGISTER_SALE', entities: { ...saleEntities, paymentMode: 'PAID' } }, context);
+    expect(paid.preview?.estimatedEffects.find((e) => e.area === 'Treasury')?.description).toContain('Inflow');
+    expect(paid.preview?.estimatedEffects.find((e) => e.area === 'CxC')?.description).toContain('No open receivable');
   });
 
   it('builds a deterministic execution plan without executing a tool', () => {

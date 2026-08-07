@@ -916,6 +916,9 @@ model Deal {
   importFingerprint            String?
   importSourceRow              Int?
   sourceTag                    String?
+  /// Durable sale-registration idempotency key (nullable for legacy / unkeyed manual sales).
+  /// Future AI: `ai-action-run:<actionRunId>`. Unique per tenant when non-null.
+  registerIdempotencyKey       String?
   deletedAt                    DateTime?
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
@@ -930,6 +933,7 @@ model Deal {
   receivable            Receivable?
 
   @@unique([tenantId, importFingerprint])
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, stage])
   @@index([tenantId, clientId])

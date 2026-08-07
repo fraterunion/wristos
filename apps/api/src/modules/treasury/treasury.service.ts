@@ -13,6 +13,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 type CoercibleDecimal = Prisma.Decimal | number | string;
 
+type DbClient = Prisma.TransactionClient | PrismaService;
+
 export type CreateFromAccountPaymentArgs = {
   tenantId: string;
   accountPaymentId: string;
@@ -23,6 +25,22 @@ export type CreateFromAccountPaymentArgs = {
   exchangeRateUsed?: CoercibleDecimal | null;
   transactionDate: Date;
   description?: string | null;
+};
+
+export type CreateFromDealPaymentArgs = {
+  tenantId: string;
+  dealPaymentId: string;
+  account: TreasuryAccount;
+  direction: TreasuryDirection;
+  amount: CoercibleDecimal;
+  currency: Currency;
+  exchangeRateUsed?: CoercibleDecimal | null;
+  transactionDate: Date;
+  description?: string | null;
+  /** Structured bank commission (Control Bancos). Leave unset for sale OpEx fees. */
+  commission?: CoercibleDecimal | null;
+  /** Optional transaction client for atomic sale registration. */
+  tx?: Prisma.TransactionClient;
 };
 
 export type UpdateFromAccountPaymentArgs = {
@@ -102,6 +120,87 @@ export class TreasuryService {
     }
 
     return this.prisma.treasuryEntry.create({ data });
+  }
+
+  /**
+   * Canonical treasury write for deal Payment rows (sale / add-payment).
+   * Idempotent on unique `dealPaymentId`. Accepts optional transaction client.
+   *
+   * Sale bank fees remain OperatingExpense BANK_FEES (Ventas semantics).
+   * Do not set `commission` on sale-originated inflows unless intentionally
+   * migrating fee accounting off OpEx — setting both double-counts monthly profit.
+   */
+  async createFromDealPayment(args: CreateFromDealPaymentArgs) {
+    const db: DbClient = args.tx ?? this.prisma;
+    const existing = await db.treasuryEntry.findUnique({
+      where: { dealPaymentId: args.dealPaymentId },
+    });
+
+    if (existing && existing.deletedAt === null) {
+      return existing;
+    }
+
+    const { amount, amountMxn, exchangeRate } = this.resolveAmounts(
+      args.amount,
+      args.currency,
+      args.exchangeRateUsed,
+    );
+
+    const commission =
+      args.commission === undefined || args.commission === null
+        ? null
+        : new Prisma.Decimal(args.commission.toString());
+
+    const data = {
+      tenantId: args.tenantId,
+      account: args.account,
+      direction: args.direction,
+      amount,
+      currency: args.currency,
+      amountMxn,
+      exchangeRate,
+      commission,
+      transactionDate: args.transactionDate,
+      description: args.description ?? null,
+      dealPaymentId: args.dealPaymentId,
+      deletedAt: null,
+    };
+
+    if (existing) {
+      return db.treasuryEntry.update({
+        where: { id: existing.id },
+        data,
+      });
+    }
+
+    try {
+      return await db.treasuryEntry.create({ data });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await db.treasuryEntry.findUnique({
+          where: { dealPaymentId: args.dealPaymentId },
+        });
+        if (raced && raced.deletedAt === null) {
+          return raced;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** Maps deal PaymentMethod → TreasuryAccount. BANCOS → BANK. */
+  static treasuryAccountForPaymentMethod(
+    method: 'CASH' | 'BANCOS' | 'CESAR' | string,
+  ): TreasuryAccount {
+    if (method === 'CASH') return TreasuryAccount.CASH;
+    if (method === 'CESAR') return TreasuryAccount.CESAR;
+    if (method === 'BANCOS') return TreasuryAccount.BANK;
+    throw new BadRequestException(
+      `Unsupported payment method for treasury: ${method}`,
+    );
   }
 
   async updateFromAccountPayment(

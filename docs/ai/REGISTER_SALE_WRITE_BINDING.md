@@ -1,248 +1,171 @@
-# REGISTER_SALE Write Binding — Domain Audit & Schema Gate
+# REGISTER_SALE Write Binding — Canonical Sale Domain (Commit 12A)
 
-**Status: SCHEMA GATE — STOPPED (no write execution implemented)**
+**Status: CANONICAL SALE READY — AI WRITE BINDING NEXT (not implemented)**
 
 Date: 2026-08-07  
-Branch intent: `feature/ai-register-sale-write-binding`  
-Commit 12 scope: enable exactly one write capability (`REGISTER_SALE`) behind confirmation.
+Branch: `feature/ai-register-sale-write-binding`
 
-This document records the canonical sale-domain audit and the **blocking** durable-idempotency gap. Per Commit 12 Part 11 / Part 25: write execution must not ship without a durable database uniqueness boundary.
+This document describes the **canonical sale registration command** that manual Ventas and future AI `REGISTER_SALE` must share. AI write execution is **not** enabled in 12A.
 
 ---
 
-## 1. Canonical sale source of truth
-
-**Reuse:** `DealsService.registerSale(tenantId, dto: RegisterSaleDto)`
+## 1. Canonical sale command
 
 | Layer | Path |
 | --- | --- |
-| Service | `apps/api/src/modules/deals/deals.service.ts` → `registerSale` |
-| HTTP | `POST /deals/register-sale` (`DealsController`) |
-| Admin | `apps/admin/src/lib/ventas-api.ts` → Ventas `RegisterSaleModal` |
+| Domain | `SaleRegistrationService.register()` — `apps/api/src/modules/deals/sale-registration.service.ts` |
+| Manual HTTP | `POST /deals/register-sale` → `DealsService.registerSale` → canonical command |
+| Follow-on payment | `SaleRegistrationService.addPayment` (Treasury + CXC atomic) |
 
-Do **not** invent AI-only accounting. Do **not** use pipeline `create()`, storefront checkout, or receivables-only writers.
+Do **not** invent AI-only accounting. Do **not** use pipeline `create()`, storefront checkout, or receivables-only writers for sale registration.
 
----
-
-## 2. Exact records / effects today
-
-### Inside `prisma.$transaction`
-
-| Record | When |
-| --- | --- |
-| **Deal** (`CLOSED_WON`) | Always |
-| **Payment** (`PAID`) | If legacy full `paymentMethod` **or** `initialPaymentAmount > 0` |
-| **OperatingExpense** (`BANK_FEES`) | If payment method `BANCOS` + `bankChannel` JOSE/MAYTE |
-| **Watch** → `SOLD` | Always |
-
-### After commit (not rolled back with the sale)
-
-| Effect | Method |
-| --- | --- |
-| **AccountEntry** RECEIVABLE (`DEAL_AUTO` / `SALE_BALANCE`) | `syncReceivableSafe` → `CuentasService.syncDealReceivable` |
-| **TreasuryEntry** | **Not written** by `registerSale` |
-
-Planner preview copy that claims Treasury liquidity movement is **aspirational** relative to current domain behavior. AI receipts must not claim Treasury effects the domain does not perform.
-
----
-
-## 3. Payment-mode support (domain reality)
-
-There is **no** domain enum `PAID | CREDIT | PARTIAL` on sales. Behavior is amount-driven (`computedStatus`):
-
-| Intent | Domain payload | Result |
-| --- | --- | --- |
-| CREDIT / pendiente | Omit payment / amount 0 | Deal + Watch SOLD; no Payment → PENDIENTE; CXC via AR sync |
-| PARTIAL | `initialPaymentAmount` &lt; sale MXN + method | Payment + PARCIAL; remaining CXC |
-| PAID | Full amount (or legacy `paymentMethod` alone) | Payment + PAGADO; no remaining CXC |
-
-Destination is **`PaymentMethod`**: `CASH` | `BANCOS` | `CESAR` (not a separate DTO “destination” field).  
-`BANCOS` requires `bankChannel`: `JOSE` | `MAYTE`.
-
-AI `paymentMode` in intent-schema is detection-only today and is **not** wired into `RegisterSaleDto`.
-
-### Safely supportable for AI v1 (after schema)
-
-1. **CREDIT** — safest (no payment / no bank fee path)
-2. **PARTIAL / PAID** — only after mapping to `initialPaymentAmount` + method (+ bankChannel when BANCOS)
-3. Do **not** promise Treasury updates until domain writes them
-
----
-
-## 4. Permission model
-
-| Layer | Gate |
-| --- | --- |
-| Manual deals API | `JwtAuthGuard` only — **no** role decorator |
-| Admin Ventas | Authenticated app membership |
-| AI bindings (reads) | Active `tenantUser` membership |
-
-AI write must enforce **at least** JWT + active tenant membership (same as manual). No finer `sales.write` permission exists today.
-
----
-
-## 5. Atomicity assessment
-
-| Boundary | Atomic? |
-| --- | --- |
-| Deal + Payment + OpEx + Watch SOLD | **Yes** (`$transaction`) |
-| AccountEntry AR sync | **No** — post-commit best-effort; failure logged, sale not rolled back |
-| Concurrent double-submit | **Race** — app-level “already sold / other won deal” checks, not a unique DB constraint on `(tenantId, watchId)` for won deals |
-
-AI must not introduce a worse partial path. Reuse `registerSale`. Document AR sync as post-commit (same as UI).
-
----
-
-## 6. Confirmation / freshness flow (target architecture — not implemented)
-
-```
-NL / structured REGISTER_SALE
-→ Planner (HIGH tier) → READY_FOR_CONFIRMATION preview
-→ POST /ai/action-runs/:id/confirm (fingerprint)
-→ server-owned WritePlanRunner
-→ revalidate fingerprint + workspace/entity versions + sellable watch + customer + auth
-→ WRITE binding REGISTER_SALE only
-→ DealsService.registerSale
-→ COMPLETED + receipt
-```
-
-Today: `RuntimeService.confirm` **only marks confirmed** — it does **not** execute domain writes. `CapabilityBindingDefinition.mode` is `'READ'` only. All write capabilities remain unbound.
-
----
-
-## 7. Durable business-write idempotency — SCHEMA GATE
-
-### Existing fields
-
-| Model | Relevant fields | Sufficient for AI sale idempotency? |
-| --- | --- | --- |
-| **Deal** | `sourceTag`, `importFingerprint` (+ unique with tenant) | **No** — import-only; unused by `registerSale` |
-| **Payment** | soft-delete only | **No** |
-| **AIActionRun** | `idempotencyKey` **indexed, not unique** | **Insufficient alone** — concurrent confirm can still double-call `registerSale` |
-| **AIRequest** | `clientRequestId` unique per actor | Protects NL claim, **not** domain sale rows |
-| **AccountSettlement** | optional `idempotencyKey` + `@@unique([tenantId, idempotencyKey])` | Pattern to copy |
-
-### Gap (blocking)
-
-`DealsService.registerSale` is **not idempotent**.  
-Commit 12 requires: one confirmed ActionRun → at most one Deal / Payment / Watch transition.
-
-**In-memory locks are forbidden.**
-
-### Proposed additive schema (TYPE C — not applied)
-
-```prisma
-// Deal — durable AI / client sale idempotency
-model Deal {
-  // ...existing fields...
-  /// Opaque key for register-sale retries (e.g. "ai-action-run:<actionRunId>")
-  registerIdempotencyKey String?
-  @@unique([tenantId, registerIdempotencyKey])
-}
-
-// Optional hardening
-model AIActionRun {
-  idempotencyKey String
-  @@unique([tenantId, idempotencyKey])  // upgrade from @@index
-}
-```
-
-**Semantics:**
-
-1. Write binding sets `registerIdempotencyKey = \`ai-action-run:${actionRunId}\`` (or fingerprint-stable variant).
-2. Unique constraint makes concurrent/duplicate confirms converge on one Deal.
-3. On unique conflict: load existing Deal, return same receipt (idempotent replay).
-4. Extend `RegisterSaleDto` / `registerSale` to accept optional key and persist it.
-
-**Rollback implications:** additive nullable unique column — safe forward; backfill not required for historical deals (nulls allowed; Postgres unique allows multiple nulls).
-
-**Audit enums:** Prefer existing `EXECUTION_STARTED` / `EXECUTION_COMPLETED` / `EXECUTION_FAILED` (+ ActionRun replay audits) before adding `WRITE_EXECUTION_*` (enum additions are also TYPE C).
-
----
-
-## 8. Execution result / receipt model (target)
-
-After schema + implementation:
+### Input (business truth)
 
 ```ts
 {
-  actionId: string
-  executionState: 'EXECUTED'
-  success: true
-  affectedEntities: [
-    { type: 'WATCH'; idHash: string; effect: 'SOLD' },
-    { type: 'DEAL'; idHash: string; effect: 'CREATED' },
-    // Payment / AccountEntry hashes when created
-  ]
-  receipt: {
-    dealId?: string  // frontend navigation if permitted
-    amount: string
-    currency: 'MXN' | 'USD'
-    paymentMode: 'PAID' | 'CREDIT' | 'PARTIAL'
-    effectiveDate: string
-  }
-  warnings: string[]
-  rollbackPossible: false  // conversational rollback not implemented
+  watchId, clientId, agreedPrice, currency?, soldAt?, notes?,
+  payment?: { amountReceived?, method?, bankChannel?, paidAt? },
+  legacyFullPaymentMethod?, // paymentMethod alone ⇒ full payment
+  registerIdempotencyKey?,
 }
 ```
 
-Success copy (“Listo / Registrado”) **only** after server-confirmed execution.
+### Result
+
+```ts
+{ deal, watchId, payment?, treasuryEntry?, receivable?, bankFee?,
+  bankFeeAmount, paidTotal, pendingAmount, computedStatus, bankChannel,
+  canonicalMxn, replayed }
+```
 
 ---
 
-## 9. Reversal / correction model (current domain)
+## 2. Final canonical sale semantics
 
-| Operation | Behavior |
+| Mode | Deal | Watch | Payment | Treasury | CXC | Bank fee |
+| --- | --- | --- | --- | --- | --- | --- |
+| **PAID** (full received) | `CLOSED_WON` | `SOLD` | yes | INFLOW to CASH / BANK / CESAR | no outstanding (`PAID`) | OpEx `BANK_FEES` if BANCOS |
+| **CREDIT** (no payment) | `CLOSED_WON` | `SOLD` | none | no inflow | full outstanding | none |
+| **PARTIAL** | `CLOSED_WON` | `SOLD` | received amt | INFLOW received amt | remainder outstanding | OpEx if BANCOS on received amt |
+
+There is still **no** persisted `PAID \| CREDIT \| PARTIAL` enum — status is amount-driven (`computedStatus`).
+
+Payment methods: `CASH` \| `BANCOS` \| `CESAR`. `BANCOS` requires `bankChannel` `JOSE` (2%) / `MAYTE` (1%).
+
+---
+
+## 3. Treasury integration decision
+
+Dashboard liquidity uses `TreasuryService.getAccountBalances`.
+
+**Decision:** every received deal `Payment` creates exactly one `TreasuryEntry` via `TreasuryService.createFromDealPayment` (unique `dealPaymentId`).
+
+| PaymentMethod | TreasuryAccount |
 | --- | --- |
-| Soft-delete deal | Cancels unpaid DEAL_AUTO AR; **does not revive Watch from SOLD** |
-| Stage → CLOSED_LOST | Does not revive SOLD (V1) |
-| addPayment / remove payment | Balance corrections |
-| Conversational reverse | **Not implemented** |
+| CASH | CASH |
+| BANCOS | BANK |
+| CESAR | CESAR |
 
-Receipt CTA after execution: **“Corregir en Ventas”** — do not promise rollback.
+- Direction: `INFLOW`
+- Amount: payment amount (MXN)
+- **`commission` left null** on sale-originated rows
 
----
+**Bank commission (exactly once):** remains **OperatingExpense `BANK_FEES`** (existing Ventas / monthly-profit OpEx path). Do **not** also set `TreasuryEntry.commission` for the same fee — that would double-count (`bankCommissionsMxn` + OpEx).
 
-## 10. Other write capabilities
-
-Remain **UNBOUND / non-executable**:
-
-- REGISTER_RECEIVABLE_PAYMENT  
-- REGISTER_PURCHASE  
-- REGISTER_EXPENSE  
-- REGISTER_SETTLEMENT  
-- REGISTER_CRYPTO_POSITION  
-- REGISTER_CRYPTO_PRICE  
+Control Bancos structured commissions (migrated) continue to use `TreasuryEntry.commission` only.
 
 ---
 
-## 11. Deployment classification (when unblocked)
+## 4. Cuentas atomicity
 
-| Phase | Classification |
+`CuentasService.syncDealReceivable(dealId, tenantId, tx?)` accepts an optional Prisma transaction client.
+
+Canonical sale runs **inside one** `$transaction`:
+
+1. Deal `CLOSED_WON` (+ optional `registerIdempotencyKey`)
+2. Payment (if received)
+3. Treasury inflow (if payment)
+4. OpEx bank fee (if BANCOS)
+5. Watch → `SOLD`
+6. `syncDealReceivable(..., tx)` → AccountEntry status
+
+Failure anywhere rolls back all of the above. No post-commit best-effort AR sync on the canonical path.
+
+Historical `sourceTag` deals still skip live AR (unchanged).
+
+---
+
+## 5. Durable Deal idempotency
+
+```prisma
+registerIdempotencyKey String?
+@@unique([tenantId, registerIdempotencyKey])
+```
+
+- Nullable: legacy / unkeyed manual sales remain valid (PostgreSQL UNIQUE allows multiple NULLs).
+- Future AI: `ai-action-run:<actionRunId>`
+- Manual UI: optional `registerIdempotencyKey` on DTO; omit ⇒ null
+- Same tenant + key + compatible payload → return existing sale (`replayed: true`)
+- Same key + conflicting payload → `409 Conflict`
+- Concurrent same key → DB unique + P2002 recovery → one Deal
+
+Migration (local / additive only): `prisma/migrations/20260807120000_deal_register_idempotency_key/`
+
+**Do not** run production migrate in 12A.
+
+---
+
+## 6. AIActionRun unique-key decision
+
+**Do NOT** add `@@unique([tenantId, idempotencyKey])` on `AIActionRun`.
+
+| Concern | Owner |
 | --- | --- |
-| Additive Deal idempotency (+ optional AIActionRun unique) | **TYPE C** — manual `prisma migrate deploy` |
-| Write binding + confirm→execute orchestration + Admin CTA | **TYPE B** + small **TYPE A** |
-| Combined release | TYPE C first on production DB, then code |
+| Request-level idempotency | `AIRequest` (`@@unique([tenantId, idempotencyKey])`) |
+| Business-write idempotency | `Deal.registerIdempotencyKey` |
+| ActionRun `idempotencyKey` | Indexed only today; conversation planning artifact |
+
+No proven invariant requires ActionRun uniqueness; existing data compatibility was not established. Keep concerns separate.
 
 ---
 
-## 12. Next steps (after explicit schema approval)
+## 7. Manual path compatibility
 
-1. Approve and author Prisma migration for `Deal.registerIdempotencyKey` (+ optional ActionRun unique).
-2. Extend `RegisterSaleDto` / `registerSale` to honor the key (idempotent create-or-return).
-3. Introduce WRITE capability binding mode + single `REGISTER_SALE` binding → `DealsService.registerSale`.
-4. Wire confirm → freshness checks → WritePlanRunner → execution → receipt.
-5. Frontend: “Confirmar venta” only for executable REGISTER_SALE plans.
-6. Full test matrix (architecture, idempotency, PAID/CREDIT, stale, permission, audit).
-7. Production smoke **only** on disposable test fixture — never a real Rolex.
+`POST /deals/register-sale` response shape preserved (`salePrice`, `paidTotal`, `computedStatus`, `bankFee`, …). Additive fields: `registerIdempotencyKey`, `replayed`.
+
+Legacy `paymentMethod` without `initialPaymentAmount` still means full payment.
 
 ---
 
-## Confirmation
+## 8. AI preview truth (planner)
 
-This commit work **stopped at the schema gate**.
+`REGISTER_SALE` estimated effects are payment-mode aware (`paymentMode` PAID / CREDIT / PARTIAL) and match canonical semantics. Previews must not promise Treasury movement for credit sales.
 
-- No write binding was enabled.
-- No REGISTER_SALE execution path was added.
-- No Prisma migration was applied.
-- All write capabilities remain non-executable in production.
+---
+
+## 9. Correction / reversal limitations
+
+Soft-deleting a Deal (`DealsService.remove`):
+
+- Sets `Deal.deletedAt`
+- Syncs CXC (cancels open deal receivables)
+- **Does not revive Watch** from `SOLD` (V1: “Do not revive SOLD status”)
+
+Therefore future AI receipt copy **“Corregir en Ventas”** is truthful only as a manual correction path — conversational reversal is **out of scope** for 12A / must not claim automatic inventory revive.
+
+Before AI write execution: operators must understand correction is manual and inventory may stay SOLD until fixed in Ventas/inventory tools.
+
+---
+
+## 10. Remaining blocker before REGISTER_SALE AI execution
+
+1. Production migration of `Deal.registerIdempotencyKey` (TYPE C — manual `prisma migrate deploy`)
+2. Commit 12 write binding: confirmation → `SaleRegistrationService.register` with `registerIdempotencyKey = ai-action-run:<actionRunId>`
+3. No AI-specific accounting forks
+
+---
+
+## 11. Quality / safety
+
+- Implementation only — no production migrate, no production sales, no Wrist Caviar data writes
+- TYPE C additive schema change
