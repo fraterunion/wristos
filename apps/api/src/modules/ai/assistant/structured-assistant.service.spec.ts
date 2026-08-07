@@ -50,10 +50,20 @@ describe('StructuredAssistantService', () => {
   });
 
   it('returns a truthful write preview without resolving or executing a binding', async () => {
-    planner.plan.mockReturnValue({ ...basePlan, businessAction: 'REGISTER_SALE', confirmationTier: 'HIGH', executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_SALE' }] });
-    const response = await service.execute(actor, { intent: 'REGISTER_SALE', entities: { watchId: 'w', customerId: 'c', price: '1.00', currency: 'USD' }, surface: 'API', clientRequestId: 'write' });
+    planner.plan.mockReturnValue({ ...basePlan, businessAction: 'REGISTER_EXPENSE', confirmationTier: 'HIGH', executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_EXPENSE' }] });
+    const response = await service.execute(actor, { intent: 'REGISTER_EXPENSE', entities: { concept: 'Rent', amount: '1.00', currency: 'USD' }, surface: 'API', clientRequestId: 'write' });
     expect(response.responseType).toBe('ACTION_PREVIEW_CARD');
     expect(response.payload.message).toBe('Esta acción todavía no está habilitada para ejecución desde el asistente.');
+    expect(response.payload.executable).toBe(false);
+    expect(readRunner.run).not.toHaveBeenCalled();
+  });
+
+  it('marks REGISTER_SALE preview as executable for confirmation without executing yet', async () => {
+    planner.plan.mockReturnValue({ ...basePlan, businessAction: 'REGISTER_SALE', confirmationTier: 'HIGH', executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_SALE' }] });
+    const response = await service.execute(actor, { intent: 'REGISTER_SALE', entities: { watchId: 'w', customerId: 'c', price: '1.00', currency: 'USD', paymentMode: 'CREDIT' }, surface: 'API', clientRequestId: 'write-sale' });
+    expect(response.responseType).toBe('ACTION_PREVIEW_CARD');
+    expect(response.payload.executable).toBe(true);
+    expect(response.payload.message).toBe('Revisa el resumen y confirma para registrar la venta.');
     expect(readRunner.run).not.toHaveBeenCalled();
   });
 

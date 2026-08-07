@@ -23,6 +23,7 @@ export function ConversationThread({
   onContinue,
   onRestart,
   onSearchAgain,
+  onConfirmSale,
   manualHrefFor,
   emptyState,
 }: {
@@ -37,6 +38,7 @@ export function ConversationThread({
   onContinue: (item: AssistantHistoryItem, entities: Record<string, JsonValue>) => void;
   onRestart: (item: AssistantHistoryItem) => void;
   onSearchAgain?: () => void;
+  onConfirmSale?: (item: AssistantHistoryItem, args: { actionRunId: string; planFingerprint: string }) => void;
   manualHrefFor?: (item: AssistantHistoryItem) => string | undefined;
   emptyState?: React.ReactNode;
 }) {
@@ -129,6 +131,11 @@ export function ConversationThread({
                 response={item.response}
                 onSelectClient={selectClient}
                 onContinue={(entities) => onContinue(item, entities)}
+                onConfirmSale={
+                  onConfirmSale
+                    ? (args) => onConfirmSale(item, args)
+                    : undefined
+                }
                 onSearchAgain={onSearchAgain}
                 onEdit={() => onRestart(item)}
                 onDismiss={() => setDismissed((current) => new Set(current).add(item.id))}

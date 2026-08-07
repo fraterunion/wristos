@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { CrmModule } from '../crm/crm.module';
 import { CuentasModule } from '../cuentas/cuentas.module';
+import { DealsModule } from '../deals/deals.module';
 import { HistoryModule } from '../history/history.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { AIController } from './ai.controller';
@@ -18,6 +19,9 @@ import { BusinessCapabilityCatalog } from './planner/capabilities/business-capab
 import { CapabilityBindingRegistry } from './bindings/capability-binding-registry';
 import { CapabilityBindingService } from './bindings/capability-binding.service';
 import { ReadPlanRunner } from './bindings/read-plan-runner';
+import { RegisterSaleWriteBinding } from './bindings/write/register-sale.binding';
+import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
+import { WritePlanRunner } from './bindings/write-plan-runner';
 import { AIRequestService } from './assistant/ai-request.service';
 import { StructuredAssistantPersistence } from './assistant/structured-assistant.persistence';
 import { StructuredAssistantService } from './assistant/structured-assistant.service';
@@ -29,7 +33,7 @@ import { ReferenceResolverService } from './context/reference-resolver.service';
 import { WorkingContextService } from './context/working-context.service';
 
 @Module({
-  imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule],
+  imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule, DealsModule],
   controllers: [AIController],
   providers: [
     AuditService,
@@ -44,6 +48,9 @@ import { WorkingContextService } from './context/working-context.service';
     CapabilityBindingRegistry,
     CapabilityBindingService,
     ReadPlanRunner,
+    RegisterSaleWriteBinding,
+    WriteCapabilityBindingRegistry,
+    WritePlanRunner,
     AIRequestService,
     StructuredAssistantPersistence,
     StructuredAssistantService,
@@ -58,6 +65,6 @@ import { WorkingContextService } from './context/working-context.service';
     NaturalLanguageAssistantService,
     IntentAdapterRateLimitGuard,
   ],
-  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner, AIRequestService, StructuredAssistantService, IntentAdapterService, NaturalLanguageAssistantService],
+  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner, WriteCapabilityBindingRegistry, WritePlanRunner, AIRequestService, StructuredAssistantService, IntentAdapterService, NaturalLanguageAssistantService],
 })
 export class AIModule {}

@@ -51,7 +51,7 @@ describe('ReadPlanRunner', () => {
   it('rejects write, mixed, and above-Tier-0 plans', async () => {
     const service = { executeCapability: jest.fn() };
     const runner = new ReadPlanRunner(planner, registry, service as never, runtime as never);
-    const write = planner.plan({ intent: 'REGISTER_SALE', entities: { watchId: 'w', customerId: 'c', price: '1.00', currency: 'MXN' } }, current);
+    const write = planner.plan({ intent: 'REGISTER_SALE', entities: { watchId: 'w', customerId: 'c', price: '1.00', currency: 'MXN', paymentMode: 'CREDIT' } }, current);
     await expect(runner.run({ plan: write, current, expectedFingerprint: write.fingerprint, toolContext: context })).rejects.toThrow('tier');
     const mixed = readPlan();
     mixed.executionSteps.push({ stepId: 'write', capability: 'REGISTER_SALE', arguments: {}, dependsOn: [], estimatedEffects: [], reversibility: 'NONE' });

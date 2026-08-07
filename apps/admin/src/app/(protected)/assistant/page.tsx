@@ -23,6 +23,8 @@ import {
   AssistantMessageRequestError,
   AssistantRequestError,
   clearResumeHint,
+  confirmAssistantActionRun,
+  confirmResultToAssistantResponse,
   createAssistantAction,
   createAssistantMessageAction,
   readResumeHint,
@@ -139,6 +141,7 @@ export default function AssistantPage() {
   const [messagePendingLabel, setMessagePendingLabel] = useState<string | null>(null);
   const [messageRetryAction, setMessageRetryAction] = useState<AssistantMessageAction | null>(null);
   const [messageError, setMessageError] = useState<string | null>(null);
+  const [confirmingSale, setConfirmingSale] = useState(false);
   const [composerValue, setComposerValue] = useState('');
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [writeActionsOpen, setWriteActionsOpen] = useState(false);
@@ -323,6 +326,52 @@ export default function AssistantPage() {
 
   const manualHrefFor = useCallback((item: AssistantHistoryItem) => (item.intent === 'UNKNOWN' ? undefined : writeCards.find((card) => card.id === item.intent)?.href), []);
 
+  const confirmSale = useCallback(async (item: AssistantHistoryItem, args: { actionRunId: string; planFingerprint: string }) => {
+    if (pending || messagePending || confirmingSale || item.intent !== 'REGISTER_SALE') return;
+    setError(null);
+    setMessageError(null);
+    setConfirmingSale(true);
+    setMessagePendingLabel('Confirmar venta');
+    try {
+      const result = await confirmAssistantActionRun(args);
+      // In-flight: keep the original preview so the user retries the SAME actionRun.
+      if (result.interactionState === 'EXECUTING') {
+        setMessageError(result.message);
+        return;
+      }
+      const response = confirmResultToAssistantResponse(result, {
+        requestId: item.response.requestId,
+        conversationId: item.response.conversationId || workspace.conversationId || '',
+        workspaceId: item.response.workspaceId || workspace.workspaceId || '',
+        traceId: item.response.traceId,
+      });
+      const id = crypto.randomUUID();
+      setHistory((current) => [
+        {
+          id,
+          label: 'Confirmar venta',
+          intent: 'REGISTER_SALE',
+          entities: item.entities,
+          response,
+        },
+        ...current,
+      ]);
+      setHistoryTimestamps((current) => ({ ...current, [id]: Date.now() }));
+      if (response.workspaceId) {
+        void refreshWorkspaceVersion(response.workspaceId);
+      }
+    } catch (error) {
+      if (error instanceof AssistantRequestError) {
+        setMessageError(error.message);
+      } else {
+        setMessageError('No pude confirmar la venta. Reintenta la misma confirmación.');
+      }
+    } finally {
+      setConfirmingSale(false);
+      setMessagePendingLabel(null);
+    }
+  }, [pending, messagePending, confirmingSale, refreshWorkspaceVersion, workspace.conversationId, workspace.workspaceId]);
+
   const submitComposer = (event: FormEvent) => {
     event.preventDefault();
     const text = composerValue.trim();
@@ -334,8 +383,8 @@ export default function AssistantPage() {
 
   // True while either the structured or the natural-language flow has a
   // request in flight — both share one thread and must not overlap.
-  const busy = !!pending || !!messagePending;
-  const combinedPendingLabel = pendingLabel ?? messagePendingLabel;
+  const busy = !!pending || !!messagePending || confirmingSale;
+  const combinedPendingLabel = confirmingSale ? 'Confirmar venta' : (pendingLabel ?? messagePendingLabel);
   const combinedError = error ?? messageError;
   const combinedOnRetry = retryAction
     ? () => void runAction(retryAction, 'Reintentando la última solicitud.')
@@ -441,6 +490,7 @@ export default function AssistantPage() {
           onContinue={continueItem}
           onRestart={restartItem}
           onSearchAgain={() => openRead('SEARCH_CLIENT')}
+          onConfirmSale={confirmSale}
           manualHrefFor={manualHrefFor}
           timestamps={historyTimestamps}
           emptyState={emptyState}
@@ -540,6 +590,7 @@ export default function AssistantPage() {
               onContinue={continueItem}
               onRestart={restartItem}
               onSearchAgain={() => openRead('SEARCH_CLIENT')}
+              onConfirmSale={confirmSale}
               manualHrefFor={manualHrefFor}
               timestamps={historyTimestamps}
             />

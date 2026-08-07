@@ -86,12 +86,21 @@ export class StructuredAssistantService {
   }
 
   private writePreviewResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, plan: BusinessExecutionPlan): StructuredAssistantResponse {
+    const executable = plan.businessAction === 'REGISTER_SALE';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,
-      message: 'Esta acción todavía no está habilitada para ejecución desde el asistente.',
+      executable,
+      correctionPolicy: executable
+        ? 'Después de registrarla, cualquier corrección se realiza desde Ventas.'
+        : null,
+      message: executable
+        ? 'Revisa el resumen y confirma para registrar la venta.'
+        : 'Esta acción todavía no está habilitada para ejecución desde el asistente.',
       unchanged: 'No se ejecutó ni modificó ningún dato de negocio.',
-      nextAction: 'Usa el flujo canónico de la aplicación para completar esta acción.',
+      nextAction: executable
+        ? 'Confirma la venta para ejecutar el registro canónico.'
+        : 'Usa el flujo canónico de la aplicación para completar esta acción.',
     }, plan);
   }
 

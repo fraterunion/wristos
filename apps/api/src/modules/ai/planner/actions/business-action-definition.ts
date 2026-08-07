@@ -16,6 +16,8 @@ export interface BusinessActionDefinition {
   optionalEntities: readonly string[];
   clarificationQuestions: Readonly<Record<string, string>>;
   warningRules: readonly WarningRule[];
+  /** Extra missing fields derived from already-provided entities (e.g. payment destination). */
+  conditionalMissing?: (entities: StructuredEntities) => Array<{ entity: string; question: string }>;
   previewBuilder(entities: StructuredEntities, warnings: BusinessWarning[]): ConfirmationPreview;
   planningStrategy(entities: StructuredEntities): BusinessPlanStep[];
   capabilities: readonly BusinessCapability[];

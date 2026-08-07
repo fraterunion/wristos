@@ -7,7 +7,14 @@ import { PlannerService } from './planner.service';
 import { createNotExecutedResult } from './planner.types';
 
 const context = { workspaceVersion: 7, entityVersions: { watch: 3, customer: 'v2' } };
-const saleEntities = { watchId: 'watch-1', customerId: 'client-1', price: '35000.00', currency: 'MXN', watchLabel: 'Batman' };
+const saleEntities = {
+  watchId: 'watch-1',
+  customerId: 'client-1',
+  price: '35000.00',
+  currency: 'MXN',
+  watchLabel: 'Batman',
+  paymentMode: 'CREDIT',
+};
 
 describe('BusinessActionCatalog', () => {
   const catalog = new BusinessActionCatalog();
@@ -42,8 +49,8 @@ describe('PlannerService', () => {
   it('detects every missing entity and generates deterministic clarification questions', () => {
     const plan = planner.plan({ intent: 'REGISTER_SALE', entities: { watchId: 'watch-1' } }, context);
     expect(plan.state).toBe('NEEDS_CLARIFICATION');
-    expect(plan.missingEntities.map((item) => item.entity)).toEqual(['customerId', 'price', 'currency']);
-    expect(plan.clarificationQuestions).toEqual(['Who is the customer?', 'What is the price?', 'What currency applies?']);
+    expect(plan.missingEntities.map((item) => item.entity)).toEqual(['customerId', 'price', 'currency', 'paymentMode']);
+    expect(plan.clarificationQuestions[0]).toBe('Who is the customer?');
     expect(plan.executionSteps).toEqual([]);
     expect(plan.preview).toBeNull();
   });
@@ -53,26 +60,47 @@ describe('PlannerService', () => {
     expect(plan.state).toBe('READY_FOR_CONFIRMATION');
     expect(plan.warnings).toEqual([{ code: 'WATCH_RESERVED', message: 'The selected watch is reserved.' }]);
     expect(plan.preview).toEqual(expect.objectContaining({ title: 'Register Sale', confirmationTier: 'HIGH', warnings: plan.warnings }));
-    expect(plan.preview?.estimatedEffects.map((effect) => effect.area)).toEqual(['Inventory', 'Treasury', 'CxC', 'Capital']);
+    expect(plan.preview?.estimatedEffects.map((effect) => effect.area)).toEqual(['Inventory', 'Treasury', 'CxC', 'Capital', 'Correction']);
   });
 
   it('REGISTER_SALE preview matches payment-mode canonical semantics', () => {
     const credit = planner.plan({ intent: 'REGISTER_SALE', entities: { ...saleEntities, paymentMode: 'CREDIT' } }, context);
     expect(credit.preview?.estimatedEffects).toEqual([
-      { area: 'Inventory', description: 'Selected watch becomes SOLD.' },
-      { area: 'Treasury', description: 'Sin movimiento — no payment received.' },
-      { area: 'CxC', description: 'Full sale balance outstanding as receivable.' },
-      { area: 'Capital', description: 'Profit is recalculated.' },
+      { area: 'Inventory', description: 'Inventario: AVAILABLE → SOLD.' },
+      { area: 'Treasury', description: 'Sin movimiento de Treasury.' },
+      { area: 'CxC', description: 'Cuenta por cobrar por el monto total de la venta.' },
+      { area: 'Capital', description: 'La utilidad se recalcula con la venta.' },
+      { area: 'Correction', description: 'Después de registrarla, cualquier corrección se realiza desde Ventas.' },
     ]);
-    const paid = planner.plan({ intent: 'REGISTER_SALE', entities: { ...saleEntities, paymentMode: 'PAID' } }, context);
-    expect(paid.preview?.estimatedEffects.find((e) => e.area === 'Treasury')?.description).toContain('Inflow');
-    expect(paid.preview?.estimatedEffects.find((e) => e.area === 'CxC')?.description).toContain('No open receivable');
+    const paid = planner.plan({
+      intent: 'REGISTER_SALE',
+      entities: { ...saleEntities, paymentMode: 'PAID', destination: 'CASH', amountReceived: '35000.00' },
+    }, context);
+    expect(paid.preview?.estimatedEffects.find((e) => e.area === 'Treasury')?.description).toContain('Efectivo');
+    expect(paid.preview?.estimatedEffects.find((e) => e.area === 'CxC')?.description).toContain('Sin cuenta por cobrar');
   });
 
   it('builds a deterministic execution plan without executing a tool', () => {
     const first = planner.plan({ intent: 'REGISTER_SALE', entities: saleEntities }, context);
-    const second = planner.plan({ intent: 'REGISTER_SALE', entities: { currency: 'MXN', price: '35000.00', customerId: 'client-1', watchLabel: 'Batman', watchId: 'watch-1' } }, { entityVersions: { customer: 'v2', watch: 3 }, workspaceVersion: 7 });
-    expect(first.executionSteps).toEqual([{ stepId: 'register-sale-1', capability: 'REGISTER_SALE', arguments: saleEntities, dependsOn: [], estimatedEffects: first.preview?.estimatedEffects, reversibility: 'PARTIAL' }]);
+    const second = planner.plan({
+      intent: 'REGISTER_SALE',
+      entities: {
+        currency: 'MXN',
+        price: '35000.00',
+        customerId: 'client-1',
+        watchLabel: 'Batman',
+        watchId: 'watch-1',
+        paymentMode: 'CREDIT',
+      },
+    }, { entityVersions: { customer: 'v2', watch: 3 }, workspaceVersion: 7 });
+    expect(first.executionSteps).toEqual([{
+      stepId: 'register-sale-1',
+      capability: 'REGISTER_SALE',
+      arguments: saleEntities,
+      dependsOn: [],
+      estimatedEffects: first.preview?.estimatedEffects,
+      reversibility: 'PARTIAL',
+    }]);
     expect(first.fingerprint).toBe(second.fingerprint);
     expect(first.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   });

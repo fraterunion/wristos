@@ -114,7 +114,7 @@ describe('responseToConversationBlocks', () => {
     assert.deepEqual(question.fields.map((field) => field.key), ['clientId', 'currency']);
   });
 
-  it('maps ACTION_PREVIEW_CARD into a preview block with a truthful, intent-specific CTA (never "Confirmar")', () => {
+  it('maps non-executable ACTION_PREVIEW_CARD to a manual-module CTA (never bare "Confirmar")', () => {
     const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: {
         title: 'Venta', category: 'SALE', confirmationTier: 'STANDARD',
@@ -125,28 +125,48 @@ describe('responseToConversationBlocks', () => {
       message: 'Esta acción todavía no está habilitada para ejecución desde el asistente.',
     });
     const blocks = responseToConversationBlocks('REGISTER_SALE', candidate);
-    const preview = blocks[0] as { kind: string; intro: string; ctaLabel: string; fields: Array<{ label: string; value: string }>; effects: string[] };
+    const preview = blocks[0] as { kind: string; intro: string; ctaLabel: string; ctaKind: string; fields: Array<{ label: string; value: string }>; effects: string[] };
     assert.equal(preview.kind, 'preview');
     assert.equal(preview.intro, 'Perfecto. Esto es lo que voy a preparar:');
     assert.equal(preview.ctaLabel, 'Abrir Ventas');
+    assert.equal(preview.ctaKind, 'MANUAL_MODULE');
     assert.notEqual(preview.ctaLabel, 'Confirmar');
     assert.equal(preview.fields[0].label, 'Reloj');
     assert.equal(preview.effects[0], 'El reloj saldría del inventario disponible.');
-    // No block anywhere may claim the write was completed.
     const flat = JSON.stringify(blocks);
     for (const forbidden of ['Listo', 'Registrado', 'Completado', 'Venta realizada', 'Pago registrado']) {
       assert.equal(flat.includes(forbidden), false, `preview blocks must not say "${forbidden}"`);
     }
   });
 
-  it('every write intent has a truthful non-"Confirmar" CTA label', () => {
+  it('maps executable REGISTER_SALE preview to Confirmar venta CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      planFingerprint: 'a'.repeat(64),
+      preview: {
+        title: 'Register Sale',
+        fields: [{ label: 'Reloj', value: 'Batman' }],
+        warnings: [],
+        estimatedEffects: [{ area: 'Inventory', description: 'Inventario: AVAILABLE → SOLD.' }],
+      },
+    });
+    (candidate as { actionRunId?: string }).actionRunId = 'run-1';
+    const blocks = responseToConversationBlocks('REGISTER_SALE', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
+    assert.equal(preview.ctaLabel, 'Confirmar venta');
+    assert.equal(preview.ctaKind, 'CONFIRM_SALE');
+    assert.equal(preview.intro, 'Perfecto. Esto es lo que voy a registrar:');
+  });
+
+  it('every unbound write intent has a truthful non-"Confirmar" CTA label', () => {
     const intents = [
-      'REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_PURCHASE',
+      'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_PURCHASE',
       'REGISTER_EXPENSE', 'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
     ] as const;
     for (const intent of intents) {
       const label = manualCtaLabel(intent);
       assert.notEqual(label, 'Confirmar');
+      assert.notEqual(label, 'Confirmar venta');
       assert.ok(label.length > 0);
     }
   });

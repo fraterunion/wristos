@@ -18,6 +18,13 @@ export class PlannerService {
     const missingEntities: MissingEntity[] = action.requiredEntities
       .filter((entity) => isMissing(intent.entities[entity]))
       .map((entity) => ({ entity, question: action.clarificationQuestions[entity] ?? `Provide ${entity}.` }));
+    if (action.conditionalMissing) {
+      for (const extra of action.conditionalMissing(intent.entities)) {
+        if (!missingEntities.some((item) => item.entity === extra.entity)) {
+          missingEntities.push(extra);
+        }
+      }
+    }
     const warnings = action.warningRules.map((rule) => rule.evaluate(intent.entities)).filter((item): item is BusinessWarning => item !== null);
     const ready = missingEntities.length === 0;
     const planWithoutFingerprint: Omit<BusinessExecutionPlan, 'fingerprint'> = {
