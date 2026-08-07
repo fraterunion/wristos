@@ -21,6 +21,10 @@ import { ReadPlanRunner } from './bindings/read-plan-runner';
 import { AIRequestService } from './assistant/ai-request.service';
 import { StructuredAssistantPersistence } from './assistant/structured-assistant.persistence';
 import { StructuredAssistantService } from './assistant/structured-assistant.service';
+import { IntentAdapterService, INTENT_ADAPTER_PROVIDER } from './intent-adapter/intent-adapter.service';
+import { NaturalLanguageAssistantService } from './intent-adapter/natural-language-assistant.service';
+import { createIntentAdapterProvider } from './intent-adapter/providers/intent-provider.factory';
+import { IntentAdapterRateLimitGuard } from './intent-adapter/rate-limit.guard';
 
 @Module({
   imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule],
@@ -45,7 +49,11 @@ import { StructuredAssistantService } from './assistant/structured-assistant.ser
     { provide: CONVERSATION_STORE, useExisting: ConversationService },
     { provide: RUNTIME_STORE, useExisting: RuntimeService },
     { provide: WORKSPACE_STORE, useExisting: WorkspaceService },
+    { provide: INTENT_ADAPTER_PROVIDER, useFactory: createIntentAdapterProvider },
+    IntentAdapterService,
+    NaturalLanguageAssistantService,
+    IntentAdapterRateLimitGuard,
   ],
-  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner, AIRequestService, StructuredAssistantService],
+  exports: [AUDIT_STORE, CONVERSATION_STORE, RUNTIME_STORE, WORKSPACE_STORE, RuntimeService, ToolRegistry, ToolExecutionService, BusinessActionCatalog, BusinessCapabilityCatalog, PlannerService, CapabilityBindingRegistry, CapabilityBindingService, ReadPlanRunner, AIRequestService, StructuredAssistantService, IntentAdapterService, NaturalLanguageAssistantService],
 })
 export class AIModule {}

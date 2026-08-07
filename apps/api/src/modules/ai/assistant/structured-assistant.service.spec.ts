@@ -57,6 +57,13 @@ describe('StructuredAssistantService', () => {
     expect(persistence.prepare).not.toHaveBeenCalled();
   });
 
+  it('executeClaimed continues an already-claimed request WITHOUT calling claim() a second time', async () => {
+    const response = await service.executeClaimed(actor, { intent: 'GET_LIQUIDITY', entities: {}, surface: 'MOBILE', clientRequestId: 'nl-1' }, request as never);
+    expect(requests.claim).not.toHaveBeenCalled();
+    expect(readRunner.run).toHaveBeenCalledTimes(1);
+    expect(response.interactionState).toBe('COMPLETED');
+  });
+
   it.each(['cross-tenant conversation', 'cross-tenant workspace', 'missing reference', 'soft-deleted reference'])('returns the same typed NOT_FOUND failure for %s', async () => {
     persistence.prepare.mockRejectedValue(new NotFoundException('AI resource not found'));
     requests.failUnattached.mockImplementation((_request, _actor, _intent, response) => response);

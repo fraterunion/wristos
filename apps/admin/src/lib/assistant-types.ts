@@ -126,7 +126,27 @@ export interface AssistantResumeHint {
 export interface AssistantHistoryItem {
   id: string;
   label: string;
-  intent: BusinessActionId;
+  // 'UNKNOWN' only ever comes from the natural-language message endpoint,
+  // when the text never resolved to a real business intent (or the
+  // provider/adapter failed before reaching one). It is never a value the
+  // structured endpoint produces or accepts.
+  intent: BusinessActionId | 'UNKNOWN';
   entities: Record<string, JsonValue>;
   response: StructuredAssistantResponse;
+}
+
+export interface AssistantMessageRequest {
+  conversationId?: string;
+  workspaceId?: string;
+  text: string;
+  surface: 'MOBILE';
+  locale: string;
+  timezone: string;
+  clientRequestId: string;
+}
+
+export interface AssistantMessageResult {
+  resolvedIntent: BusinessActionId | 'UNKNOWN';
+  response: StructuredAssistantResponse;
+  resolvedEntities: Record<string, JsonValue>;
 }

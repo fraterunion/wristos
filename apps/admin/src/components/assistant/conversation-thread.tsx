@@ -113,17 +113,29 @@ export function ConversationThread({
               <UserMessage>{item.label}</UserMessage>
             </div>
             <p className="pr-1 text-right text-[10.5px] text-white/30">{formatRelativeTime(at, now)}</p>
-            <AssistantResponseRenderer
-              intent={item.intent}
-              response={item.response}
-              onSelectClient={selectClient}
-              onContinue={(entities) => onContinue(item, entities)}
-              onSearchAgain={onSearchAgain}
-              onEdit={() => onRestart(item)}
-              onDismiss={() => setDismissed((current) => new Set(current).add(item.id))}
-              manualHref={manualHrefFor?.(item)}
-              busy={pending}
-            />
+            {item.intent === 'UNKNOWN' ? (
+              // The natural-language endpoint never resolved this to a real
+              // business intent — there is no BusinessActionId to validate
+              // against, so this renders directly rather than through
+              // AssistantResponseRenderer. The response itself is always
+              // NEEDS_INPUT/FAILED-shaped (see typed-responses.ts server-side).
+              <ConversationError
+                text={typeof item.response.payload.message === 'string' ? item.response.payload.message : 'No entendí la indicación con suficiente claridad.'}
+                onRetry={() => onRestart(item)}
+              />
+            ) : (
+              <AssistantResponseRenderer
+                intent={item.intent}
+                response={item.response}
+                onSelectClient={selectClient}
+                onContinue={(entities) => onContinue(item, entities)}
+                onSearchAgain={onSearchAgain}
+                onEdit={() => onRestart(item)}
+                onDismiss={() => setDismissed((current) => new Set(current).add(item.id))}
+                manualHref={manualHrefFor?.(item)}
+                busy={pending}
+              />
+            )}
           </div>
         );
       })}
