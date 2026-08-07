@@ -20,13 +20,16 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { ConversationComposer } from '@/components/assistant/conversation-composer';
 import { ConversationThread } from '@/components/assistant/conversation-thread';
 import {
+  AssistantMessageRequestError,
   AssistantRequestError,
   clearResumeHint,
   createAssistantAction,
+  createAssistantMessageAction,
   readResumeHint,
   resumeAssistantWorkspace,
   writeResumeHint,
   type AssistantAction,
+  type AssistantMessageAction,
 } from '@/lib/assistant-api';
 import type {
   AssistantHistoryItem,
@@ -127,7 +130,15 @@ export default function AssistantPage() {
   const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<AssistantAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [composerNotice, setComposerNotice] = useState(false);
+  // Mirrors pending/pendingLabel/retryAction/error above, for the free-form
+  // natural-language endpoint. Kept separate from the structured-action
+  // state (rather than unified) to avoid touching the existing, already
+  //-verified quick-action flow — both share the same ConversationThread via
+  // the combined values computed below.
+  const [messagePending, setMessagePending] = useState<AssistantMessageAction | null>(null);
+  const [messagePendingLabel, setMessagePendingLabel] = useState<string | null>(null);
+  const [messageRetryAction, setMessageRetryAction] = useState<AssistantMessageAction | null>(null);
+  const [messageError, setMessageError] = useState<string | null>(null);
   const [composerValue, setComposerValue] = useState('');
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [writeActionsOpen, setWriteActionsOpen] = useState(false);
@@ -176,7 +187,7 @@ export default function AssistantPage() {
   }, []);
 
   const runAction = useCallback(async (action: AssistantAction, label: string) => {
-    if (pending) return;
+    if (pending || messagePending) return;
     setPending(action);
     setPendingLabel(label);
     setRetryAction(null);
@@ -208,7 +219,44 @@ export default function AssistantPage() {
       setPending(null);
       setPendingLabel(null);
     }
-  }, [pending, refreshWorkspaceVersion]);
+  }, [pending, messagePending, refreshWorkspaceVersion]);
+
+  const runMessageAction = useCallback(async (action: AssistantMessageAction, label: string) => {
+    if (pending || messagePending) return;
+    setMessagePending(action);
+    setMessagePendingLabel(label);
+    setMessageRetryAction(null);
+    setMessageError(null);
+    try {
+      const result = await action.execute();
+      const id = result.response.requestId;
+      setHistory((items) => [{ id, label, intent: result.resolvedIntent, entities: result.resolvedEntities, response: result.response }, ...items]);
+      setHistoryTimestamps((current) => ({ ...current, [id]: Date.now() }));
+      setWorkspace((current) => ({
+        ...current,
+        workspaceId: result.response.workspaceId,
+        conversationId: result.response.conversationId,
+      }));
+      writeResumeHint({ workspaceId: result.response.workspaceId, conversationId: result.response.conversationId });
+      void refreshWorkspaceVersion(result.response.workspaceId);
+    } catch (caught) {
+      setMessageRetryAction(action);
+      if (caught instanceof AssistantMessageRequestError) {
+        setMessageError(caught.message);
+        if (caught.result) {
+          const failedResult = caught.result;
+          const id = failedResult.response.requestId;
+          setHistory((items) => [{ id, label, intent: failedResult.resolvedIntent, entities: failedResult.resolvedEntities, response: failedResult.response }, ...items]);
+          setHistoryTimestamps((current) => ({ ...current, [id]: Date.now() }));
+        }
+      } else {
+        setMessageError('Se perdió la conexión. Puedes reintentar la misma solicitud de forma segura.');
+      }
+    } finally {
+      setMessagePending(null);
+      setMessagePendingLabel(null);
+    }
+  }, [pending, messagePending, refreshWorkspaceVersion]);
 
   const makeAction = useCallback((intent: BusinessActionId, entities: Record<string, JsonValue>, label: string, userDisplayText?: string) => {
     const action = createAssistantAction({
@@ -256,19 +304,44 @@ export default function AssistantPage() {
   };
 
   const continueItem = useCallback((item: AssistantHistoryItem, entities: Record<string, JsonValue>) => {
+    // 'UNKNOWN' never reached the orchestrator in the first place — there is
+    // no structured intent to continue.
+    if (item.intent === 'UNKNOWN') return;
     makeAction(item.intent, { ...item.entities, ...entities }, item.label);
   }, [makeAction]);
 
   const restartItem = useCallback((item: AssistantHistoryItem) => {
+    if (item.intent === 'UNKNOWN') {
+      // item.label is the user's own original text for a message-endpoint
+      // item — "start over" means re-sending it, the same way retry does.
+      const action = createAssistantMessageAction({ text: item.label, conversationId: workspace.conversationId, workspaceId: workspace.workspaceId });
+      void runMessageAction(action, item.label);
+      return;
+    }
     makeAction(item.intent, {}, item.label);
-  }, [makeAction]);
+  }, [makeAction, runMessageAction, workspace]);
 
-  const manualHrefFor = useCallback((item: AssistantHistoryItem) => writeCards.find((card) => card.id === item.intent)?.href, []);
+  const manualHrefFor = useCallback((item: AssistantHistoryItem) => (item.intent === 'UNKNOWN' ? undefined : writeCards.find((card) => card.id === item.intent)?.href), []);
 
   const submitComposer = (event: FormEvent) => {
     event.preventDefault();
-    setComposerNotice(true);
+    const text = composerValue.trim();
+    if (!text) return;
+    const action = createAssistantMessageAction({ text, conversationId: workspace.conversationId, workspaceId: workspace.workspaceId });
+    setComposerValue('');
+    void runMessageAction(action, text);
   };
+
+  // True while either the structured or the natural-language flow has a
+  // request in flight — both share one thread and must not overlap.
+  const busy = !!pending || !!messagePending;
+  const combinedPendingLabel = pendingLabel ?? messagePendingLabel;
+  const combinedError = error ?? messageError;
+  const combinedOnRetry = retryAction
+    ? () => void runAction(retryAction, 'Reintentando la última solicitud.')
+    : messageRetryAction
+      ? () => void runMessageAction(messageRetryAction, messageRetryAction.request.text)
+      : undefined;
 
   const brief = useMemo(() => [
     { label: 'Liquidez', value: 'Consultar', action: () => openRead('GET_LIQUIDITY') },
@@ -294,7 +367,7 @@ export default function AssistantPage() {
             </div>
           </>
         )}
-        <button type="submit" className="ui-btn-primary min-h-11 w-full" disabled={!!pending}>{pending ? 'Consultando…' : 'Consultar'}</button>
+        <button type="submit" className="ui-btn-primary min-h-11 w-full" disabled={busy}>{pending ? 'Consultando…' : 'Consultar'}</button>
       </form>
     </section>
   ) : null;
@@ -338,7 +411,7 @@ export default function AssistantPage() {
             onChange={setComposerValue}
             onSubmit={submitComposer}
             placeholder={composerExamples[placeholderIndex]}
-            notice={composerNotice ? 'La entrada libre estará disponible más adelante. Usa una acción estructurada.' : null}
+            notice={null}
           />
         </section>
 
@@ -348,7 +421,7 @@ export default function AssistantPage() {
               key={id}
               type="button"
               onClick={() => openRead(id)}
-              disabled={!!pending}
+              disabled={busy}
               className="shrink-0 rounded-full border border-white/10 bg-panel px-3.5 py-2 text-xs font-medium text-white/80 transition hover:border-emerald-300/25 hover:text-white disabled:opacity-50"
             >
               {mobileSuggestionLabels[id] ?? label}
@@ -360,10 +433,10 @@ export default function AssistantPage() {
 
         <ConversationThread
           history={history}
-          pending={!!pending}
-          pendingLabel={pendingLabel}
-          error={error}
-          onRetry={retryAction ? () => void runAction(retryAction, 'Reintentando la última solicitud.') : undefined}
+          pending={busy}
+          pendingLabel={combinedPendingLabel}
+          error={combinedError}
+          onRetry={combinedOnRetry}
           selectClient={selectClient}
           onContinue={continueItem}
           onRestart={restartItem}
@@ -388,7 +461,7 @@ export default function AssistantPage() {
             <div id="mobile-write-actions-panel" className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
               {writeCards.map(({ id, label, href, icon: Icon }) => (
                 <div key={id} className="flex min-h-[52px] items-center justify-between gap-2 px-3.5">
-                  <button type="button" disabled={!!pending} onClick={() => makeAction(id, {}, label)} className="flex min-h-[52px] flex-1 items-center gap-2.5 text-left text-sm font-medium text-white/85 disabled:opacity-50">
+                  <button type="button" disabled={busy} onClick={() => makeAction(id, {}, label)} className="flex min-h-[52px] flex-1 items-center gap-2.5 text-left text-sm font-medium text-white/85 disabled:opacity-50">
                     <Icon className="h-4 w-4 shrink-0 text-amber-200" aria-hidden />
                     {mobileWriteLabels[id] ?? label}
                   </button>
@@ -404,7 +477,7 @@ export default function AssistantPage() {
 
         <section aria-label="Resumen del negocio" className="grid grid-cols-3 gap-2">
           {brief.map((item) => (
-            <button key={item.label} type="button" onClick={item.action} disabled={!!pending} className="min-h-[52px] rounded-xl border border-white/10 bg-panel/60 p-2.5 text-left transition hover:border-white/20 disabled:opacity-50">
+            <button key={item.label} type="button" onClick={item.action} disabled={busy} className="min-h-[52px] rounded-xl border border-white/10 bg-panel/60 p-2.5 text-left transition hover:border-white/20 disabled:opacity-50">
               <span className="block text-[10px] uppercase tracking-wide text-white/40">{item.label}</span>
               <span className="mt-0.5 block text-xs font-medium text-white/80">{item.value}</span>
             </button>
@@ -427,7 +500,7 @@ export default function AssistantPage() {
           </div>
           <div className="mt-5 grid grid-cols-3 gap-2">
             {brief.map((item) => (
-              <button key={item.label} type="button" onClick={item.action} disabled={!!pending} className="min-h-20 rounded-2xl border border-white/10 bg-black/20 p-3 text-left transition hover:border-white/20 disabled:opacity-50">
+              <button key={item.label} type="button" onClick={item.action} disabled={busy} className="min-h-20 rounded-2xl border border-white/10 bg-black/20 p-3 text-left transition hover:border-white/20 disabled:opacity-50">
                 <span className="block text-[11px] uppercase tracking-wide text-white/45">{item.label}</span>
                 <span className="mt-2 block text-sm font-medium text-white">{item.value}</span>
               </button>
@@ -441,7 +514,7 @@ export default function AssistantPage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             {readCards.map(({ id, label, detail, icon: Icon }) => (
-              <button key={id} type="button" onClick={() => openRead(id)} disabled={!!pending} className="group min-h-28 rounded-2xl border border-white/10 bg-panel p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-300/25 disabled:opacity-50">
+              <button key={id} type="button" onClick={() => openRead(id)} disabled={busy} className="group min-h-28 rounded-2xl border border-white/10 bg-panel p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-300/25 disabled:opacity-50">
                 <div className="flex items-center justify-between"><Icon className="h-5 w-5 text-emerald-300" aria-hidden /><ArrowRight className="h-4 w-4 text-white/25 transition group-hover:text-white/70" aria-hidden /></div>
                 <p className="mt-4 text-sm font-semibold">{label}</p><p className="mt-1 text-xs leading-5 text-muted">{detail}</p>
               </button>
@@ -451,7 +524,7 @@ export default function AssistantPage() {
 
         {activeReadForm}
 
-        {history.length || pending || error ? (
+        {history.length || busy || combinedError ? (
           <section className="space-y-3" aria-labelledby="results-title">
             <div>
               <h2 id="results-title" className="text-lg font-semibold">Conversaciones</h2>
@@ -459,9 +532,10 @@ export default function AssistantPage() {
             </div>
             <ConversationThread
               history={history}
-              pending={!!pending}
-              error={error}
-              onRetry={retryAction ? () => void runAction(retryAction, 'Reintentando la última solicitud.') : undefined}
+              pending={busy}
+              pendingLabel={combinedPendingLabel}
+              error={combinedError}
+              onRetry={combinedOnRetry}
               selectClient={selectClient}
               onContinue={continueItem}
               onRestart={restartItem}
@@ -477,7 +551,7 @@ export default function AssistantPage() {
           <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {writeCards.map(({ id, label, href, icon: Icon }) => (
               <div key={id} className="rounded-xl border border-white/10 bg-black/15 p-3">
-                <button type="button" disabled={!!pending} onClick={() => makeAction(id, {}, label)} className="flex min-h-11 w-full items-center gap-2 text-left text-sm font-medium disabled:opacity-50"><Icon className="h-4 w-4 text-amber-200" aria-hidden />{label}</button>
+                <button type="button" disabled={busy} onClick={() => makeAction(id, {}, label)} className="flex min-h-11 w-full items-center gap-2 text-left text-sm font-medium disabled:opacity-50"><Icon className="h-4 w-4 text-amber-200" aria-hidden />{label}</button>
                 <Link href={href} className="mt-2 inline-flex min-h-10 items-center text-xs text-white/50 hover:text-white">Abrir flujo manual <ArrowRight className="ml-1 h-3.5 w-3.5" /></Link>
               </div>
             ))}
@@ -490,7 +564,7 @@ export default function AssistantPage() {
           onChange={setComposerValue}
           onSubmit={submitComposer}
           placeholder={composerExamples[placeholderIndex]}
-          notice={composerNotice ? 'La entrada libre estará disponible más adelante. Usa una acción estructurada.' : null}
+          notice={null}
         />
       </div>
     </div>

@@ -5,10 +5,13 @@ import { CurrentUser as CurrentUserType } from '../../common/types/current-user.
 import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { ConversationService } from './conversation/conversation.service';
 import { AppendMessageDto } from './dto/append-message.dto';
+import { AssistantMessageDto } from './dto/assistant-message.dto';
 import { CreateActionRunDto } from './dto/create-action-run.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { ConfirmActionRunDto } from './dto/action-run-command.dto';
 import { CreateWorkspaceDto, UpdateWorkspaceDto, WorkspaceVersionDto } from './dto/workspace.dto';
+import { IntentAdapterRateLimitGuard } from './intent-adapter/rate-limit.guard';
+import { NaturalLanguageAssistantService } from './intent-adapter/natural-language-assistant.service';
 import { RuntimeService } from './runtime/runtime.service';
 import { WorkspaceService } from './workspace/workspace.service';
 import { StructuredAssistantRequestDto } from './dto/structured-assistant.dto';
@@ -18,12 +21,33 @@ import { structuredAssistantHttpStatus } from './assistant/assistant-http-status
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
 export class AIController {
-  constructor(private readonly conversations: ConversationService, private readonly runtime: RuntimeService, private readonly workspaces: WorkspaceService, private readonly assistant: StructuredAssistantService) {}
+  constructor(
+    private readonly conversations: ConversationService,
+    private readonly runtime: RuntimeService,
+    private readonly workspaces: WorkspaceService,
+    private readonly assistant: StructuredAssistantService,
+    private readonly naturalLanguageAssistant: NaturalLanguageAssistantService,
+  ) {}
 
   @Post('assistant/structured')
   async structuredAssistant(@CurrentUser() user: CurrentUserType, @Body() dto: StructuredAssistantRequestDto, @Res({ passthrough: true }) response: Response) {
     const result = await this.assistant.execute({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
     const status = structuredAssistantHttpStatus(result);
+    if (status !== null) response.status(status);
+    return result;
+  }
+
+  // Natural-language entry point. This route only ever: (1) durably claims
+  // idempotency for the message, (2) calls IntentAdapterService to turn text
+  // into a StructuredIntentCandidate, (3) hands a resulting
+  // StructuredAssistantRequest to the SAME StructuredAssistantService used
+  // above. It never calls a tool, capability binding, domain service, or
+  // Prisma beyond its own idempotency/audit bookkeeping.
+  @Post('assistant/message')
+  @UseGuards(IntentAdapterRateLimitGuard)
+  async assistantMessage(@CurrentUser() user: CurrentUserType, @Body() dto: AssistantMessageDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.naturalLanguageAssistant.handleMessage({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
+    const status = structuredAssistantHttpStatus(result.response);
     if (status !== null) response.status(status);
     return result;
   }

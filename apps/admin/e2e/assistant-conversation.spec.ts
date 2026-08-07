@@ -83,6 +83,15 @@ async function mockAssistant(page: Page, handler: (intent: string, body: Record<
   });
 }
 
+/** Mocks POST /ai/assistant/message — the free-form natural-language endpoint. */
+async function mockAssistantMessage(page: Page, handler: (text: string, body: Record<string, unknown>) => { resolvedIntent: string; response: Record<string, unknown>; resolvedEntities?: Record<string, unknown> }) {
+  await page.route('**/ai/assistant/message', async (route: Route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    const result = handler(body.text, body);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ resolvedEntities: {}, ...result }) });
+  });
+}
+
 test.describe('Assistant conversation surface', () => {
   test.beforeEach(async ({ page }) => {
     await signIn(page);
@@ -239,15 +248,52 @@ test.describe('Assistant conversation surface', () => {
     expect(await page.locator('img[src="x"]').count()).toBe(0);
   });
 
-  test('freeform composer text never calls the assistant endpoint', async ({ page }) => {
+  test('freeform composer text calls POST /ai/assistant/message (never /ai/assistant/structured) and renders the resolved response', async ({ page }) => {
     const paths = trackRequests(page);
+    await mockAssistantMessage(page, (text) => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({ interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: { data: { cashMxn: '480000.00' }, echoedText: text } }),
+    }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
     const scope = mobileScope(page);
-    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('Vendí un reloj carísimo');
+    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('Muéstrame mi liquidez');
     await scope.getByLabel('Enviar').click();
-    await expect(scope.getByText('La entrada libre estará disponible más adelante.')).toBeVisible();
+    await expect(scope.getByText('Muéstrame mi liquidez')).toBeVisible(); // optimistic echo of the typed text
+    await expect(scope.getByText('Efectivo')).toBeVisible();
+    expect(paths.some((path) => path.includes('/ai/assistant/message'))).toBe(true);
     expect(paths.some((path) => path.includes('/ai/assistant/structured'))).toBe(false);
+  });
+
+  test('free text that never resolves to a business intent (UNKNOWN) renders a safe conversational error, not a crash', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'UNKNOWN',
+      response: baseResponse({ interactionState: 'FAILED', responseType: 'ERROR_RECOVERY_CARD', payload: { message: 'No entendí la indicación con suficiente claridad.' } }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    const scope = mobileScope(page);
+    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('asdkjfh qwer');
+    await scope.getByLabel('Enviar').click();
+    await expect(scope.getByText('No entendí la indicación con suficiente claridad.')).toBeVisible();
+  });
+
+  test('a write-detecting free-text message renders a truthful preview, never a completion', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'REGISTER_SALE',
+      response: baseResponse({
+        interactionState: 'READY_FOR_CONFIRMATION', responseType: 'ACTION_PREVIEW_CARD',
+        payload: { preview: { title: 'Venta', fields: [{ label: 'Reloj', value: 'Batman' }], warnings: [], estimatedEffects: [] }, message: 'Esta acción todavía no está habilitada para ejecución desde el asistente.' },
+      }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    const scope = mobileScope(page);
+    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('Vendí Batman en 350 mil');
+    await scope.getByLabel('Enviar').click();
+    await expect(scope.getByText('Perfecto. Esto es lo que voy a preparar:')).toBeVisible();
+    await expect(scope.getByRole('link', { name: 'Abrir Ventas' })).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Confirmar' })).toHaveCount(0);
   });
 
   test('only the expected endpoints are ever called for a simple read', async ({ page }) => {
@@ -258,7 +304,7 @@ test.describe('Assistant conversation surface', () => {
     const scope = mobileScope(page);
     await scope.getByRole('button', { name: 'Ver liquidez' }).click();
     await expect(scope.getByText('Tienes $480,000 en Cash.')).toBeVisible();
-    const allowed = /\/auth\/me$|\/ai\/assistant\/structured$|\/ai\/workspaces\//;
+    const allowed = /\/auth\/me$|\/ai\/assistant\/structured$|\/ai\/assistant\/message$|\/ai\/workspaces\//;
     const unexpected = paths.filter((path) => path.startsWith('/api') || path.includes('/ai/') || path.includes('/auth/')).filter((path) => !allowed.test(path));
     expect(unexpected).toEqual([]);
   });

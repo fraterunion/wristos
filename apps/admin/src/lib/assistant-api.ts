@@ -1,5 +1,7 @@
 import { ApiError, apiGet, apiPost } from '@/lib/api-client';
 import type {
+  AssistantMessageRequest,
+  AssistantMessageResult,
   AssistantResumeHint,
   AssistantWorkspace,
   BusinessActionId,
@@ -40,6 +42,23 @@ function isStructuredResponse(value: unknown): value is StructuredAssistantRespo
     !!candidate.payload &&
     typeof candidate.payload === 'object'
   );
+}
+
+export class AssistantMessageRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly result?: AssistantMessageResult,
+  ) {
+    super(message);
+    this.name = 'AssistantMessageRequestError';
+  }
+}
+
+function isAssistantMessageResult(value: unknown): value is AssistantMessageResult {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AssistantMessageResult>;
+  return typeof candidate.resolvedIntent === 'string' && isStructuredResponse(candidate.response);
 }
 
 export function newClientRequestId(): string {
@@ -85,6 +104,57 @@ export function createAssistantAction(input: {
           error.status,
           statusMessages[error.status] ?? 'La consulta no pudo completarse.',
           isStructuredResponse(error.payload) ? error.payload : undefined,
+        );
+      }
+      throw error;
+    }
+  };
+  return { clientRequestId, request, execute, retry: execute };
+}
+
+export interface AssistantMessageAction {
+  readonly clientRequestId: string;
+  readonly request: AssistantMessageRequest;
+  execute(): Promise<AssistantMessageResult>;
+  retry(): Promise<AssistantMessageResult>;
+}
+
+/**
+ * Free-form natural-language submission — POST /ai/assistant/message. This
+ * never parses or interprets text client-side: it only forwards it and
+ * renders back whatever typed, already-validated response the backend
+ * returns (the same fail-closed rendering pipeline used for the structured
+ * endpoint — see AssistantResponseRenderer / assistant-response-validation).
+ */
+export function createAssistantMessageAction(input: {
+  text: string;
+  conversationId?: string;
+  workspaceId?: string;
+}): AssistantMessageAction {
+  const clientRequestId = newClientRequestId();
+  const request: AssistantMessageRequest = {
+    ...input,
+    clientRequestId,
+    surface: 'MOBILE',
+    locale: typeof navigator === 'undefined' ? 'es' : navigator.language,
+    timezone:
+      typeof Intl === 'undefined'
+        ? 'UTC'
+        : Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  const execute = async () => {
+    try {
+      return await apiPost<AssistantMessageResult, AssistantMessageRequest>(
+        '/ai/assistant/message',
+        request,
+        { authenticated: true },
+      );
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new AssistantMessageRequestError(
+          error.status,
+          statusMessages[error.status] ?? 'El asistente no está disponible en este momento. No se realizó ningún cambio.',
+          isAssistantMessageResult(error.payload) ? error.payload : undefined,
         );
       }
       throw error;

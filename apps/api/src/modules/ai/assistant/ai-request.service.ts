@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { JsonValue, sha256Canonical } from '../domain/canonical-json';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
 
-const TERMINAL = new Set<AIRequestStatus>([AIRequestStatus.NEEDS_CLARIFICATION, AIRequestStatus.READY_FOR_CONFIRMATION, AIRequestStatus.COMPLETED, AIRequestStatus.FAILED]);
+export const TERMINAL_AI_REQUEST_STATUSES = new Set<AIRequestStatus>([AIRequestStatus.NEEDS_CLARIFICATION, AIRequestStatus.READY_FOR_CONFIRMATION, AIRequestStatus.COMPLETED, AIRequestStatus.FAILED]);
+const TERMINAL = TERMINAL_AI_REQUEST_STATUSES;
 const STALE_AFTER_MS = 5 * 60 * 1000;
 
 export type RequestClaim =
@@ -85,7 +86,8 @@ export class AIRequestService {
     return response;
   }
 
-  private readStoredResponse(request: AIRequest): StructuredAssistantResponse {
+  /** Public, read-only, integrity-checked accessor for a terminal request's stored response. */
+  readStoredResponse(request: AIRequest): StructuredAssistantResponse {
     if (!request.responsePayload || !request.responseHash) throw new InternalServerErrorException('Terminal AI request has no replayable response');
     const response = request.responsePayload as unknown as StructuredAssistantResponse;
     if (this.responseHash(response) !== request.responseHash) throw new InternalServerErrorException('Stored AI response hash does not match');
@@ -153,6 +155,14 @@ export class AIRequestService {
       timezone: input.timezone ?? 'UTC',
       conversationId: input.conversationId ?? null,
       workspaceId: input.workspaceId ?? null,
+      // Included so a clientRequestId reused with genuinely different source
+      // text (e.g. from the natural-language message endpoint) fingerprint-
+      // mismatches and 409s, even if an LLM happened to resolve both texts
+      // to the same intent/entities. Hashed, not raw, to keep the canonical
+      // payload free of arbitrary user text. Absent for direct structured
+      // callers (undefined -> null), so their fingerprints are unaffected
+      // in shape, only in this one added, previously-nonexistent component.
+      userDisplayTextHash: input.userDisplayText ? sha256Canonical(input.userDisplayText) : null,
     };
   }
 

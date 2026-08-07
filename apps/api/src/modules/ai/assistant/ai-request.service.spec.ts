@@ -46,6 +46,21 @@ describe('AIRequestService durable idempotency', () => {
     await expect(service.claim(actor, input)).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('rejects reuse of a request ID when only the source natural-language text differs', async () => {
+    const withTextA = { ...input, userDisplayText: 'Muéstrame mi liquidez' };
+    const withTextB = { ...input, userDisplayText: 'Busca a José Hernández' };
+    const fingerprintA = sha256Canonical({
+      tenantId: actor.tenantId, actorUserId: actor.userId, intent: input.intent,
+      entities: { query: { redactedHash: sha256Canonical(input.entities.query) } },
+      entityVersions: {}, expectedWorkspaceVersion: null, surface: input.surface,
+      locale: 'es-MX', timezone: 'UTC', conversationId: null, workspaceId: null,
+      userDisplayTextHash: sha256Canonical(withTextA.userDisplayText),
+    });
+    tx.aIRequest.create.mockImplementation(() => { throw new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: '6.19.3' }); });
+    prisma.aIRequest.findUniqueOrThrow.mockResolvedValue({ id: 'ar1', tenantId: 't1', actorUserId: 'u1', clientRequestId: 'req-1', status: AIRequestStatus.COMPLETED, requestFingerprint: fingerprintA, receivedAt: new Date(), updatedAt: new Date(), traceId: 'trace' });
+    await expect(service.claim(actor, withTextB)).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('does not start duplicate orchestration while an identical request is active', async () => {
     const requestFingerprint = fingerprint(actor, input);
     tx.aIRequest.create.mockImplementation(() => { throw new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: '6.19.3' }); });
@@ -55,6 +70,6 @@ describe('AIRequestService durable idempotency', () => {
   });
 
   function fingerprint(context: typeof actor, request: typeof input): string {
-    return sha256Canonical({ tenantId: context.tenantId, actorUserId: context.userId, intent: request.intent, entities: { query: { redactedHash: sha256Canonical(request.entities.query) } }, entityVersions: {}, expectedWorkspaceVersion: null, surface: request.surface, locale: 'es-MX', timezone: 'UTC', conversationId: null, workspaceId: null });
+    return sha256Canonical({ tenantId: context.tenantId, actorUserId: context.userId, intent: request.intent, entities: { query: { redactedHash: sha256Canonical(request.entities.query) } }, entityVersions: {}, expectedWorkspaceVersion: null, surface: request.surface, locale: 'es-MX', timezone: 'UTC', conversationId: null, workspaceId: null, userDisplayTextHash: null });
   }
 });
