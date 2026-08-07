@@ -124,6 +124,26 @@ Numeric/raw confidence never reaches the frontend or any log accessible to a use
 - **Decision for this commit**: per explicit instruction, **no Redis or new shared-infrastructure dependency was introduced** to fix this. The guard now logs a one-time, explicit startup warning (`rate-limit.guard.ts`) stating that its limit is process-local and only accurate on a single API replica, so the gap is visible in production logs rather than silent.
 - **Follow-up requirement (not done here)**: before Railway is scaled to more than one API replica, this guard must move to a shared store (e.g. Redis, or Postgres-backed) so the limit is enforced cluster-wide. Do not scale horizontally on this assumption without that follow-up.
 
+## 7b. Assistant HTTP status matrix (natural-language + structured)
+
+`structuredAssistantHttpStatus` maps typed response codes — never free-text messages.
+
+| Condition | HTTP |
+|---|---|
+| COMPLETED / NEEDS_INPUT / write preview | default POST success (201) |
+| `UNKNOWN_INTENT` / `LOW_CONFIDENCE` / soft policy rejects | default POST success (201) |
+| `ENTITY_SCHEMA_INVALID` / `INVALID_OUTPUT_SHAPE` | default POST success (201) |
+| `NOT_FOUND` | 404 |
+| `PERMISSION_DENIED` | 403 |
+| `CONFLICT` / `STALE_PLAN` | 409 |
+| `TIMEOUT` / `UNAVAILABLE` | 503 |
+| `RATE_LIMITED` (mapper path; guard also throws 429) | 429 |
+| `READ_EXECUTION_FAILED` / `UNKNOWN_ERROR` / unmapped `FAILED` | 500 |
+
+Expected language ambiguity and prompt-injection UNKNOWN responses are product outcomes, not server faults.
+
+SEARCH entity normalization (`normalization.ts`) remaps allowlisted provider aliases (`watchQuery`→`query` for inventory; `clientQuery`/`customerQuery`→`query` for clients), strips null optionals, and canonicalizes limit/status representation before per-intent Zod validation — without inventing IDs or loosening `.strict()` on the raw candidate.
+
 ## 8. Known V1 scope limitations (disclosed, not hidden)
 
 - **Bounded conversation context** is fully implemented and tested at the contract/sanitization level (`BoundedConversationContext`, `sanitizeConversationContext`), but is not yet wired to real prior-turn state (`AIWorkspace.resolvedContext`) — the message endpoint currently sends no context. **Concretely, this means cross-turn references — "el primero", "ese", "a él", "el mismo cliente" — are not resolved in V1**; each message is interpreted independently. Single-turn natural language works now. Wiring real prior-turn context is a V1.1 follow-up, not a currently-supported capability.

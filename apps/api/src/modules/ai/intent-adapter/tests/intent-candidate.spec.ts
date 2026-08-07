@@ -101,4 +101,69 @@ describe('buildIntentCandidate: the only path from raw provider output to a trus
       expect(result.candidate.entities).toEqual({});
     }
   });
+
+  it('production SEARCH fixtures: Batman / AP / Rolex disponibles / José Hernández', () => {
+    const batman = buildIntentCandidate(
+      { intent: 'SEARCH_INVENTORY', confidence: 'HIGH', entities: { watchQuery: 'Batman', status: null, limit: null } },
+      '2026-07-15',
+    );
+    expect(batman.kind).toBe('VALID');
+    if (batman.kind === 'VALID') expect(batman.candidate.entities).toEqual({ query: 'Batman' });
+
+    const ap = buildIntentCandidate(
+      { intent: 'SEARCH_INVENTORY', confidence: 'HIGH', entities: { query: 'AP' } },
+      '2026-07-15',
+    );
+    expect(ap.kind).toBe('VALID');
+    if (ap.kind === 'VALID') expect(ap.candidate.entities).toEqual({ query: 'AP' });
+
+    const rolex = buildIntentCandidate(
+      {
+        intent: 'SEARCH_INVENTORY',
+        confidence: 'HIGH',
+        entities: { query: 'Rolex', status: 'disponibles' },
+      },
+      '2026-07-15',
+    );
+    expect(rolex.kind).toBe('VALID');
+    if (rolex.kind === 'VALID') {
+      expect(rolex.candidate.entities).toEqual({ query: 'Rolex', status: 'AVAILABLE' });
+    }
+
+    const jose = buildIntentCandidate(
+      { intent: 'SEARCH_CLIENT', confidence: 'HIGH', entities: { clientQuery: 'José Hernández' } },
+      '2026-07-15',
+    );
+    expect(jose.kind).toBe('VALID');
+    if (jose.kind === 'VALID') {
+      expect(jose.candidate.entities).toEqual({ query: 'José Hernández' });
+      expect(jose.candidate.entities).not.toHaveProperty('clientId');
+    }
+  });
+
+  it('still fails closed on unknown extra entity keys that survive as typed values only via raw shape — fabricated IDs rejected for search', () => {
+    const withId = buildIntentCandidate(
+      {
+        intent: 'SEARCH_CLIENT',
+        confidence: 'HIGH',
+        entities: { query: 'José', clientId: 'cm_fabricated_id' },
+      },
+      '2026-07-15',
+    );
+    // clientId is stripped by SEARCH_CLIENT entity schema (.strip()), not accepted
+    expect(withId.kind).toBe('VALID');
+    if (withId.kind === 'VALID') {
+      expect(withId.candidate.entities).toEqual({ query: 'José' });
+      expect(withId.candidate.entities).not.toHaveProperty('clientId');
+    }
+  });
+
+  it('fails closed when SEARCH_INVENTORY has no usable query after normalization', () => {
+    const result = buildIntentCandidate(
+      { intent: 'SEARCH_INVENTORY', confidence: 'HIGH', entities: { status: 'AVAILABLE' } },
+      '2026-07-15',
+    );
+    expect(result.kind).toBe('FAILED');
+    if (result.kind === 'FAILED') expect(result.reason).toBe('ENTITY_SCHEMA_INVALID');
+  });
 });
