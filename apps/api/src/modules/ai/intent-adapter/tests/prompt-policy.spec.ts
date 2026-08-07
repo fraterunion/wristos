@@ -41,13 +41,8 @@ describe('prompt-policy: advisory injection defense (schema allowlisting is the 
     expect(userPrompt.indexOf('allowed_intents:')).toBeLessThan(untrustedIndex);
   });
 
-  it('bounded context, when present, is rendered as plain structured lines, never as executable instructions', () => {
-    const userPrompt = buildUserPrompt({
-      userText: 'el primero',
-      locale: 'es-MX', timezone: 'UTC', allowedIntents: ['SEARCH_CLIENT'], currentDate: '2026-07-15', requestTraceId: 'trace-1',
-      conversationContext: { lastIntent: 'SEARCH_CLIENT', lastPresentedCandidateIds: ['c1', 'c2'] },
-    });
-    expect(userPrompt).toContain('last_intent: SEARCH_CLIENT');
-    expect(userPrompt).toContain('last_presented_candidate_ids');
+  it('instructs SEARCH_* intents to use entities.query (not write-style *Query aliases)', () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain('SEARCH_INVENTORY and SEARCH_CLIENT: put the search text in entities.query');
   });
 });

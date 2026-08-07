@@ -81,6 +81,88 @@ export function normalizeQueryText(raw: string | null | undefined): string | nul
   return trimmed.length ? trimmed.slice(0, 120) : null;
 }
 
+/**
+ * Canonicalizes a limit-like value to an integer in [1, 50].
+ * Accepts exact numeric strings ("10") and integers; rejects floats/noise.
+ */
+export function normalizeLimit(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'number') {
+    return Number.isInteger(raw) && raw >= 1 && raw <= 50 ? raw : null;
+  }
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return value >= 1 && value <= 50 ? value : null;
+}
+
+const INVENTORY_STATUS_SYNONYMS: Record<string, 'AVAILABLE' | 'RESERVED' | 'ALL'> = {
+  available: 'AVAILABLE',
+  disponible: 'AVAILABLE',
+  disponibles: 'AVAILABLE',
+  reserved: 'RESERVED',
+  reservado: 'RESERVED',
+  reservados: 'RESERVED',
+  all: 'ALL',
+  todos: 'ALL',
+  todas: 'ALL',
+};
+
+/** Maps exact enum codes or a small fixed synonym set to canonical inventory status. */
+export function normalizeInventoryStatus(
+  raw: string | null | undefined,
+): 'AVAILABLE' | 'RESERVED' | 'ALL' | null {
+  if (!raw) return null;
+  const key = raw.trim().toLowerCase();
+  if (key === 'available' || key === 'reserved' || key === 'all') {
+    return key.toUpperCase() as 'AVAILABLE' | 'RESERVED' | 'ALL';
+  }
+  return INVENTORY_STATUS_SYNONYMS[key] ?? null;
+}
+
+/**
+ * Removes explicit null entity values before per-intent Zod validation.
+ * Providers often emit null for omitted optionals; Zod `.optional()` rejects null.
+ */
+export function stripNullEntityValues(
+  entities: Record<string, string | number | boolean | null>,
+): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(entities)) {
+    if (value !== null) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Allowlisted SEARCH_* field aliases → canonical `query`.
+ * Claude sometimes mirrors write-intent *Query naming onto search intents;
+ * this only remaps known aliases when `query` is absent. Never invents IDs.
+ */
+const SEARCH_QUERY_ALIASES: Record<'SEARCH_INVENTORY' | 'SEARCH_CLIENT', readonly string[]> = {
+  SEARCH_INVENTORY: ['watchQuery'],
+  SEARCH_CLIENT: ['clientQuery', 'customerQuery'],
+};
+
+function applySearchQueryAliases(
+  intent: string,
+  entities: Record<string, string | number | boolean | null>,
+): void {
+  if (intent !== 'SEARCH_INVENTORY' && intent !== 'SEARCH_CLIENT') return;
+  const aliases = SEARCH_QUERY_ALIASES[intent];
+  if (!('query' in entities) || entities.query === null || entities.query === '') {
+    for (const alias of aliases) {
+      if (alias in entities && entities[alias] !== null && entities[alias] !== '') {
+        entities.query = entities[alias];
+        break;
+      }
+    }
+  }
+  for (const alias of aliases) {
+    delete entities[alias];
+  }
+}
+
 /** Normalizes an ISO-ish date string; returns null if not a plain YYYY-MM-DD. */
 export function normalizeIsoDate(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -115,8 +197,12 @@ export function normalizeEntities(
   candidate: Pick<RawIntentCandidate, 'intent' | 'entities'>,
   context: RelativePeriodContext,
 ): Record<string, string | number | boolean | null> {
-  const entities = candidate.entities;
-  const out: Record<string, string | number | boolean | null> = { ...entities };
+  // Drop provider nulls first — optional Zod fields reject null ≠ omitted.
+  const out: Record<string, string | number | boolean | null> = {
+    ...stripNullEntityValues(candidate.entities as Record<string, string | number | boolean | null>),
+  };
+
+  applySearchQueryAliases(candidate.intent, out);
 
   const moneyFields: Record<string, string[]> = {
     REGISTER_SALE: ['price'],
@@ -152,6 +238,22 @@ export function normalizeEntities(
       const normalized = normalizeQueryText(out[field] as string);
       if (normalized) out[field] = normalized;
       else delete out[field];
+    }
+  }
+
+  if ('limit' in out) {
+    const normalized = normalizeLimit(out.limit as string | number | null);
+    if (normalized !== null) out.limit = normalized;
+    else delete out.limit;
+  }
+
+  if (candidate.intent === 'SEARCH_INVENTORY' && 'status' in out) {
+    if (typeof out.status !== 'string') {
+      delete out.status;
+    } else {
+      const normalized = normalizeInventoryStatus(out.status);
+      if (normalized) out.status = normalized;
+      else delete out.status;
     }
   }
 

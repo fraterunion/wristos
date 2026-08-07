@@ -35,4 +35,25 @@ describe('structuredAssistantHttpStatus', () => {
     expect(structuredAssistantHttpStatus(response('PERMISSION_BLOCKED'))).toBe(HttpStatus.FORBIDDEN);
     expect(structuredAssistantHttpStatus(response('FAILED'))).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
   });
+
+  it('does not map expected language-policy rejects to HTTP 500', () => {
+    for (const code of ['UNKNOWN_INTENT', 'LOW_CONFIDENCE', 'ENTITY_SCHEMA_INVALID', 'INVALID_OUTPUT_SHAPE', 'REJECT_UNKNOWN', 'REJECT_LOW_CONFIDENCE']) {
+      const soft = response('FAILED');
+      soft.payload = { code, message: 'No entendí la indicación con suficiente claridad.' };
+      expect(structuredAssistantHttpStatus(soft)).toBeNull();
+    }
+  });
+
+  it('maps true provider unavailability to 503 and unknown provider errors to 500', () => {
+    const timeout = response('FAILED');
+    timeout.payload = { code: 'TIMEOUT', message: 'unavailable' };
+    expect(structuredAssistantHttpStatus(timeout)).toBe(HttpStatus.SERVICE_UNAVAILABLE);
+
+    const unknown = response('FAILED');
+    unknown.payload = { code: 'UNKNOWN_ERROR', message: 'boom' };
+    expect(structuredAssistantHttpStatus(unknown)).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+
+    const readFail = response('FAILED', 'READ_EXECUTION_FAILED');
+    expect(structuredAssistantHttpStatus(readFail)).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+  });
 });

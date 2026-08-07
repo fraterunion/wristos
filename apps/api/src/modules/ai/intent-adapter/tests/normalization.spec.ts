@@ -1,12 +1,15 @@
 import {
   normalizeCurrency,
   normalizeEntities,
+  normalizeInventoryStatus,
   normalizeIsoDate,
+  normalizeLimit,
   normalizeMonth,
   normalizeMoney,
   normalizeQueryText,
   normalizeYear,
   resolveCurrentPeriod,
+  stripNullEntityValues,
 } from '../normalization';
 
 describe('normalization: format canonicalization only, never re-derived meaning', () => {
@@ -93,5 +96,49 @@ describe('normalization: format canonicalization only, never re-derived meaning'
   it('does not override an explicitly-given year/month with the current period default', () => {
     const out = normalizeEntities({ intent: 'GET_MONTHLY_PROFIT', entities: { month: 3, year: 2024 } }, { currentDate: '2026-07-15' });
     expect(out).toEqual({ month: 3, year: 2024 });
+  });
+
+  it('SEARCH_INVENTORY: remaps allowlisted watchQuery → query (production Claude alias family)', () => {
+    const out = normalizeEntities(
+      { intent: 'SEARCH_INVENTORY', entities: { watchQuery: '  Batman  ', status: null, limit: null } },
+      { currentDate: '2026-07-15' },
+    );
+    expect(out).toEqual({ query: 'Batman' });
+    expect(out).not.toHaveProperty('watchQuery');
+  });
+
+  it('SEARCH_INVENTORY: keeps query, canonicalizes status synonyms and numeric-string limits', () => {
+    const out = normalizeEntities(
+      { intent: 'SEARCH_INVENTORY', entities: { query: 'Rolex', status: 'disponibles', limit: '10' } },
+      { currentDate: '2026-07-15' },
+    );
+    expect(out).toEqual({ query: 'Rolex', status: 'AVAILABLE', limit: 10 });
+  });
+
+  it('SEARCH_CLIENT: remaps clientQuery/customerQuery → query and drops null optionals', () => {
+    const out = normalizeEntities(
+      { intent: 'SEARCH_CLIENT', entities: { clientQuery: 'José Hernández', limit: null } },
+      { currentDate: '2026-07-15' },
+    );
+    expect(out).toEqual({ query: 'José Hernández' });
+  });
+
+  it('does not invent query text when both query and aliases are empty', () => {
+    const out = normalizeEntities(
+      { intent: 'SEARCH_INVENTORY', entities: { watchQuery: '   ', query: '' } },
+      { currentDate: '2026-07-15' },
+    );
+    expect(out).not.toHaveProperty('query');
+    expect(out).not.toHaveProperty('watchQuery');
+  });
+
+  it('rejects unsafe limit values rather than coercing them', () => {
+    expect(normalizeLimit('10.5')).toBeNull();
+    expect(normalizeLimit(0)).toBeNull();
+    expect(normalizeLimit(51)).toBeNull();
+    expect(normalizeLimit('10')).toBe(10);
+    expect(normalizeInventoryStatus('AVAILABLE')).toBe('AVAILABLE');
+    expect(normalizeInventoryStatus('disponibles')).toBe('AVAILABLE');
+    expect(stripNullEntityValues({ query: 'AP', limit: null })).toEqual({ query: 'AP' });
   });
 });
