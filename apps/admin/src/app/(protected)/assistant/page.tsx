@@ -81,6 +81,30 @@ const composerExamples = [
   'Muéstrame mi liquidez',
 ];
 
+const monthNames = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+// Natural, first-person phrasing for the quick-action reads, so the thread
+// shows what the user is asking for instead of a raw intent label.
+function naturalReadText(action: ReadAction, params: { month: number; year: number; query: string }): string {
+  switch (action) {
+    case 'GET_LIQUIDITY':
+      return 'Muéstrame mi liquidez.';
+    case 'GET_MONTHLY_PROFIT':
+      return `Muéstrame la utilidad de ${monthNames[params.month - 1]} de ${params.year}.`;
+    case 'SEARCH_INVENTORY':
+      return params.query ? `Busca ${params.query} en inventario.` : 'Busca en inventario.';
+    case 'SEARCH_CLIENT':
+      return params.query ? `Busca a ${params.query}.` : 'Busca un cliente.';
+    case 'GET_CLIENT_ACCOUNTS':
+      return params.query ? `Muéstrame las cuentas de ${params.query}.` : 'Muéstrame las cuentas de un cliente.';
+    default:
+      return 'Consulta.';
+  }
+}
+
 type WorkspaceState = {
   workspaceId?: string;
   conversationId?: string;
@@ -96,6 +120,9 @@ export default function AssistantPage() {
   const [workspace, setWorkspace] = useState<WorkspaceState>({});
   const [activeRead, setActiveRead] = useState<ReadAction | null>(null);
   const [history, setHistory] = useState<AssistantHistoryItem[]>([]);
+  // Client-captured, session-only timestamps for grouping/labeling the
+  // activity thread (Hoy/Ayer/hace N min) — never sent to the server.
+  const [historyTimestamps, setHistoryTimestamps] = useState<Record<string, number>>({});
   const [pending, setPending] = useState<AssistantAction | null>(null);
   const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<AssistantAction | null>(null);
@@ -157,6 +184,7 @@ export default function AssistantPage() {
     try {
       const response = await action.execute();
       setHistory((items) => [{ id: response.requestId, label, intent: action.request.intent, entities: action.request.entities, response }, ...items]);
+      setHistoryTimestamps((current) => ({ ...current, [response.requestId]: Date.now() }));
       setWorkspace((current) => ({
         ...current,
         workspaceId: response.workspaceId,
@@ -169,7 +197,9 @@ export default function AssistantPage() {
       if (caught instanceof AssistantRequestError) {
         setError(caught.message);
         if (caught.response) {
-          setHistory((items) => [{ id: caught.response!.requestId, label, intent: action.request.intent, entities: action.request.entities, response: caught.response! }, ...items]);
+          const failedResponse = caught.response;
+          setHistory((items) => [{ id: failedResponse.requestId, label, intent: action.request.intent, entities: action.request.entities, response: failedResponse }, ...items]);
+          setHistoryTimestamps((current) => ({ ...current, [failedResponse.requestId]: Date.now() }));
         }
       } else {
         setError('Se perdió la conexión. Puedes reintentar la misma solicitud de forma segura.');
@@ -195,7 +225,7 @@ export default function AssistantPage() {
   const openRead = (action: ReadAction) => {
     setError(null);
     if (action === 'GET_LIQUIDITY') {
-      makeAction(action, {}, 'Liquidez');
+      makeAction(action, {}, naturalReadText('GET_LIQUIDITY', { month, year, query: '' }));
       return;
     }
     setActiveRead(action);
@@ -205,18 +235,24 @@ export default function AssistantPage() {
   const submitRead = (event: FormEvent) => {
     event.preventDefault();
     if (!activeRead) return;
+    const trimmed = query.trim();
     if (activeRead === 'GET_MONTHLY_PROFIT') {
-      makeAction(activeRead, { year, month }, 'Utilidad mensual');
+      makeAction(activeRead, { year, month }, naturalReadText('GET_MONTHLY_PROFIT', { month, year, query: '' }));
     } else if (activeRead === 'SEARCH_INVENTORY') {
-      makeAction(activeRead, { query: query.trim(), status, limit }, 'Búsqueda de inventario', query.trim());
+      makeAction(activeRead, { query: trimmed, status, limit }, naturalReadText('SEARCH_INVENTORY', { month, year, query: trimmed }), trimmed);
     } else {
-      makeAction('SEARCH_CLIENT', { query: query.trim(), limit }, activeRead === 'GET_CLIENT_ACCOUNTS' ? 'Buscar cliente para cuentas' : 'Búsqueda de cliente', query.trim());
+      makeAction(
+        'SEARCH_CLIENT',
+        { query: trimmed, limit },
+        naturalReadText(activeRead === 'GET_CLIENT_ACCOUNTS' ? 'GET_CLIENT_ACCOUNTS' : 'SEARCH_CLIENT', { month, year, query: trimmed }),
+        trimmed,
+      );
     }
     setActiveRead(null);
   };
 
   const selectClient = (id: string, label: string) => {
-    makeAction('GET_CLIENT_ACCOUNTS', { clientId: id }, `Cuentas de ${label}`);
+    makeAction('GET_CLIENT_ACCOUNTS', { clientId: id }, `Muéstrame las cuentas de ${label}.`);
   };
 
   const continueItem = useCallback((item: AssistantHistoryItem, entities: Record<string, JsonValue>) => {
@@ -327,12 +363,13 @@ export default function AssistantPage() {
           pending={!!pending}
           pendingLabel={pendingLabel}
           error={error}
-          onRetry={retryAction ? () => void runAction(retryAction, 'Reintento seguro') : undefined}
+          onRetry={retryAction ? () => void runAction(retryAction, 'Reintentando la última solicitud.') : undefined}
           selectClient={selectClient}
           onContinue={continueItem}
           onRestart={restartItem}
           onSearchAgain={() => openRead('SEARCH_CLIENT')}
           manualHrefFor={manualHrefFor}
+          timestamps={historyTimestamps}
           emptyState={emptyState}
         />
 
@@ -417,19 +454,20 @@ export default function AssistantPage() {
         {history.length || pending || error ? (
           <section className="space-y-3" aria-labelledby="results-title">
             <div>
-              <h2 id="results-title" className="text-lg font-semibold">Actividad reciente</h2>
+              <h2 id="results-title" className="text-lg font-semibold">Conversaciones</h2>
               <p className="mt-1 text-xs text-muted">Solo esta sesión. La conversación canónica permanece en el servidor.</p>
             </div>
             <ConversationThread
               history={history}
               pending={!!pending}
               error={error}
-              onRetry={retryAction ? () => void runAction(retryAction, 'Reintento seguro') : undefined}
+              onRetry={retryAction ? () => void runAction(retryAction, 'Reintentando la última solicitud.') : undefined}
               selectClient={selectClient}
               onContinue={continueItem}
               onRestart={restartItem}
               onSearchAgain={() => openRead('SEARCH_CLIENT')}
               manualHrefFor={manualHrefFor}
+              timestamps={historyTimestamps}
             />
           </section>
         ) : null}

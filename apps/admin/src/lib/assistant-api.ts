@@ -24,10 +24,10 @@ export class AssistantRequestError extends Error {
 const statusMessages: Record<number, string> = {
   400: 'Revisa los datos de la consulta.',
   401: 'Tu sesión expiró. Inicia sesión nuevamente.',
-  403: 'No tienes permiso para consultar esta información.',
-  404: 'No se encontró el recurso solicitado.',
-  409: 'El estado cambió. Actualiza y vuelve a intentarlo.',
-  500: 'No fue posible completar la consulta.',
+  403: 'No tienes acceso a esa información.',
+  404: 'No encontré ese recurso.',
+  409: 'La información cambió desde que abriste esta conversación.',
+  500: 'No pude completar la consulta. No se realizó ningún cambio.',
 };
 
 function isStructuredResponse(value: unknown): value is StructuredAssistantResponse {
