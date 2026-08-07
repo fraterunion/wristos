@@ -47,11 +47,11 @@ export class StructuredAssistantService {
 
       if (plan.state === 'NEEDS_CLARIFICATION') {
         const response = this.clarificationResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
-        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION);
+        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: input.intent, entities: input.entities });
       }
       if (!READ_ACTIONS.has(input.intent)) {
         const response = this.writePreviewResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
-        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION);
+        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION, { intent: input.intent, entities: input.entities });
       }
 
       const result = await this.readRunner.run({
@@ -67,11 +67,11 @@ export class StructuredAssistantService {
       });
       const response = this.readResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, input.intent, plan, result);
       const failed = result.executionState !== 'COMPLETED';
-      return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, failed ? AIAuditEventType.ASSISTANT_REQUEST_FAILED : AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, failed ? AIRequestStatus.FAILED : AIRequestStatus.COMPLETED);
+      return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, failed ? AIAuditEventType.ASSISTANT_REQUEST_FAILED : AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, failed ? AIRequestStatus.FAILED : AIRequestStatus.COMPLETED, { intent: input.intent, entities: input.entities });
     } catch (error) {
       const response = this.errorResponse(request.id, request.traceId, prepared, error);
       if (!prepared) return this.requests.failUnattached(request, actor, input.intent, response, this.failureType(error));
-      return this.persistence.complete(request.id, actor, response, await this.currentWorkspaceVersion(actor, prepared), AIAuditEventType.ASSISTANT_REQUEST_FAILED, AIRequestStatus.FAILED);
+      return this.persistence.complete(request.id, actor, response, await this.currentWorkspaceVersion(actor, prepared), AIAuditEventType.ASSISTANT_REQUEST_FAILED, AIRequestStatus.FAILED, { intent: input.intent, entities: input.entities });
     }
   }
 

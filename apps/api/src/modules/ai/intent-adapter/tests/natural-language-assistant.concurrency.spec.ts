@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { AIRequestStatus, Prisma } from '@prisma/client';
 import { AIRequestService } from '../../assistant/ai-request.service';
+import { ReferenceResolverService } from '../../context/reference-resolver.service';
 import { NaturalLanguageAssistantService } from '../natural-language-assistant.service';
 
 /**
@@ -88,7 +89,18 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
     const intentAdapter = { interpret };
     const executeClaimed = jest.fn().mockResolvedValue({ requestId: 'ar-1', conversationId: '', workspaceId: '', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 'trace', createdAt: new Date().toISOString() });
     const assistant = { executeClaimed };
-    const service = new NaturalLanguageAssistantService(aiRequests, intentAdapter as never, assistant as never);
+    const workingContext = {
+      load: jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
+      persistSelection: jest.fn(),
+      buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
+    };
+    const service = new NaturalLanguageAssistantService(
+      aiRequests,
+      intentAdapter as never,
+      assistant as never,
+      new ReferenceResolverService(),
+      workingContext as never,
+    );
 
     const [resultA, resultB] = await Promise.all([
       service.handleMessage(actor, dto),
@@ -117,7 +129,18 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
     });
     const executeClaimed = jest.fn().mockResolvedValue({ requestId: 'ar-1', conversationId: '', workspaceId: '', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 'trace', createdAt: new Date().toISOString() });
-    const service = new NaturalLanguageAssistantService(aiRequests, { interpret } as never, { executeClaimed } as never);
+    const workingContext = {
+      load: jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
+      persistSelection: jest.fn(),
+      buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
+    };
+    const service = new NaturalLanguageAssistantService(
+      aiRequests,
+      { interpret } as never,
+      { executeClaimed } as never,
+      new ReferenceResolverService(),
+      workingContext as never,
+    );
 
     await service.handleMessage(actor, dto);
     expect(interpret).toHaveBeenCalledTimes(1);

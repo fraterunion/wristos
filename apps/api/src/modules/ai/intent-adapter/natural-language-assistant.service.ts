@@ -1,13 +1,25 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { AIRequestService } from '../assistant/ai-request.service';
 import { StructuredAssistantService } from '../assistant/structured-assistant.service';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from '../assistant/structured-assistant.types';
+import { toProviderConversationContext } from '../context/provider-context';
+import { detectDeterministicReference, isPureReferentialUtterance, looksLikeAccountsContinuation } from '../context/ordinal-reference';
+import { ReferenceResolverService, trustedIdsFromResolution } from '../context/reference-resolver.service';
+import { IntentReference } from '../context/reference-schema';
+import { mergeTrustedIds, stripUntrustedEntityIds } from '../context/trusted-entities';
+import { WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
+import { WorkingContextService } from '../context/working-context.service';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { IntentAdapterService } from './intent-adapter.service';
 import { INTENT_CANDIDATE_VALUES, IntentCandidateIntent } from './intent-schema';
 import { assertWithinTextLimit, decideConfidencePolicy } from './safety';
-import { buildPolicyResponse, buildProviderFailureResponse } from './typed-responses';
+import {
+  buildEntitySelectedResponse,
+  buildPolicyResponse,
+  buildProviderFailureResponse,
+  buildReferenceClarificationResponse,
+} from './typed-responses';
 
 export interface NaturalLanguageAssistantResult {
   /** The intent the message ultimately resolved to, or 'UNKNOWN' for anything that never reached the orchestrator. */
@@ -23,19 +35,14 @@ export interface NaturalLanguageAssistantResult {
  * Concurrency invariant: this service calls AIRequestService.claimText()
  * BEFORE ever calling the LLM provider. claimText() takes the exact same
  * durable, DB-unique-constraint-backed claim the structured endpoint has
- * always used (see ai-request.service.ts's shared claimCanonical()) — of
- * any number of concurrent requests with the same tenant/actor/
+ * always used — of any number of concurrent requests with the same tenant/actor/
  * clientRequestId/text, at most one can ever return 'OWNED'. Only the
  * OWNED caller reaches this.intentAdapter.interpret() below. Everyone else
  * gets IN_PROGRESS or an exact REPLAY, with zero provider calls.
  *
- * Once interpretation resolves, the SAME claimed AIRequest identity
- * continues through the UNCHANGED StructuredAssistantService lifecycle via
- * executeClaimed() — never a second claim, never a second AIRequest row.
- *
- * This service never calls a tool, a capability binding, a domain service,
- * or Prisma directly for anything beyond what AIRequestService already
- * owns (the claim itself and its audit trail).
+ * V1.1: AIWorkspace working context is canonical memory. Ordinal/deictic
+ * references resolve deterministically BEFORE (or without) asking Claude.
+ * Trusted entity IDs never come from the LLM or free-form user text.
  */
 @Injectable()
 export class NaturalLanguageAssistantService {
@@ -43,15 +50,14 @@ export class NaturalLanguageAssistantService {
     private readonly aiRequests: AIRequestService,
     private readonly intentAdapter: IntentAdapterService,
     private readonly assistant: StructuredAssistantService,
+    private readonly referenceResolver: ReferenceResolverService,
+    private readonly workingContext: WorkingContextService,
   ) {}
 
   async handleMessage(actor: AssistantActorContext, dto: AssistantMessageDto): Promise<NaturalLanguageAssistantResult> {
     const normalizedText = dto.text.trim();
     assertWithinTextLimit(normalizedText);
 
-    // Durable pre-provider claim. Throws ConflictException (409) here, before
-    // any provider call, if this clientRequestId was already used with
-    // different text — claimCanonical's fingerprint mismatch check.
     const claim = await this.aiRequests.claimText(actor, {
       clientRequestId: dto.clientRequestId,
       text: normalizedText,
@@ -63,18 +69,8 @@ export class NaturalLanguageAssistantService {
     });
 
     if (claim.kind === 'REPLAY') {
-      // Exact replay of a previously-completed claim for this exact text —
-      // zero provider calls, one bounded audit event, never the original
-      // interpretation-started/completed lifecycle again.
       await this.aiRequests.auditReplay(actor, claim.request);
       const { intent } = this.aiRequests.readInterpretation(claim.request);
-      // readInterpretation() reads back the SANITIZED requestPayload (the
-      // same audit-safe convention canonicalRequest() already uses) — it
-      // may contain {redactedHash} placeholders in place of real entity
-      // values. The intent name is never sensitive, but entities are never
-      // reconstructed from that store for a client-facing reply: the
-      // frontend feeds resolvedEntities straight back into follow-up
-      // actions, and a redaction placeholder would corrupt that payload.
       return {
         resolvedIntent: (intent as IntentCandidateIntent | null) ?? 'UNKNOWN',
         response: claim.response,
@@ -85,11 +81,104 @@ export class NaturalLanguageAssistantService {
       return { resolvedIntent: 'UNKNOWN', response: claim.response, resolvedEntities: {} };
     }
 
-    // claim.kind === 'OWNED' — we are the SOLE owner of this identity. We may
-    // call the provider exactly once.
     const request = claim.request;
     const traceId = request.traceId;
+    const responseCtx = { conversationId: dto.conversationId, workspaceId: dto.workspaceId, traceId };
 
+    const loaded = await this.workingContext.load(actor.tenantId, actor.userId, dto.workspaceId);
+    const deterministicRef = detectDeterministicReference(normalizedText);
+
+    // Pure ordinal/deictic selection — no LLM, no fabricated IDs.
+    if (isPureReferentialUtterance(normalizedText) && deterministicRef) {
+      const resolution = this.referenceResolver.resolve(deterministicRef, loaded.working);
+      const audit = this.workingContext.buildAuditFromResolution(
+        resolution,
+        loaded.version ?? 0,
+        WORKING_CONTEXT_SCHEMA_VERSION,
+      );
+      if (resolution.kind === 'CLARIFY') {
+        const response = buildReferenceClarificationResponse(resolution.message, responseCtx, resolution.failureType);
+        await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolution.failureType);
+        return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+      }
+      if (dto.workspaceId && loaded.version !== null) {
+        try {
+          await this.workingContext.persistSelection(
+            actor.tenantId,
+            actor.userId,
+            dto.workspaceId,
+            loaded.version,
+            { type: resolution.entityType, id: resolution.id, label: resolution.label },
+            audit,
+          );
+        } catch (error) {
+          if (error instanceof ConflictException) {
+            const response = buildReferenceClarificationResponse(
+              'El estado cambió. Necesito que elijas nuevamente.',
+              responseCtx,
+              'STALE_CONTEXT',
+            );
+            await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'STALE_CONTEXT');
+            return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+          }
+          throw error;
+        }
+      }
+      const response = buildEntitySelectedResponse(resolution.label, responseCtx);
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'UNKNOWN',
+        entities: trustedIdsFromResolution(resolution),
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'ENTITY_SELECTED');
+      return {
+        resolvedIntent: 'UNKNOWN',
+        response,
+        resolvedEntities: trustedIdsFromResolution(resolution),
+      };
+    }
+
+    // Deterministic accounts continuation: "Ahora sus cuentas."
+    if (looksLikeAccountsContinuation(normalizedText) && deterministicRef) {
+      const resolution = this.referenceResolver.resolve(
+        deterministicRef.kind === 'ORDINAL' ? deterministicRef : { kind: 'LAST_SELECTED', entityType: 'CLIENT' },
+        loaded.working,
+      );
+      if (resolution.kind === 'CLARIFY' || resolution.entityType !== 'CLIENT') {
+        const message =
+          resolution.kind === 'CLARIFY'
+            ? resolution.message
+            : 'Necesito que elijas nuevamente un cliente para ver sus cuentas.';
+        const response = buildReferenceClarificationResponse(
+          message,
+          responseCtx,
+          resolution.kind === 'CLARIFY' ? resolution.failureType : 'TYPE_MISMATCH',
+        );
+        await this.aiRequests.failUnattached(request, actor, 'GET_CLIENT_ACCOUNTS', response, 'REFERENCE_CLARIFICATION');
+        return { resolvedIntent: 'GET_CLIENT_ACCOUNTS', response, resolvedEntities: {} };
+      }
+      const entities = trustedIdsFromResolution(resolution);
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'GET_CLIENT_ACCOUNTS',
+        entities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const structuredRequest: StructuredAssistantRequest = {
+        conversationId: dto.conversationId,
+        workspaceId: dto.workspaceId,
+        intent: 'GET_CLIENT_ACCOUNTS',
+        entities,
+        surface: dto.surface,
+        locale: dto.locale,
+        timezone: dto.timezone,
+        clientRequestId: dto.clientRequestId,
+        userDisplayText: normalizedText,
+      };
+      const response = await this.assistant.executeClaimed(actor, structuredRequest, request);
+      return { resolvedIntent: 'GET_CLIENT_ACCOUNTS', response, resolvedEntities: entities };
+    }
+
+    const providerContext = toProviderConversationContext(loaded.working, dto.locale?.startsWith('es') ? 'es' : dto.locale);
     const outcome = await this.intentAdapter.interpret({
       userText: normalizedText,
       locale: dto.locale ?? 'es-MX',
@@ -97,31 +186,69 @@ export class NaturalLanguageAssistantService {
       allowedIntents: INTENT_CANDIDATE_VALUES,
       currentDate: new Date().toISOString().slice(0, 10),
       requestTraceId: traceId,
+      conversationContext: providerContext,
     });
 
     if (outcome.kind !== 'CANDIDATE') {
-      const response = buildProviderFailureResponse(outcome, { conversationId: dto.conversationId, workspaceId: dto.workspaceId, traceId });
-      // Marks the SAME claimed row terminally failed (replayable) — never a
-      // second AIRequest, never a second provider call on retry.
+      const response = buildProviderFailureResponse(outcome, responseCtx);
       await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, outcome.kind === 'PROVIDER_FAILURE' ? outcome.failureType : outcome.reason);
       return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
     }
 
-    // Denormalize the resolved candidate onto the claimed row so a future
-    // exact-text replay can recover it without re-interpreting — regardless
-    // of whether this outcome proceeds to the orchestrator.
+    // Prefer deterministic reference detection over any LLM-emitted reference.
+    const reference: IntentReference | undefined = deterministicRef ?? outcome.candidate.reference;
+    let entities = stripUntrustedEntityIds(outcome.candidate.entities);
+
+    if (reference) {
+      const resolution = this.referenceResolver.resolve(reference, loaded.working);
+      if (resolution.kind === 'CLARIFY') {
+        const response = buildReferenceClarificationResponse(resolution.message, responseCtx, resolution.failureType);
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: outcome.candidate.intent,
+          entities,
+          candidateHash: outcome.candidate.candidateHash,
+        });
+        await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, response, resolution.failureType);
+        return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: entities };
+      }
+      entities = mergeTrustedIds(entities, trustedIdsFromResolution(resolution));
+      // Write intents: map CLIENT→customerId when preparing REGISTER_SALE preview.
+      if (outcome.candidate.intent === 'REGISTER_SALE' && resolution.entityType === 'WATCH') {
+        entities = mergeTrustedIds(entities, { watchId: resolution.id });
+      }
+      if (
+        (outcome.candidate.intent === 'REGISTER_SALE' || outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT') &&
+        resolution.entityType === 'CLIENT'
+      ) {
+        entities = mergeTrustedIds(entities, { customerId: resolution.id });
+      }
+    } else if (
+      outcome.candidate.intent === 'GET_CLIENT_ACCOUNTS' &&
+      loaded.working?.lastResolvedEntities?.clientId
+    ) {
+      entities = mergeTrustedIds(entities, { clientId: loaded.working.lastResolvedEntities.clientId });
+    } else if (outcome.candidate.intent === 'REGISTER_SALE' && loaded.working?.lastResolvedEntities?.watchId) {
+      // Prior trusted watch selection may prepare a write preview — never execute.
+      entities = mergeTrustedIds(entities, { watchId: loaded.working.lastResolvedEntities.watchId });
+    } else if (
+      (outcome.candidate.intent === 'REGISTER_SALE' || outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT') &&
+      loaded.working?.lastResolvedEntities?.clientId
+    ) {
+      entities = mergeTrustedIds(entities, { customerId: loaded.working.lastResolvedEntities.clientId });
+    }
+
     await this.aiRequests.recordInterpretation(request.id, {
       intent: outcome.candidate.intent,
-      entities: outcome.candidate.entities,
+      entities,
       candidateHash: outcome.candidate.candidateHash,
     });
 
     const policy = decideConfidencePolicy(outcome.candidate);
 
     if (policy.action !== 'PROCEED') {
-      const response = buildPolicyResponse(policy, { conversationId: dto.conversationId, workspaceId: dto.workspaceId, traceId });
+      const response = buildPolicyResponse(policy, responseCtx);
       await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, response, policy.action);
-      return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: outcome.candidate.entities };
+      return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: entities };
     }
 
     const intent = outcome.candidate.intent as BusinessActionId;
@@ -129,16 +256,14 @@ export class NaturalLanguageAssistantService {
       conversationId: dto.conversationId,
       workspaceId: dto.workspaceId,
       intent,
-      entities: outcome.candidate.entities,
+      entities,
       surface: dto.surface,
       locale: dto.locale,
       timezone: dto.timezone,
       clientRequestId: dto.clientRequestId,
       userDisplayText: normalizedText,
     };
-    // Continues under the SAME durable identity claimText() already owns —
-    // never a second claim(), never a second AIRequest row.
     const response = await this.assistant.executeClaimed(actor, structuredRequest, request);
-    return { resolvedIntent: intent, response, resolvedEntities: outcome.candidate.entities };
+    return { resolvedIntent: intent, response, resolvedEntities: entities };
   }
 }

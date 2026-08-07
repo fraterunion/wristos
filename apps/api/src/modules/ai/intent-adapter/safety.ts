@@ -49,8 +49,8 @@ function truncate(value: string, maxLength: number): string {
 
 /**
  * Bounds a conversation-context object before it is ever sent to a
- * provider (Part 8/13): caps string lengths, list sizes, and the number of
- * entity keys carried over. Never widens scope — only shrinks it.
+ * provider: caps string lengths and list sizes. Never includes trusted
+ * entity IDs in the preferred V1.1 shape (labels/ordinals only).
  */
 export function sanitizeConversationContext(
   context: BoundedConversationContext | undefined,
@@ -61,6 +61,28 @@ export function sanitizeConversationContext(
   if (context.lastIntent) sanitized.lastIntent = context.lastIntent;
   if (context.conversationLanguage) sanitized.conversationLanguage = truncate(context.conversationLanguage, 10);
 
+  if (context.selectedEntity) {
+    sanitized.selectedEntity = {
+      type: context.selectedEntity.type,
+      label: truncate(context.selectedEntity.label, MAX_CONTEXT_FIELD_LENGTH),
+    };
+  }
+
+  if (context.presentedCandidates?.length) {
+    sanitized.presentedCandidates = context.presentedCandidates.slice(0, MAX_CONTEXT_LIST_ITEMS).map((c) => ({
+      ordinal: c.ordinal,
+      type: c.type,
+      label: truncate(c.label, MAX_CONTEXT_FIELD_LENGTH),
+    }));
+  }
+
+  if (context.pendingMissingFields?.length) {
+    sanitized.pendingMissingFields = context.pendingMissingFields
+      .slice(0, MAX_CONTEXT_LIST_ITEMS)
+      .map((field) => truncate(field, 64));
+  }
+
+  // Legacy fields: keep size bounds but never prefer them for new builders.
   if (context.lastResolvedEntities) {
     const entries = Object.entries(context.lastResolvedEntities).slice(0, MAX_CONTEXT_ENTITY_KEYS);
     sanitized.lastResolvedEntities = Object.fromEntries(
@@ -75,12 +97,6 @@ export function sanitizeConversationContext(
     sanitized.lastPresentedCandidateIds = context.lastPresentedCandidateIds
       .slice(0, MAX_CONTEXT_LIST_ITEMS)
       .map((id) => truncate(id, 64));
-  }
-
-  if (context.pendingMissingFields?.length) {
-    sanitized.pendingMissingFields = context.pendingMissingFields
-      .slice(0, MAX_CONTEXT_LIST_ITEMS)
-      .map((field) => truncate(field, 64));
   }
 
   return sanitized;

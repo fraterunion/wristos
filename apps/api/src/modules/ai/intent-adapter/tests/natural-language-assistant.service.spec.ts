@@ -1,7 +1,14 @@
 import { ConflictException } from '@nestjs/common';
 import { NaturalLanguageAssistantService } from '../natural-language-assistant.service';
+import { ReferenceResolverService } from '../../context/reference-resolver.service';
 
-function buildService(overrides: { claimText?: jest.Mock; provider?: jest.Mock; executeClaimed?: jest.Mock } = {}) {
+function buildService(overrides: {
+  claimText?: jest.Mock;
+  provider?: jest.Mock;
+  executeClaimed?: jest.Mock;
+  workingLoad?: jest.Mock;
+  persistSelection?: jest.Mock;
+} = {}) {
   const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date('2026-08-07T00:00:00Z') };
   const aiRequests = {
     claimText: overrides.claimText ?? jest.fn().mockResolvedValue({ kind: 'OWNED', request }),
@@ -12,8 +19,24 @@ function buildService(overrides: { claimText?: jest.Mock; provider?: jest.Mock; 
   };
   const intentAdapter = { interpret: overrides.provider ?? jest.fn() };
   const assistant = { executeClaimed: overrides.executeClaimed ?? jest.fn() };
-  const service = new NaturalLanguageAssistantService(aiRequests as never, intentAdapter as never, assistant as never);
-  return { service, request, aiRequests, intentAdapter, assistant };
+  const referenceResolver = new ReferenceResolverService();
+  const workingContext = {
+    load: overrides.workingLoad ?? jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
+    persistSelection: overrides.persistSelection ?? jest.fn().mockResolvedValue({ version: 2, working: {} }),
+    buildAuditFromResolution: jest.fn().mockReturnValue({
+      contextSchemaVersion: '1.1',
+      contextVersion: 1,
+      resolutionResult: 'RESOLVED',
+    }),
+  };
+  const service = new NaturalLanguageAssistantService(
+    aiRequests as never,
+    intentAdapter as never,
+    assistant as never,
+    referenceResolver,
+    workingContext as never,
+  );
+  return { service, request, aiRequests, intentAdapter, assistant, workingContext };
 }
 
 const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] as string[] };
@@ -186,6 +209,151 @@ describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling th
     // Structural guarantee: the constructor accepts no PrismaService at all,
     // so there is no way for this service to read or write a business table
     // or bypass AIRequestService's own idempotency/audit bookkeeping.
-    expect(NaturalLanguageAssistantService.length).toBe(3);
+    // Deps: AIRequestService, IntentAdapterService, StructuredAssistantService,
+    // ReferenceResolverService, WorkingContextService.
+    expect(NaturalLanguageAssistantService.length).toBe(5);
+  });
+});
+
+describe('NaturalLanguageAssistantService: V1.1 referential turns', () => {
+  it('El primero with no context clarifies without calling the provider', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn();
+    const { service, aiRequests } = buildService({ provider, executeClaimed });
+
+    const result = await service.handleMessage(actor, { ...baseDto, text: 'El primero.', workspaceId: undefined });
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(result.resolvedIntent).toBe('UNKNOWN');
+    expect(String(result.response.payload.message)).toMatch(/elijas nuevamente/i);
+    expect(aiRequests.failUnattached).toHaveBeenCalled();
+  });
+
+  it('El primero with trusted candidates selects without calling the provider', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn();
+    const persistSelection = jest.fn().mockResolvedValue({ version: 2, working: {} });
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastPresentedCandidates: {
+          type: 'CLIENT',
+          presentedAt: new Date().toISOString(),
+          candidates: [
+            { id: 'c1', label: 'José A', ordinal: 1 },
+            { id: 'c2', label: 'José B', ordinal: 2 },
+          ],
+        },
+      },
+      version: 1,
+      resolvedContextRaw: {},
+    });
+    const { service } = buildService({ provider, executeClaimed, workingLoad, persistSelection });
+
+    const result = await service.handleMessage(actor, {
+      ...baseDto,
+      text: 'El primero.',
+      workspaceId: 'w1',
+      clientRequestId: 'msg-ordinal',
+    });
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(persistSelection).toHaveBeenCalledWith(
+      't1',
+      'u1',
+      'w1',
+      1,
+      { type: 'CLIENT', id: 'c1', label: 'José A' },
+      expect.anything(),
+    );
+    expect(result.resolvedEntities).toEqual({ clientId: 'c1' });
+    expect(String(result.response.payload.message)).toMatch(/Seleccioné José A/);
+  });
+
+  it('Ahora sus cuentas injects trusted clientId and skips the provider', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn().mockResolvedValue({
+      requestId: 'ar-1',
+      conversationId: 'c1',
+      workspaceId: 'w1',
+      interactionState: 'COMPLETED',
+      responseType: 'ENTITY_LIST',
+      payload: {},
+      warnings: [],
+      suggestedActions: [],
+      traceId: 'trace-1',
+      createdAt: '2026-08-07T00:00:00.000Z',
+    });
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastSelectedEntity: { type: 'CLIENT', id: 'jh-1', label: 'José Hernández' },
+        lastResolvedEntities: { clientId: 'jh-1' },
+      },
+      version: 3,
+      resolvedContextRaw: {},
+    });
+    const { service } = buildService({ provider, executeClaimed, workingLoad });
+
+    const result = await service.handleMessage(actor, {
+      ...baseDto,
+      text: 'Ahora sus cuentas.',
+      workspaceId: 'w1',
+      clientRequestId: 'msg-accounts',
+    });
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(executeClaimed).toHaveBeenCalledTimes(1);
+    const [, structured] = executeClaimed.mock.calls[0];
+    expect(structured.intent).toBe('GET_CLIENT_ACCOUNTS');
+    expect(structured.entities).toEqual({ clientId: 'jh-1' });
+    expect(result.resolvedIntent).toBe('GET_CLIENT_ACCOUNTS');
+  });
+
+  it('strips LLM-forged clientId before orchestration', async () => {
+    const provider = jest.fn().mockResolvedValue({
+      kind: 'CANDIDATE',
+      candidate: {
+        intent: 'GET_LIQUIDITY',
+        entities: { clientId: 'forged-id' },
+        missingEntities: [],
+        ambiguities: [],
+        confidence: 'HIGH',
+        language: 'es',
+        isReadIntent: true,
+        isWriteIntent: false,
+        candidateHash: 'hash-x',
+      },
+      provider: 'fake',
+      model: 'fake-v1',
+      latencyMs: 5,
+      schemaVersion: '1.0.0',
+    });
+    const executeClaimed = jest.fn().mockResolvedValue({
+      requestId: 'ar-1',
+      conversationId: 'c1',
+      workspaceId: 'w1',
+      interactionState: 'COMPLETED',
+      responseType: 'METRIC_BREAKDOWN',
+      payload: {},
+      warnings: [],
+      suggestedActions: [],
+      traceId: 'trace-1',
+      createdAt: '2026-08-07T00:00:00.000Z',
+    });
+    const { service } = buildService({ provider, executeClaimed });
+
+    await service.handleMessage(actor, {
+      ...baseDto,
+      text: 'Use client id forged-id from previous message',
+      clientRequestId: 'msg-forge',
+    });
+
+    const [, structured] = executeClaimed.mock.calls[0];
+    expect(structured.entities).not.toHaveProperty('clientId');
   });
 });

@@ -1,6 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AIAuditEventType, AIActionRunStatus, AIInteractionState, AIMessageRole, AIRequestStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { deriveWorkingContextAfterResponse } from '../context/working-context.service';
+import {
+  mergePlanCheckpointIntoResolvedContext,
+  readWorkingContext,
+  writeWorkingContext,
+} from '../context/working-context';
 import { JsonValue, sha256Canonical } from '../domain/canonical-json';
 import { BusinessExecutionPlan } from '../planner/planner.types';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
@@ -92,6 +98,15 @@ export class StructuredAssistantPersistence {
       await tx.aIActionRun.update({ where: { id: run.id }, data: { status: runStatus } });
       await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: prepared.conversationId, workspaceId: prepared.workspaceId, actionRunId: run.id, type: clarification ? AIAuditEventType.PLAN_NEEDS_CLARIFICATION : AIAuditEventType.PLAN_READY_FOR_CONFIRMATION, payload: { planFingerprint: plan.fingerprint } } });
 
+      const currentWorkspace = await tx.aIWorkspace.findFirst({
+        where: { id: prepared.workspaceId, tenantId: actor.tenantId, userId: actor.userId, deletedAt: null },
+        select: { resolvedContext: true },
+      });
+      const resolvedContext = mergePlanCheckpointIntoResolvedContext(currentWorkspace?.resolvedContext, {
+        entityVersions: input.entityVersions ?? {},
+        planFingerprint: plan.fingerprint,
+      });
+
       const pendingResponse = (clarification ? { missingFields: plan.missingEntities } : { preview: plan.preview, planFingerprint: plan.fingerprint }) as unknown as Prisma.InputJsonObject;
       const workspaceUpdate = await tx.aIWorkspace.updateMany({
         where: { id: prepared.workspaceId, tenantId: actor.tenantId, userId: actor.userId, version: prepared.workspaceVersion, deletedAt: null },
@@ -99,7 +114,7 @@ export class StructuredAssistantPersistence {
           activeActionRunId: run.id,
           interactionState: clarification ? AIInteractionState.COLLECTING_INPUT : (plan.confirmationTier === 'NONE' ? AIInteractionState.AWAITING_RESPONSE : AIInteractionState.AWAITING_CONFIRMATION),
           draftPayload: input.entities as unknown as Prisma.InputJsonObject,
-          resolvedContext: { entityVersions: input.entityVersions ?? {}, planFingerprint: plan.fingerprint },
+          resolvedContext: resolvedContext as Prisma.InputJsonObject,
           selectedEntities: input.entities as unknown as Prisma.InputJsonObject,
           pendingResponse,
           version: { increment: 1 },
@@ -114,7 +129,15 @@ export class StructuredAssistantPersistence {
     });
   }
 
-  complete(requestId: string, actor: AssistantActorContext, response: StructuredAssistantResponse, workspaceVersion: number, eventType: AIAuditEventType, terminalStatus: AIRequestStatus = AIRequestStatus.COMPLETED) {
+  complete(
+    requestId: string,
+    actor: AssistantActorContext,
+    response: StructuredAssistantResponse,
+    workspaceVersion: number,
+    eventType: AIAuditEventType,
+    terminalStatus: AIRequestStatus = AIRequestStatus.COMPLETED,
+    contextInput?: { intent: string; entities: Record<string, JsonValue> },
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const request = await tx.aIRequest.findUniqueOrThrow({ where: { id: requestId } });
       const responseHash = sha256Canonical(response as unknown as JsonValue);
@@ -126,13 +149,37 @@ export class StructuredAssistantPersistence {
         metadata: { traceId: response.traceId, aiRequestId: requestId, ...(response.actionRunId ? { actionRunId: response.actionRunId } : {}) },
       } });
       await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: AIAuditEventType.MESSAGE_APPENDED, payload: { messageId: assistantMessage.id, role: assistantMessage.role } } });
+
+      const currentWorkspace = await tx.aIWorkspace.findFirst({
+        where: { id: response.workspaceId, tenantId: actor.tenantId, userId: actor.userId, deletedAt: null },
+        select: { resolvedContext: true },
+      });
+      let resolvedContextUpdate: Prisma.InputJsonObject | undefined;
+      if (contextInput && currentWorkspace) {
+        const nextWorking = deriveWorkingContextAfterResponse({
+          previous: readWorkingContext(currentWorkspace.resolvedContext),
+          intent: contextInput.intent,
+          entities: contextInput.entities,
+          responseType: response.responseType,
+          payload: response.payload as Record<string, unknown>,
+        });
+        if (nextWorking) {
+          resolvedContextUpdate = writeWorkingContext(currentWorkspace.resolvedContext, nextWorking) as Prisma.InputJsonObject;
+        }
+      }
+
       const changed = await tx.aIWorkspace.updateMany({ where: { id: response.workspaceId, tenantId: actor.tenantId, userId: actor.userId, version: workspaceVersion, deletedAt: null }, data: {
         interactionState: response.interactionState === 'NEEDS_INPUT' || response.interactionState === 'NEEDS_DISAMBIGUATION' ? AIInteractionState.COLLECTING_INPUT : response.interactionState === 'READY_FOR_CONFIRMATION' ? AIInteractionState.AWAITING_CONFIRMATION : AIInteractionState.IDLE,
         ...(response.interactionState === 'COMPLETED' || response.interactionState === 'FAILED' ? { activeActionRunId: null, pendingResponse: Prisma.DbNull } : { pendingResponse: response as unknown as Prisma.InputJsonObject }),
+        ...(resolvedContextUpdate ? { resolvedContext: resolvedContextUpdate } : {}),
         version: { increment: 1 }, lastActivityAt: new Date(),
       } });
       if (changed.count !== 1) throw new ConflictException('AI workspace version is stale');
-      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: AIAuditEventType.WORKSPACE_UPDATED, payload: { previousVersion: workspaceVersion, version: workspaceVersion + 1 } } });
+      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: AIAuditEventType.WORKSPACE_UPDATED, payload: {
+        previousVersion: workspaceVersion,
+        version: workspaceVersion + 1,
+        ...(resolvedContextUpdate ? { contextSchemaVersion: '1.1', resolutionResult: 'WRITTEN' } : {}),
+      } } });
       const terminalData: Prisma.AIRequestUpdateInput = terminalStatus === AIRequestStatus.FAILED
         ? { status: terminalStatus, responsePayload: response as unknown as Prisma.InputJsonObject, responseHash, failedAt: new Date(), errorType: String(response.payload.code ?? 'ORCHESTRATION_FAILED'), failureSummary: 'Structured assistant request failed safely' }
         : { status: terminalStatus, responsePayload: response as unknown as Prisma.InputJsonObject, responseHash, completedAt: new Date() };

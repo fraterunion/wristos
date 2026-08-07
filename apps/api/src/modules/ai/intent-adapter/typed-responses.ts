@@ -114,3 +114,39 @@ export function buildRateLimitedResponse(context: ResponseContext): StructuredAs
     },
   };
 }
+
+export function buildReferenceClarificationResponse(
+  message: string,
+  context: ResponseContext,
+  code = 'REFERENCE_CLARIFICATION',
+): StructuredAssistantResponse {
+  return {
+    ...base(context),
+    interactionState: 'NEEDS_INPUT',
+    responseType: 'MISSING_FIELDS_CARD',
+    payload: {
+      title: 'Necesito que elijas nuevamente',
+      message,
+      code,
+      groups: [],
+      unchanged: 'No se ejecutó ninguna acción.',
+      nextAction: 'Elige una opción de la lista o reformula tu solicitud.',
+    },
+  };
+}
+
+export function buildEntitySelectedResponse(
+  label: string,
+  context: ResponseContext,
+): StructuredAssistantResponse {
+  return {
+    ...base(context),
+    interactionState: 'NEEDS_INPUT',
+    responseType: 'TEXT_ANSWER',
+    payload: {
+      message: `Seleccioné ${label}. ¿Qué quieres hacer ahora?`,
+      unchanged: 'No se ejecutó ninguna acción de escritura ni se modificaron datos de negocio.',
+      nextAction: 'Puedes pedir sus cuentas, continuar con una venta, o elegir otra opción.',
+    },
+  };
+}
