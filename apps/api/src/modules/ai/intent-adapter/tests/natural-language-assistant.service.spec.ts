@@ -1,94 +1,121 @@
 import { ConflictException } from '@nestjs/common';
-import { AIRequestStatus } from '@prisma/client';
-import { sha256Canonical } from '../../domain/canonical-json';
-import { deriveStructuredClientRequestId, NaturalLanguageAssistantService } from '../natural-language-assistant.service';
+import { NaturalLanguageAssistantService } from '../natural-language-assistant.service';
 
-function buildService(overrides: { findUnique?: jest.Mock; provider?: jest.Mock; execute?: jest.Mock } = {}) {
-  const prisma = {
-    aIRequest: { findUnique: overrides.findUnique ?? jest.fn().mockResolvedValue(null) },
-    aIAuditEvent: { create: jest.fn().mockResolvedValue({}) },
+function buildService(overrides: { claimText?: jest.Mock; provider?: jest.Mock; executeClaimed?: jest.Mock } = {}) {
+  const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date('2026-08-07T00:00:00Z') };
+  const aiRequests = {
+    claimText: overrides.claimText ?? jest.fn().mockResolvedValue({ kind: 'OWNED', request }),
+    recordInterpretation: jest.fn().mockResolvedValue(undefined),
+    readInterpretation: jest.fn().mockReturnValue({ intent: null, entities: {} }),
+    auditReplay: jest.fn().mockResolvedValue(undefined),
+    failUnattached: jest.fn().mockImplementation((_request, _actor, _intent, response) => response),
   };
-  const aiRequests = { readStoredResponse: jest.fn((request) => request.responsePayload) };
   const intentAdapter = { interpret: overrides.provider ?? jest.fn() };
-  const assistant = { execute: overrides.execute ?? jest.fn() };
-  const service = new NaturalLanguageAssistantService(prisma as never, aiRequests as never, intentAdapter as never, assistant as never);
-  return { service, prisma, aiRequests, intentAdapter, assistant };
+  const assistant = { executeClaimed: overrides.executeClaimed ?? jest.fn() };
+  const service = new NaturalLanguageAssistantService(aiRequests as never, intentAdapter as never, assistant as never);
+  return { service, request, aiRequests, intentAdapter, assistant };
 }
 
 const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] as string[] };
 const baseDto = { text: 'Muéstrame mi liquidez', surface: 'MOBILE' as const, clientRequestId: 'msg-1' };
 
-describe('NaturalLanguageAssistantService: delegates only to IntentAdapterService and the existing orchestrator', () => {
-  it('on a fresh message, calls the intent adapter then the orchestrator exactly once each, never a tool/domain service', async () => {
+describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling the provider', () => {
+  it('on a fresh (OWNED) claim, calls the provider then continues the SAME durable identity via executeClaimed — never a second claim', async () => {
     const provider = jest.fn().mockResolvedValue({
       kind: 'CANDIDATE',
       candidate: { intent: 'GET_LIQUIDITY', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es', isReadIntent: true, isWriteIntent: false, candidateHash: 'hash1' },
       provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
     });
-    const execute = jest.fn().mockResolvedValue({ requestId: 'r1', conversationId: 'c1', workspaceId: 'w1', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 't1', createdAt: '2026-08-07T00:00:00.000Z' });
-    const { service } = buildService({ provider, execute });
+    const executeClaimed = jest.fn().mockResolvedValue({ requestId: 'ar-1', conversationId: 'c1', workspaceId: 'w1', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 'trace-1', createdAt: '2026-08-07T00:00:00.000Z' });
+    const { service, request, aiRequests } = buildService({ provider, executeClaimed });
 
     const result = await service.handleMessage(actor, baseDto);
 
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(executeClaimed).toHaveBeenCalledTimes(1);
+    // executeClaimed must be handed the SAME claimed request row, never a fresh claim() of its own.
+    expect(executeClaimed.mock.calls[0][2]).toBe(request);
+    expect(aiRequests.recordInterpretation).toHaveBeenCalledWith('ar-1', expect.objectContaining({ intent: 'GET_LIQUIDITY', candidateHash: 'hash1' }));
     expect(result.resolvedIntent).toBe('GET_LIQUIDITY');
-    // The orchestrator call must carry the intent+entities the adapter produced, nothing invented.
-    const [, structuredRequest] = execute.mock.calls[0];
+    const [, structuredRequest] = executeClaimed.mock.calls[0];
     expect(structuredRequest.intent).toBe('GET_LIQUIDITY');
     expect(structuredRequest.entities).toEqual({});
-    // Returned to the caller too, so the frontend can carry it forward the
-    // same way it already does for the structured endpoint's own history.
+    expect(structuredRequest.clientRequestId).toBe('msg-1');
     expect(result.resolvedEntities).toEqual({});
   });
 
-  it('replays the exact stored response for the same clientRequestId + same text, without calling the provider again', async () => {
-    const textHash = sha256Canonical('Muéstrame mi liquidez');
-    const storedResponse = { requestId: 'r1', conversationId: 'c1', workspaceId: 'w1', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 't1', createdAt: '2026-08-07T00:00:00.000Z' };
-    const findUnique = jest.fn().mockResolvedValue({
-      status: AIRequestStatus.COMPLETED,
-      requestPayload: { intent: 'GET_LIQUIDITY', userDisplayTextHash: textHash },
-      responsePayload: storedResponse,
-    });
+  it('a REPLAY claim never calls the provider or the orchestrator, emits one bounded replay audit event, and returns the exact stored response', async () => {
+    const storedResponse = { requestId: 'ar-1', conversationId: 'c1', workspaceId: 'w1', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 'trace-1', createdAt: '2026-08-07T00:00:00.000Z' };
+    const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date() };
+    const claimText = jest.fn().mockResolvedValue({ kind: 'REPLAY', request, response: storedResponse });
     const provider = jest.fn();
-    const execute = jest.fn();
-    const { service } = buildService({ findUnique, provider, execute });
+    const executeClaimed = jest.fn();
+    const { service, aiRequests } = buildService({ claimText, provider, executeClaimed });
+    aiRequests.readInterpretation.mockReturnValue({ intent: 'GET_LIQUIDITY', entities: { query: { redactedHash: 'x'.repeat(64) } } });
 
     const result = await service.handleMessage(actor, baseDto);
 
     expect(provider).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(aiRequests.auditReplay).toHaveBeenCalledTimes(1);
+    expect(aiRequests.auditReplay).toHaveBeenCalledWith(actor, request);
     expect(result.resolvedIntent).toBe('GET_LIQUIDITY');
+    expect(result.response).toBe(storedResponse);
+    // The sanitized/redacted store is never surfaced as if it were a real
+    // entity value — the frontend reuses resolvedEntities to build
+    // follow-up actions, so a {redactedHash} placeholder must never appear.
+    expect(result.resolvedEntities).toEqual({});
+  });
+
+  it('this same REPLAY path also covers a previously-FAILED terminal claim (provider-failure replay): still zero provider calls', async () => {
+    const storedResponse = { requestId: 'ar-1', conversationId: '', workspaceId: '', interactionState: 'FAILED', responseType: 'ERROR_RECOVERY_CARD', payload: { code: 'TIMEOUT' }, warnings: [], suggestedActions: [], traceId: 'trace-1', createdAt: '2026-08-07T00:00:00.000Z' };
+    const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date() };
+    const claimText = jest.fn().mockResolvedValue({ kind: 'REPLAY', request, response: storedResponse });
+    const provider = jest.fn();
+    const { service } = buildService({ claimText, provider });
+
+    const result = await service.handleMessage(actor, baseDto);
+
+    expect(provider).not.toHaveBeenCalled();
     expect(result.response).toBe(storedResponse);
   });
 
-  it('rejects (409) reuse of the same clientRequestId with different text, without calling the provider', async () => {
-    const findUnique = jest.fn().mockResolvedValue({
-      status: AIRequestStatus.COMPLETED,
-      requestPayload: { intent: 'GET_LIQUIDITY', userDisplayTextHash: sha256Canonical('a completely different message') },
-      responsePayload: {},
-    });
+  it('an IN_PROGRESS claim (a concurrent identical request still being interpreted) never calls the provider a second time', async () => {
+    const inProgressResponse = { requestId: 'ar-1', conversationId: '', workspaceId: '', interactionState: 'ANSWERING', responseType: 'TEXT_ANSWER', payload: {}, warnings: [], suggestedActions: [], traceId: 'trace-1', createdAt: '2026-08-07T00:00:00.000Z' };
+    const claimText = jest.fn().mockResolvedValue({ kind: 'IN_PROGRESS', request: { id: 'ar-1' }, response: inProgressResponse });
     const provider = jest.fn();
-    const { service, prisma } = buildService({ findUnique, provider });
+    const executeClaimed = jest.fn();
+    const { service } = buildService({ claimText, provider, executeClaimed });
+
+    const result = await service.handleMessage(actor, baseDto);
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(result.response).toBe(inProgressResponse);
+  });
+
+  it('propagates the 409 conflict from claimText untouched — same clientRequestId, different text, before any provider call', async () => {
+    const claimText = jest.fn().mockRejectedValue(new ConflictException('Este identificador de solicitud ya fue utilizado con contenido diferente.'));
+    const provider = jest.fn();
+    const { service } = buildService({ claimText, provider });
 
     await expect(service.handleMessage(actor, baseDto)).rejects.toBeInstanceOf(ConflictException);
     expect(provider).not.toHaveBeenCalled();
-    // Still records an audit trail of the rejected attempt.
-    expect(prisma.aIAuditEvent.create).toHaveBeenCalled();
   });
 
-  it('a LOW-confidence candidate never reaches the orchestrator', async () => {
+  it('a LOW-confidence candidate never reaches the orchestrator and terminally fails the SAME claimed row', async () => {
     const provider = jest.fn().mockResolvedValue({
       kind: 'CANDIDATE',
       candidate: { intent: 'REGISTER_SALE', entities: { watchQuery: 'Batman' }, missingEntities: ['watchId', 'customerId', 'price', 'currency'], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: true, candidateHash: 'hash2' },
       provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
     });
-    const execute = jest.fn();
-    const { service } = buildService({ provider, execute });
+    const executeClaimed = jest.fn();
+    const { service, request, aiRequests } = buildService({ provider, executeClaimed });
 
     const result = await service.handleMessage(actor, { ...baseDto, text: 'Vendí Batman' });
 
-    expect(execute).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(aiRequests.failUnattached).toHaveBeenCalledWith(request, actor, 'REGISTER_SALE', expect.anything(), 'REJECT_LOW_CONFIDENCE');
     expect(result.resolvedIntent).toBe('REGISTER_SALE');
     expect(result.response.interactionState).toBe('FAILED');
     expect(result.response.payload.message).toMatch(/no entendí/i);
@@ -100,12 +127,12 @@ describe('NaturalLanguageAssistantService: delegates only to IntentAdapterServic
       candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'hash3' },
       provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
     });
-    const execute = jest.fn();
-    const { service } = buildService({ provider, execute });
+    const executeClaimed = jest.fn();
+    const { service } = buildService({ provider, executeClaimed });
 
     const result = await service.handleMessage(actor, { ...baseDto, text: 'algo incomprensible' });
 
-    expect(execute).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
     expect(result.resolvedIntent).toBe('UNKNOWN');
     expect(result.response.interactionState).toBe('FAILED');
   });
@@ -116,24 +143,25 @@ describe('NaturalLanguageAssistantService: delegates only to IntentAdapterServic
       candidate: { intent: 'SEARCH_CLIENT', entities: { query: 'José' }, missingEntities: [], ambiguities: [{ field: 'query', reason: 'multiple Josés known' }], confidence: 'HIGH', language: 'es', isReadIntent: true, isWriteIntent: false, candidateHash: 'hash4' },
       provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
     });
-    const execute = jest.fn();
-    const { service } = buildService({ provider, execute });
+    const executeClaimed = jest.fn();
+    const { service } = buildService({ provider, executeClaimed });
 
     const result = await service.handleMessage(actor, { ...baseDto, text: 'Busca a José' });
 
-    expect(execute).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
     expect(result.response.responseType).toBe('MISSING_FIELDS_CARD');
     expect(result.response.interactionState).toBe('NEEDS_INPUT');
   });
 
-  it('a provider timeout never reaches the orchestrator and returns a safe, non-raw failure message', async () => {
+  it('a provider timeout never reaches the orchestrator, terminally fails the claimed row, and returns a safe, non-raw failure message', async () => {
     const provider = jest.fn().mockResolvedValue({ kind: 'PROVIDER_FAILURE', failureType: 'TIMEOUT', provider: 'claude', model: 'claude-x', latencyMs: 12000, schemaVersion: '1.0.0' });
-    const execute = jest.fn();
-    const { service } = buildService({ provider, execute });
+    const executeClaimed = jest.fn();
+    const { service, request, aiRequests } = buildService({ provider, executeClaimed });
 
     const result = await service.handleMessage(actor, baseDto);
 
-    expect(execute).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(aiRequests.failUnattached).toHaveBeenCalledWith(request, actor, 'UNKNOWN', expect.anything(), 'TIMEOUT');
     expect(result.resolvedIntent).toBe('UNKNOWN');
     // A categorical failure code (e.g. "TIMEOUT") is fine; a raw provider
     // exception class/stack/connection detail is not.
@@ -141,40 +169,23 @@ describe('NaturalLanguageAssistantService: delegates only to IntentAdapterServic
     expect(result.response.payload.message).toBe('El asistente no está disponible en este momento. No se realizó ningún cambio.');
   });
 
-  it('audit events never contain the raw message text, a system prompt, or provider chain-of-thought', async () => {
-    const provider = jest.fn().mockResolvedValue({
-      kind: 'CANDIDATE',
-      candidate: { intent: 'GET_LIQUIDITY', entities: {}, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es', isReadIntent: true, isWriteIntent: false, candidateHash: 'hash1' },
-      provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
-    });
-    const execute = jest.fn().mockResolvedValue({ requestId: 'r1', conversationId: '', workspaceId: '', interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: {}, warnings: [], suggestedActions: [], traceId: 't1', createdAt: '2026-08-07T00:00:00.000Z' });
-    const { service, prisma } = buildService({ provider, execute });
+  it('invalid structured provider output fails closed the same way a provider outage does — never reaches the orchestrator', async () => {
+    const provider = jest.fn().mockResolvedValue({ kind: 'INVALID_OUTPUT', reason: 'ENTITY_SCHEMA_INVALID', issueCount: 2, issuePaths: ['entities.price'], provider: 'claude', model: 'claude-x', latencyMs: 400, schemaVersion: '1.0.0' });
+    const executeClaimed = jest.fn();
+    const { service, aiRequests } = buildService({ provider, executeClaimed });
 
-    const secretText = 'Muéstrame mi liquidez, número de cuenta 1234-5678-9999';
-    await service.handleMessage(actor, { ...baseDto, text: secretText });
+    const result = await service.handleMessage(actor, baseDto);
 
-    const auditPayloads = prisma.aIAuditEvent.create.mock.calls.map((call) => JSON.stringify(call[0].data));
-    for (const payload of auditPayloads) {
-      expect(payload).not.toContain(secretText);
-      expect(payload).not.toContain('1234-5678-9999');
-      expect(payload.toLowerCase()).not.toContain('system prompt');
-    }
-  });
-});
-
-describe('deriveStructuredClientRequestId', () => {
-  it('is a pure, deterministic function of (tenant, user, message clientRequestId) only — never of the text', () => {
-    const a = deriveStructuredClientRequestId(actor, 'msg-1');
-    const b = deriveStructuredClientRequestId(actor, 'msg-1');
-    expect(a).toBe(b);
-    expect(a.startsWith('nlmsg:')).toBe(true);
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(aiRequests.failUnattached).toHaveBeenCalledWith(expect.anything(), actor, 'UNKNOWN', expect.anything(), 'ENTITY_SCHEMA_INVALID');
+    expect(result.resolvedIntent).toBe('UNKNOWN');
+    expect(result.response.interactionState).toBe('FAILED');
   });
 
-  it('differs across users/tenants for the same message id, and across message ids for the same user', () => {
-    const a = deriveStructuredClientRequestId(actor, 'msg-1');
-    const b = deriveStructuredClientRequestId({ ...actor, userId: 'u2' }, 'msg-1');
-    const c = deriveStructuredClientRequestId(actor, 'msg-2');
-    expect(a).not.toBe(b);
-    expect(a).not.toBe(c);
+  it('never touches Prisma directly — all durable state goes through AIRequestService', () => {
+    // Structural guarantee: the constructor accepts no PrismaService at all,
+    // so there is no way for this service to read or write a business table
+    // or bypass AIRequestService's own idempotency/audit bookkeeping.
+    expect(NaturalLanguageAssistantService.length).toBe(3);
   });
 });

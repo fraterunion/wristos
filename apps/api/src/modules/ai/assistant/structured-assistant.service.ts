@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
-import { AIAuditEventType, AIRequestStatus } from '@prisma/client';
+import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
@@ -22,7 +22,21 @@ export class StructuredAssistantService {
   async execute(actor: AssistantActorContext, input: StructuredAssistantRequest): Promise<StructuredAssistantResponse> {
     const claim = await this.requests.claim(actor, input);
     if (claim.kind !== 'OWNED') return claim.response;
-    const request = claim.request;
+    return this.runClaimed(actor, input, claim.request);
+  }
+
+  /**
+   * Continues the orchestration lifecycle for a request some OTHER durable
+   * claim already owns (e.g. NaturalLanguageAssistantService's claimText(),
+   * taken before ever calling an LLM provider) — under that SAME AIRequest
+   * identity, never a second claim(). Everything from here on is identical
+   * to execute()'s own body; this is a pure extraction, not new logic.
+   */
+  async executeClaimed(actor: AssistantActorContext, input: StructuredAssistantRequest, request: AIRequest): Promise<StructuredAssistantResponse> {
+    return this.runClaimed(actor, input, request);
+  }
+
+  private async runClaimed(actor: AssistantActorContext, input: StructuredAssistantRequest, request: AIRequest): Promise<StructuredAssistantResponse> {
     let prepared: PreparedAssistantRequest | undefined;
     try {
       await this.requests.transition(request.id, [AIRequestStatus.RECEIVED], AIRequestStatus.VALIDATING);
