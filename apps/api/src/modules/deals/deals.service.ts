@@ -7,21 +7,18 @@ import {
 import {
   Deal,
   DealStage,
-  OperatingExpenseCategory,
-  PaymentMethod,
-  PaymentStatus,
   Prisma,
   WatchStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CuentasService } from '../cuentas/cuentas.service';
-import { FxService } from '../fx/fx.service';
 import { AddPaymentDto } from './dto/add-payment.dto';
 import { CreateDealDto } from './dto/create-deal.dto';
 import { ListDealsDto } from './dto/list-deals.dto';
 import { RegisterSaleDto } from './dto/register-sale.dto';
 import { UpdateDealDto } from './dto/update-deal.dto';
 import { UpdateDealStageDto } from './dto/update-deal-stage.dto';
+import { SaleRegistrationService } from './sale-registration.service';
 
 @Injectable()
 export class DealsService {
@@ -29,8 +26,8 @@ export class DealsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly fxService: FxService,
     private readonly cuentasService: CuentasService,
+    private readonly saleRegistration: SaleRegistrationService,
   ) {}
 
   async create(tenantId: string, dto: CreateDealDto) {
@@ -203,148 +200,35 @@ export class DealsService {
     await this.syncReceivableSafe(id, tenantId);
   }
 
+  /**
+   * Manual Ventas + future AI path — delegates to canonical SaleRegistrationService.
+   * Response shape preserved for existing admin clients.
+   */
   async registerSale(tenantId: string, dto: RegisterSaleDto) {
-    // --- Pre-transaction validation ---
-
-    const watch = await this.prisma.watch.findFirst({
-      where: { id: dto.watchId, tenantId, deletedAt: null },
-      select: { id: true, status: true },
-    });
-    if (!watch) {
-      throw new BadRequestException('Watch not found or does not belong to this tenant');
-    }
-    if (watch.status === WatchStatus.SOLD) {
-      throw new BadRequestException('Watch is already sold');
-    }
-
-    await this.ensureClientInTenant(dto.clientId, tenantId);
-    await this.ensureNoOtherWonDealForWatch(dto.watchId, tenantId);
-
-    const soldAt = dto.saleDate ? new Date(dto.saleDate) : new Date();
-
-    // --- Currency resolution (pre-transaction) ---
-    const currency = dto.currency ?? 'MXN';
-    let canonicalMxn: Prisma.Decimal; // total agreed sale price in MXN
-    let exchangeRateDecimal: Prisma.Decimal | null = null;
-
-    if (currency === 'USD') {
-      const fxResult = await this.fxService.getUsdMxn();
-      if (fxResult.stale) {
-        this.logger.warn('USD sale using stale FX rate (cached %s)', fxResult.fetchedAt);
-      }
-      exchangeRateDecimal = new Prisma.Decimal(fxResult.rate.toString());
-      canonicalMxn = new Prisma.Decimal(dto.salePrice.toString())
-        .mul(exchangeRateDecimal)
-        .toDecimalPlaces(2);
-    } else {
-      canonicalMxn = new Prisma.Decimal(dto.salePrice);
-    }
-
-    // --- Resolve initial payment details ---
-    // Legacy path: caller sends paymentMethod without initialPaymentAmount.
-    // Treat as a full payment for backwards compatibility.
-    let paymentAmountDecimal: Prisma.Decimal | null = null;
-    let paymentMethod: PaymentMethod | null = null;
-    let paymentDate: Date = soldAt;
-
-    if (dto.paymentMethod && dto.initialPaymentAmount === undefined) {
-      // Legacy full-payment path — old callers (pre-partial-payment frontend)
-      paymentAmountDecimal = canonicalMxn;
-      paymentMethod = dto.paymentMethod as PaymentMethod;
-    } else if (dto.initialPaymentAmount !== undefined && dto.initialPaymentAmount > 0) {
-      // New partial-payment path: payment amount in MXN (always MXN — currency
-      // conversion applied to sale total only; individual payments are in MXN)
-      paymentAmountDecimal = new Prisma.Decimal(dto.initialPaymentAmount);
-      paymentMethod = (dto.initialPaymentMethod ?? dto.paymentMethod ?? 'CASH') as PaymentMethod;
-      if (dto.initialPaymentDate) {
-        paymentDate = new Date(dto.initialPaymentDate);
-      }
-    }
-    // If both are absent / amount is 0: no payment created (PENDIENTE)
-
-    const effectiveBankChannel =
-      dto.bankChannel ?? null;
-
-    const BANK_RATES: Record<'JOSE' | 'MAYTE', number> = {
-      JOSE: 0.02,
-      MAYTE: 0.01,
-    };
-
-    // --- Atomic transaction ---
-    const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Create Deal — agreedPrice is always canonical MXN
-      const deal = await tx.deal.create({
-        data: {
-          tenant: { connect: { id: tenantId } },
-          client: { connect: { id: dto.clientId } },
-          watch: { connect: { id: dto.watchId } },
-          stage: DealStage.CLOSED_WON,
-          soldAt,
-          agreedPrice: canonicalMxn,
-          originalCurrency: currency,
-          originalAmount: new Prisma.Decimal(dto.salePrice),
-          exchangeRate: exchangeRateDecimal,
-          notes: dto.notes,
-          expectedCloseAt: soldAt,
-        },
-      });
-
-      // 2. Optionally create Payment
-      let payment: { method: PaymentMethod; paidAt: Date | null } | null = null;
-      if (paymentAmountDecimal !== null && paymentMethod !== null) {
-        payment = await tx.payment.create({
-          data: {
-            tenant: { connect: { id: tenantId } },
-            deal: { connect: { id: deal.id } },
-            amount: paymentAmountDecimal,
-            method: paymentMethod,
-            status: PaymentStatus.PAID,
-            paidAt: paymentDate,
-          },
-        });
-      }
-
-      // 3. Bank fee expense — calculated on payment amount, NOT full sale total
-      let bankFeeExpense: { amount: Prisma.Decimal } | null = null;
-      const isBANCOS =
-        paymentMethod === PaymentMethod.BANCOS && effectiveBankChannel;
-      if (isBANCOS && paymentAmountDecimal !== null) {
-        const bankRate = BANK_RATES[effectiveBankChannel as 'JOSE' | 'MAYTE'];
-        const feeAmount = paymentAmountDecimal.mul(new Prisma.Decimal(bankRate));
-        const pct = (bankRate * 100).toFixed(0);
-        bankFeeExpense = await tx.operatingExpense.create({
-          data: {
-            tenant: { connect: { id: tenantId } },
-            deal: { connect: { id: deal.id } },
-            category: OperatingExpenseCategory.BANK_FEES,
-            amount: feeAmount,
-            expenseDate: paymentDate,
-            notes: `Comisión ${effectiveBankChannel} ${pct}% — venta ${deal.id}`,
-          },
-        });
-      }
-
-      // 4. Mark watch as SOLD regardless of payment completeness
-      await tx.watch.update({
-        where: { id: dto.watchId },
-        data: { status: WatchStatus.SOLD },
-      });
-
-      return { deal, payment, bankFeeExpense };
+    const result = await this.saleRegistration.register(tenantId, {
+      watchId: dto.watchId,
+      clientId: dto.clientId,
+      agreedPrice: dto.salePrice,
+      currency: dto.currency,
+      soldAt: dto.saleDate ? new Date(dto.saleDate) : undefined,
+      notes: dto.notes,
+      payment: {
+        amountReceived: dto.initialPaymentAmount,
+        method: dto.initialPaymentMethod ?? dto.paymentMethod ?? null,
+        bankChannel: dto.bankChannel ?? null,
+        paidAt: dto.initialPaymentDate
+          ? new Date(dto.initialPaymentDate)
+          : null,
+      },
+      legacyFullPaymentMethod:
+        dto.paymentMethod && dto.initialPaymentAmount === undefined
+          ? dto.paymentMethod
+          : null,
+      registerIdempotencyKey: dto.registerIdempotencyKey,
     });
 
-    const { deal, payment, bankFeeExpense } = result;
-
-    await this.syncReceivableSafe(deal.id, tenantId);
-
-    const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
-    const paidTotal = paymentAmountDecimal ?? new Prisma.Decimal(0);
-    const rawPending = canonicalMxn.minus(paidTotal);
-    const pendingAmount = rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
-    const computedStatus =
-      paidTotal.gte(canonicalMxn) ? 'PAGADO' :
-      paidTotal.greaterThan(0) ? 'PARCIAL' :
-      'PENDIENTE';
+    const deal = result.deal;
+    const bankFeeDecimal = result.bankFeeAmount;
 
     return {
       id: deal.id,
@@ -354,102 +238,62 @@ export class DealsService {
       originalCurrency: deal.originalCurrency,
       originalAmount: deal.originalAmount?.toString() ?? null,
       exchangeRate: deal.exchangeRate?.toString() ?? null,
-      paymentMethod: payment?.method ?? null,
-      bankChannel: effectiveBankChannel,
-      bankFee: bankFeeExpense ? bankFeeDecimal.toString() : null,
-      netReceived: canonicalMxn.minus(bankFeeDecimal).toString(),
-      paidAt: payment?.paidAt?.toISOString() ?? null,
-      paidTotal: paidTotal.toString(),
-      pendingAmount: pendingAmount.toString(),
-      computedStatus,
+      paymentMethod: result.payment?.method ?? null,
+      bankChannel: result.bankChannel,
+      bankFee: bankFeeDecimal.greaterThan(0) ? bankFeeDecimal.toString() : null,
+      netReceived: result.canonicalMxn.minus(bankFeeDecimal).toString(),
+      paidAt: result.payment?.paidAt?.toISOString() ?? null,
+      paidTotal: result.paidTotal.toString(),
+      pendingAmount: result.pendingAmount.toString(),
+      computedStatus: result.computedStatus,
       notes: deal.notes,
       createdAt: deal.createdAt.toISOString(),
+      registerIdempotencyKey: deal.registerIdempotencyKey ?? null,
+      replayed: result.replayed,
     };
   }
 
   async addPayment(dealId: string, tenantId: string, dto: AddPaymentDto) {
-    const deal = await this.prisma.deal.findFirst({
+    const existing = await this.prisma.deal.findFirst({
       where: { id: dealId, tenantId, deletedAt: null },
-      select: { id: true, agreedPrice: true, stage: true },
+      select: { id: true },
     });
-    if (!deal) throw new NotFoundException('Deal not found');
-    if (deal.stage !== DealStage.CLOSED_WON) {
-      throw new BadRequestException('Payments can only be added to CLOSED_WON deals');
-    }
+    if (!existing) throw new NotFoundException('Deal not found');
 
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
-    const paymentAmount = new Prisma.Decimal(dto.amount);
-
-    const BANK_RATES: Record<'JOSE' | 'MAYTE', number> = {
-      JOSE: 0.02,
-      MAYTE: 0.01,
-    };
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.create({
-        data: {
-          tenant: { connect: { id: tenantId } },
-          deal: { connect: { id: dealId } },
-          amount: paymentAmount,
-          method: dto.method as PaymentMethod,
-          status: PaymentStatus.PAID,
-          paidAt,
-          notes: dto.notes ?? null,
-        },
+    try {
+      const result = await this.saleRegistration.addPayment(dealId, tenantId, {
+        amount: dto.amount,
+        method: dto.method,
+        bankChannel: dto.bankChannel ?? null,
+        paidAt: dto.paidAt ? new Date(dto.paidAt) : undefined,
+        notes: dto.notes,
       });
 
-      let bankFeeExpense: { amount: Prisma.Decimal } | null = null;
-      if (dto.method === 'BANCOS' && dto.bankChannel) {
-        const bankRate = BANK_RATES[dto.bankChannel];
-        const feeAmount = paymentAmount.mul(new Prisma.Decimal(bankRate));
-        const pct = (bankRate * 100).toFixed(0);
-        bankFeeExpense = await tx.operatingExpense.create({
-          data: {
-            tenant: { connect: { id: tenantId } },
-            deal: { connect: { id: dealId } },
-            category: OperatingExpenseCategory.BANK_FEES,
-            amount: feeAmount,
-            expenseDate: paidAt,
-            notes: `Comisión ${dto.bankChannel} ${pct}% — venta ${dealId}`,
-          },
-        });
+      const bankFeeDecimal = result.bankFeeAmount;
+
+      return {
+        payment: {
+          id: result.payment.id,
+          amount: result.payment.amount.toString(),
+          method: result.payment.method,
+          status: result.payment.status,
+          paidAt: result.payment.paidAt?.toISOString() ?? null,
+          notes: result.payment.notes,
+        },
+        bankFee: bankFeeDecimal.greaterThan(0) ? bankFeeDecimal.toString() : null,
+        paidTotal: result.paidTotal.toString(),
+        pendingAmount: result.pendingAmount.toString(),
+        computedStatus: result.computedStatus,
+      };
+    } catch (error: unknown) {
+      if (
+        error instanceof BadRequestException &&
+        error.message === 'Deal not found'
+      ) {
+        throw new NotFoundException('Deal not found');
       }
-
-      return { payment, bankFeeExpense };
-    });
-
-    // Compute updated payment summary
-    const paidAgg = await this.prisma.payment.aggregate({
-      where: { tenantId, dealId, status: PaymentStatus.PAID, deletedAt: null },
-      _sum: { amount: true },
-    });
-    const paidTotal = paidAgg._sum.amount ?? new Prisma.Decimal(0);
-    const rawPending = deal.agreedPrice.minus(paidTotal);
-    const pendingAmount = rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
-    const computedStatus =
-      paidTotal.gte(deal.agreedPrice) ? 'PAGADO' :
-      paidTotal.greaterThan(0) ? 'PARCIAL' :
-      'PENDIENTE';
-
-    const { payment, bankFeeExpense } = result;
-    const bankFeeDecimal = bankFeeExpense?.amount ?? new Prisma.Decimal(0);
-
-    await this.syncReceivableSafe(dealId, tenantId);
-
-    return {
-      payment: {
-        id: payment.id,
-        amount: payment.amount.toString(),
-        method: payment.method,
-        status: payment.status,
-        paidAt: payment.paidAt?.toISOString() ?? null,
-        notes: payment.notes,
-      },
-      bankFee: bankFeeExpense ? bankFeeDecimal.toString() : null,
-      paidTotal: paidTotal.toString(),
-      pendingAmount: pendingAmount.toString(),
-      computedStatus,
-    };
+      throw error;
+    }
   }
 
   /** Canonical AR sync only — never writes Receivable / ReceivablePayment. */

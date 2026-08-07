@@ -80,4 +80,11 @@ export class RegisterSaleDto {
     message: 'paymentMethod must be one of: CASH, BANCOS, CESAR',
   })
   paymentMethod?: 'CASH' | 'BANCOS' | 'CESAR';
+
+  // ── Durable idempotency (optional for manual UI) ────────────────────────────
+  // Future AI: `ai-action-run:<actionRunId>`. Null/omit preserves legacy behavior.
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  registerIdempotencyKey?: string;
 }
