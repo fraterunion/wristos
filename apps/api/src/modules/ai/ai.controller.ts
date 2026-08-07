@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
@@ -17,6 +17,8 @@ import { WorkspaceService } from './workspace/workspace.service';
 import { StructuredAssistantRequestDto } from './dto/structured-assistant.dto';
 import { StructuredAssistantService } from './assistant/structured-assistant.service';
 import { structuredAssistantHttpStatus } from './assistant/assistant-http-status';
+import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
+import { WritePlanRunner } from './bindings/write-plan-runner';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
@@ -27,6 +29,8 @@ export class AIController {
     private readonly workspaces: WorkspaceService,
     private readonly assistant: StructuredAssistantService,
     private readonly naturalLanguageAssistant: NaturalLanguageAssistantService,
+    private readonly writeRegistry: WriteCapabilityBindingRegistry,
+    private readonly writeRunner: WritePlanRunner,
   ) {}
 
   @Post('assistant/structured')
@@ -83,7 +87,26 @@ export class AIController {
   }
 
   @Post('action-runs/:id/confirm')
-  confirmActionRun(@CurrentUser() user: CurrentUserType, @Param('id') id: string, @Body() dto: ConfirmActionRunDto) {
+  async confirmActionRun(@CurrentUser() user: CurrentUserType, @Param('id') id: string, @Body() dto: ConfirmActionRunDto) {
+    const run = await this.runtime.findOne(user.tenantId, id);
+    if (this.writeRegistry.hasBinding(run.intent)) {
+      // Bound WRITE (REGISTER_SALE): atomic confirm + canonical execution.
+      // Client never sets EXECUTING/COMPLETED — server owns the lifecycle.
+      return this.writeRunner.confirmAndExecute({
+        tenantId: user.tenantId,
+        userId: user.userId,
+        actionRunId: id,
+        expectedFingerprint: dto.planFingerprint,
+        role: user.role,
+        permissions: [],
+      });
+    }
+    // Unbound write intents fail closed — confirmation must not imply execution.
+    if (run.requiresConfirmation) {
+      throw new ForbiddenException(
+        'This write capability is not bound for conversational execution',
+      );
+    }
     return this.runtime.confirm(user.tenantId, user.userId, id, dto.planFingerprint);
   }
 

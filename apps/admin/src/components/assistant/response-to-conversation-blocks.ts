@@ -31,7 +31,18 @@ export type ConversationBlock =
       fields: Array<{ label: string; value: string }>;
       effects: string[];
       ctaLabel: string;
+      ctaKind: PreviewCtaKind;
       ctaHref?: string;
+      planFingerprint?: string;
+      actionRunId?: string;
+    }
+  | {
+      kind: 'receipt';
+      id: string;
+      message: string;
+      lines: string[];
+      dealHref?: string;
+      correctHref?: string;
     }
   | { kind: 'list'; id: string; intro?: string; items: Array<{ label: string; value: string; meta?: string }> }
   | { kind: 'note'; id: string; text: string }
@@ -51,6 +62,9 @@ const MANUAL_CTA_LABEL: Partial<Record<WritePreviewAction, string>> = {
 export function manualCtaLabel(intent: BusinessActionId): string {
   return MANUAL_CTA_LABEL[intent as WritePreviewAction] ?? 'Continuar en el módulo';
 }
+
+export type PreviewCtaKind = 'CONFIRM_SALE' | 'MANUAL_MODULE';
+
 
 function isRecord(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -272,15 +286,60 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
         return description ? [description] : [];
       })
     : [];
+  const executableSale =
+    intent === 'REGISTER_SALE' && response.payload.executable === true;
+  const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
   return [
     {
       kind: 'preview',
       id: blockId(response, 'preview'),
-      intro: 'Perfecto. Esto es lo que voy a preparar:',
+      intro: executableSale
+        ? 'Perfecto. Esto es lo que voy a registrar:'
+        : 'Perfecto. Esto es lo que voy a preparar:',
       title,
       fields,
       effects,
-      ctaLabel: manualCtaLabel(intent),
+      ctaLabel: executableSale ? 'Confirmar venta' : manualCtaLabel(intent),
+      ctaKind: executableSale ? 'CONFIRM_SALE' : 'MANUAL_MODULE',
+      planFingerprint,
+      actionRunId: response.actionRunId,
+    },
+  ];
+}
+
+function saleReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. La venta quedó registrada.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const watch = asString(receipt.watchLabel);
+    const amount = formatMoney(receipt.amount, asString(receipt.currency) ?? 'MXN');
+    if (watch || amount) {
+      lines.push([watch, amount].filter(Boolean).join(' · '));
+    }
+    const customer = asString(receipt.customerName);
+    if (customer) lines.push(`Cliente: ${customer}`);
+    const destRaw = asString(receipt.destination);
+    const destLabel =
+      destRaw === 'CASH' ? 'Efectivo' : destRaw === 'BANCOS' ? 'Bancos' : destRaw === 'CESAR' ? 'César' : destRaw;
+    const mode = asString(receipt.paymentMode);
+    if (mode === 'CREDIT') lines.push('Pago: Crédito');
+    else if (destLabel) lines.push(`Pago: ${destLabel}`);
+    const remaining = formatNonZeroMoney(
+      receipt.remainingReceivable,
+      asString(receipt.currency) ?? 'MXN',
+    );
+    if (remaining) lines.push(`Cuenta por cobrar: ${remaining}`);
+  }
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: receipt && typeof receipt.dealId === 'string' ? `/ventas?deal=${receipt.dealId}` : '/ventas',
+      correctHref: '/ventas',
     },
   ];
 }
@@ -325,6 +384,10 @@ export function responseToConversationBlocks(
       break;
     case 'METRIC_CARD':
     case 'SUCCESS_RECEIPT': {
+      if (intent === 'REGISTER_SALE') {
+        main = saleReceiptBlocks(response);
+        break;
+      }
       const summary = asString(response.payload.message) ?? asString(response.payload.summary);
       main = summary ? [{ kind: 'text', id: blockId(response, 'text'), text: summary }] : genericBreakdown(response);
       break;

@@ -197,3 +197,90 @@ export function clearResumeHint(): void {
   if (typeof window === 'undefined') return;
   window.localStorage.removeItem(RESUME_KEY);
 }
+
+export type ConfirmSaleResult = {
+  interactionState: 'COMPLETED' | 'FAILED' | 'STALE_PLAN' | 'PERMISSION_BLOCKED';
+  responseType: 'SUCCESS_RECEIPT' | 'ERROR_RECOVERY_CARD';
+  message: string;
+  receipt: JsonValue | null;
+  planFingerprint: string;
+  executableWrite: true;
+  capability: string;
+  replayed: boolean;
+  actionRunId: string;
+};
+
+/**
+ * Semantic confirmation for a READY_FOR_CONFIRMATION ActionRun.
+ * Calls POST /ai/action-runs/:id/confirm only — never /deals/register-sale.
+ * Server owns execution and derives registerIdempotencyKey.
+ */
+export async function confirmAssistantActionRun(input: {
+  actionRunId: string;
+  planFingerprint: string;
+}): Promise<ConfirmSaleResult> {
+  try {
+    const raw = await apiPost<Record<string, unknown>, { planFingerprint: string }>(
+      `/ai/action-runs/${input.actionRunId}/confirm`,
+      { planFingerprint: input.planFingerprint },
+      { authenticated: true },
+    );
+    const receipt = (raw.receipt ?? null) as JsonValue | null;
+    const interactionState = String(raw.interactionState ?? 'FAILED') as ConfirmSaleResult['interactionState'];
+    const responseType = String(raw.responseType ?? 'ERROR_RECOVERY_CARD') as ConfirmSaleResult['responseType'];
+    return {
+      interactionState:
+        interactionState === 'COMPLETED' ||
+        interactionState === 'STALE_PLAN' ||
+        interactionState === 'PERMISSION_BLOCKED'
+          ? interactionState
+          : 'FAILED',
+      responseType: responseType === 'SUCCESS_RECEIPT' ? 'SUCCESS_RECEIPT' : 'ERROR_RECOVERY_CARD',
+      message: typeof raw.message === 'string' ? raw.message : 'No se pudo confirmar la venta.',
+      receipt,
+      planFingerprint: typeof raw.planFingerprint === 'string' ? raw.planFingerprint : input.planFingerprint,
+      executableWrite: true,
+      capability: typeof raw.capability === 'string' ? raw.capability : 'REGISTER_SALE',
+      replayed: Boolean(raw.replayed),
+      actionRunId: input.actionRunId,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw new AssistantRequestError(
+        error.status,
+        statusMessages[error.status] ?? 'No pude registrar la venta. No se realizó ningún cambio.',
+      );
+    }
+    throw error;
+  }
+}
+
+export function confirmResultToAssistantResponse(
+  result: ConfirmSaleResult,
+  shell: Pick<StructuredAssistantResponse, 'conversationId' | 'workspaceId' | 'requestId' | 'traceId'>,
+): StructuredAssistantResponse {
+  return {
+    requestId: shell.requestId,
+    conversationId: shell.conversationId,
+    workspaceId: shell.workspaceId,
+    actionRunId: result.actionRunId,
+    interactionState: result.interactionState,
+    responseType: result.responseType,
+    payload: {
+      message: result.message,
+      receipt: result.receipt,
+      planFingerprint: result.planFingerprint,
+      executableWrite: true,
+      capability: result.capability,
+      replayed: result.replayed,
+      unchanged:
+        result.interactionState === 'COMPLETED'
+          ? null
+          : 'No se realizó ningún cambio.',
+    },
+    warnings: [],
+    suggestedActions: [],
+    traceId: shell.traceId,
+    createdAt: new Date().toISOString(),
+  };
+}

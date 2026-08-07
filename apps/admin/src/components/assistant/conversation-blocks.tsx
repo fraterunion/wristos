@@ -3,7 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { AssistantMessage } from '@/components/assistant/conversation-message';
 import { ConversationChoices } from '@/components/assistant/conversation-choice';
-import { ConversationPreview } from '@/components/assistant/conversation-preview';
+import { ConversationPreview, ConversationReceipt } from '@/components/assistant/conversation-preview';
 import { ConversationError } from '@/components/assistant/conversation-error';
 import type { ConversationBlock } from '@/components/assistant/response-to-conversation-blocks';
 import type { JsonValue } from '@/lib/assistant-types';
@@ -61,6 +61,7 @@ export function ConversationBlocks({
   onSelectChoice,
   onSearchAgain,
   onContinue,
+  onConfirmSale,
   onEdit,
   onDismiss,
   onRetry,
@@ -71,6 +72,7 @@ export function ConversationBlocks({
   onSelectChoice?: (id: string, label: string) => void;
   onSearchAgain?: () => void;
   onContinue?: (entities: Record<string, JsonValue>) => void;
+  onConfirmSale?: (args: { actionRunId: string; planFingerprint: string }) => void;
   onEdit?: () => void;
   onDismiss?: () => void;
   onRetry?: () => void;
@@ -165,10 +167,36 @@ export function ConversationBlocks({
                 fields={block.fields}
                 effects={block.effects}
                 ctaLabel={block.ctaLabel}
-                ctaHref={manualHref}
+                ctaKind={block.ctaKind}
+                ctaHref={block.ctaKind === 'MANUAL_MODULE' ? manualHref : undefined}
+                onConfirm={
+                  block.ctaKind === 'CONFIRM_SALE' &&
+                  block.actionRunId &&
+                  block.planFingerprint &&
+                  onConfirmSale
+                    ? () =>
+                        onConfirmSale({
+                          actionRunId: block.actionRunId!,
+                          planFingerprint: block.planFingerprint!,
+                        })
+                    : undefined
+                }
                 onEdit={onEdit}
                 onCancel={onDismiss}
                 busy={busy}
+                showAvatar={messageIndex === 0}
+                delayMs={delayMs}
+              />
+            );
+          case 'receipt':
+            messageIndex += 1;
+            return (
+              <ConversationReceipt
+                key={block.id}
+                message={block.message}
+                lines={block.lines}
+                dealHref={block.dealHref}
+                correctHref={block.correctHref}
                 showAvatar={messageIndex === 0}
                 delayMs={delayMs}
               />

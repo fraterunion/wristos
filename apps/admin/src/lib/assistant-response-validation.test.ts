@@ -29,7 +29,7 @@ describe('assistant response safety validation', () => {
     }
   });
 
-  it('blocks completed and success-receipt write responses without trusting copy', () => {
+  it('blocks malformed REGISTER_SALE success and other write COMPLETED responses', () => {
     for (const candidate of [
       response('COMPLETED', 'ACTION_PREVIEW_CARD'),
       response('READY_FOR_CONFIRMATION', 'SUCCESS_RECEIPT'),
@@ -41,12 +41,40 @@ describe('assistant response safety validation', () => {
       assert.equal(result.kind, 'FAIL_CLOSED');
       if (result.kind === 'FAIL_CLOSED') {
         assert.equal(result.title, 'Esta operación no se ejecutó.');
-        assert.equal(result.message.includes('todavía no está habilitada'), true);
-        assert.equal(JSON.stringify(result).includes('Registrado'), false);
         assert.equal(JSON.stringify(result).includes('<script>'), false);
         assert.equal(result.manualHref, '/ventas');
       }
     }
+  });
+
+  it('accepts canonical REGISTER_SALE SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. La venta quedó registrada.',
+      executableWrite: true,
+      capability: 'REGISTER_SALE',
+      receipt: {
+        dealId: 'deal-1',
+        watchLabel: 'Rolex Batman',
+        amount: '350000.00',
+        currency: 'MXN',
+        paymentMode: 'PAID',
+        destination: 'BANCOS',
+        remainingReceivable: '0.00',
+      },
+    });
+    const result = validateAssistantResponse('REGISTER_SALE', candidate);
+    assert.equal(result.kind, 'VALID');
+    if (result.kind === 'VALID') assert.equal(result.response, candidate as unknown as StructuredAssistantResponse);
+  });
+
+  it('still blocks COMPLETED for unbound write intents', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo',
+      receipt: { dealId: 'x', paymentMode: 'PAID', amount: '1' },
+      executableWrite: true,
+    });
+    const result = validateAssistantResponse('REGISTER_EXPENSE', candidate);
+    assert.equal(result.kind, 'FAIL_CLOSED');
   });
 
   it('accepts only compatible preview, clarification, and error write responses', () => {

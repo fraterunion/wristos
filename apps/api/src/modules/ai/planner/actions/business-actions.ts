@@ -23,6 +23,8 @@ interface ActionOptions {
   effects?: Array<{ area: string; description: string }>;
   effectsBuilder?: (entities: StructuredEntities) => Array<{ area: string; description: string }>;
   warnings?: WarningRule[]; reversibility?: 'FULL' | 'PARTIAL' | 'NONE';
+  conditionalMissing?: (entities: StructuredEntities) => Array<{ entity: string; question: string }>;
+  previewFields?: (entities: StructuredEntities) => Array<{ label: string; value: JsonValue }>;
 }
 
 const define = (options: ActionOptions): BusinessActionDefinition => {
@@ -31,6 +33,7 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
   const capabilities = options.capabilities ?? [options.id];
   const effects = options.effects ?? [];
   const effectsFor = options.effectsBuilder ?? (() => effects);
+  const fieldKeys = [...required, ...optional];
   return {
     id: options.id,
     name: options.name,
@@ -41,48 +44,112 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
     optionalEntities: optional,
     clarificationQuestions: Object.fromEntries(required.map((key) => [key, questions[key] ?? `Provide ${key}.`])),
     warningRules: options.warnings ?? [],
-    previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({ title: options.name, category: options.category, fields: fields(entities, [...required, ...optional]), warnings, confirmationTier: options.tier, estimatedEffects: effectsFor(entities) }),
+    conditionalMissing: options.conditionalMissing,
+    previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({
+      title: options.name,
+      category: options.category,
+      fields: options.previewFields ? options.previewFields(entities) : fields(entities, fieldKeys),
+      warnings,
+      confirmationTier: options.tier,
+      estimatedEffects: effectsFor(entities),
+    }),
     planningStrategy: (entities: StructuredEntities) => capabilities.map((capability, index) => ({ stepId: `${capability.toLowerCase().replaceAll('_', '-')}-${index + 1}`, capability, arguments: args(entities), dependsOn: index === 0 ? [] : [`${capabilities[index - 1]!.toLowerCase().replaceAll('_', '-')}-${index}`], estimatedEffects: effectsFor(entities), reversibility: options.reversibility ?? (options.tier === 'NONE' ? 'FULL' : 'PARTIAL') })),
     capabilities,
     resultSchema: z.unknown(),
   };
 };
 
-/** Preview effects must match SaleRegistrationService canonical semantics. */
+const destinationLabel: Record<string, string> = { CASH: 'Efectivo', BANCOS: 'Bancos', CESAR: 'César' };
+
+/** Preview effects must match the canonical sale registration command semantics. */
 function registerSaleEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
   const mode = typeof entities.paymentMode === 'string' ? entities.paymentMode : null;
-  const inventory = { area: 'Inventory', description: 'Selected watch becomes SOLD.' };
-  const capital = { area: 'Capital', description: 'Profit is recalculated.' };
+  const destination = typeof entities.destination === 'string' ? entities.destination : null;
+  const destLabel = destination ? destinationLabel[destination] ?? destination : null;
+  const inventory = { area: 'Inventory', description: 'Inventario: AVAILABLE → SOLD.' };
+  const capital = { area: 'Capital', description: 'La utilidad se recalcula con la venta.' };
+  const correction = { area: 'Correction', description: 'Después de registrarla, cualquier corrección se realiza desde Ventas.' };
   if (mode === 'CREDIT') {
     return [
       inventory,
-      { area: 'Treasury', description: 'Sin movimiento — no payment received.' },
-      { area: 'CxC', description: 'Full sale balance outstanding as receivable.' },
+      { area: 'Treasury', description: 'Sin movimiento de Treasury.' },
+      { area: 'CxC', description: 'Cuenta por cobrar por el monto total de la venta.' },
       capital,
+      correction,
     ];
   }
   if (mode === 'PARTIAL') {
     return [
       inventory,
-      { area: 'Treasury', description: 'Inflow of amount received to selected destination (Efectivo / Bancos / César).' },
-      { area: 'CxC', description: 'Remaining outstanding balance as receivable.' },
+      { area: 'Treasury', description: destLabel ? `Ingreso a ${destLabel} por el monto recibido.` : 'Ingreso a destino seleccionado por el monto recibido.' },
+      { area: 'CxC', description: 'Cuenta por cobrar por el saldo restante.' },
+      ...(destination === 'BANCOS'
+        ? [{ area: 'Bank fee', description: 'Comisión bancaria según canal (JOSE/MAYTE) si aplica.' }]
+        : []),
       capital,
+      correction,
     ];
   }
   if (mode === 'PAID') {
     return [
       inventory,
-      { area: 'Treasury', description: 'Inflow of amount received to selected destination (Efectivo / Bancos / César).' },
-      { area: 'CxC', description: 'No open receivable after sync (fully paid).' },
+      { area: 'Treasury', description: destLabel ? `Ingreso completo a ${destLabel}.` : 'Ingreso completo al destino seleccionado.' },
+      { area: 'CxC', description: 'Sin cuenta por cobrar pendiente.' },
+      ...(destination === 'BANCOS'
+        ? [{ area: 'Bank fee', description: 'Comisión bancaria según canal (JOSE/MAYTE) si aplica.' }]
+        : []),
       capital,
+      correction,
     ];
   }
   return [
     inventory,
-    { area: 'Treasury', description: 'Inflow only when payment is received (Efectivo / Bancos / César); credit sales leave treasury unchanged.' },
-    { area: 'CxC', description: 'Receivable reflects outstanding balance after any initial payment.' },
+    { area: 'Treasury', description: 'Ingreso solo si hay pago recibido (Efectivo / Bancos / César).' },
+    { area: 'CxC', description: 'La cuenta por cobrar refleja el saldo pendiente.' },
     capital,
+    correction,
   ];
+}
+
+function registerSalePreviewFields(entities: StructuredEntities): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  if (present(entities.watchLabel) || present(entities.watchId)) {
+    rows.push({ label: 'Reloj', value: entities.watchLabel ?? entities.watchId ?? null });
+  }
+  if (present(entities.customerName) || present(entities.customerId)) {
+    rows.push({ label: 'Cliente', value: entities.customerName ?? entities.customerId ?? null });
+  }
+  if (present(entities.price)) rows.push({ label: 'Precio acordado', value: entities.price ?? null });
+  if (present(entities.currency)) rows.push({ label: 'Moneda', value: entities.currency ?? null });
+  if (present(entities.date)) rows.push({ label: 'Fecha', value: entities.date ?? null });
+  if (present(entities.paymentMode)) rows.push({ label: 'Modo de pago', value: entities.paymentMode ?? null });
+  if (present(entities.amountReceived)) rows.push({ label: 'Monto recibido', value: entities.amountReceived ?? null });
+  if (present(entities.destination)) {
+    const dest = String(entities.destination);
+    rows.push({ label: 'Destino', value: destinationLabel[dest] ?? dest });
+  }
+  if (present(entities.bankChannel)) rows.push({ label: 'Canal bancario', value: entities.bankChannel ?? null });
+  return rows;
+}
+
+function registerSaleConditionalMissing(entities: StructuredEntities): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  const mode = typeof entities.paymentMode === 'string' ? entities.paymentMode : null;
+  if (!mode) {
+    missing.push({ entity: 'paymentMode', question: '¿La venta es de contado (PAID), a crédito (CREDIT) o parcial (PARTIAL)?' });
+    return missing;
+  }
+  if (mode === 'CREDIT') return missing;
+  if (!present(entities.destination)) {
+    missing.push({ entity: 'destination', question: '¿Dónde se recibió el pago? (CASH, BANCOS o CESAR)' });
+  }
+  if (mode === 'PARTIAL' && !present(entities.amountReceived)) {
+    missing.push({ entity: 'amountReceived', question: '¿Cuánto se recibió como pago inicial?' });
+  }
+  if (entities.destination === 'BANCOS' && !present(entities.bankChannel)) {
+    missing.push({ entity: 'bankChannel', question: '¿Qué canal bancario aplica? (JOSE o MAYTE)' });
+  }
+  return missing;
 }
 
 export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
@@ -99,6 +166,8 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     required: ['watchId', 'customerId', 'price', 'currency'],
     optional: ['date', 'watchLabel', 'customerName', 'watchStatus', 'paymentMode', 'amountReceived', 'destination', 'bankChannel'],
     effectsBuilder: registerSaleEffects,
+    previewFields: registerSalePreviewFields,
+    conditionalMissing: registerSaleConditionalMissing,
     warnings: [warning('WATCH_RESERVED', 'The selected watch is reserved.', (e) => e.watchStatus === 'RESERVED')],
   }),
   define({ id: 'REGISTER_RECEIVABLE_PAYMENT', name: 'Register Receivable Payment', category: 'ACCOUNTS', tier: 'HIGH', required: ['accountId', 'amount', 'destination'], optional: ['currency', 'date', 'outstandingAmount'], effects: [{ area: 'Accounts', description: 'Outstanding receivable is reduced.' }, { area: 'Treasury', description: 'Destination balance increases.' }], warnings: [warning('AMOUNT_EXCEEDS_OUTSTANDING', 'Payment amount exceeds the outstanding balance.', (e) => typeof e.amount === 'number' && typeof e.outstandingAmount === 'number' && e.amount > e.outstandingAmount)] }),

@@ -16,6 +16,7 @@ export function AssistantResponseRenderer({
   response,
   onSelectClient,
   onContinue,
+  onConfirmSale,
   onSearchAgain,
   onEdit,
   onDismiss,
@@ -26,6 +27,7 @@ export function AssistantResponseRenderer({
   response: StructuredAssistantResponse;
   onSelectClient?: (id: string, label: string) => void;
   onContinue?: (entities: Record<string, JsonValue>) => void;
+  onConfirmSale?: (args: { actionRunId: string; planFingerprint: string }) => void;
   onSearchAgain?: () => void;
   onEdit?: () => void;
   onDismiss?: () => void;
@@ -44,6 +46,7 @@ export function AssistantResponseRenderer({
       onSelectChoice={onSelectClient}
       onSearchAgain={onSearchAgain}
       onContinue={onContinue}
+      onConfirmSale={onConfirmSale}
       onEdit={onEdit}
       onDismiss={onDismiss}
       onRetry={onEdit}
