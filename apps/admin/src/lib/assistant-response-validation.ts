@@ -23,7 +23,7 @@ const writeCompatibility: Readonly<
   FAILED: ['ERROR_RECOVERY_CARD'],
   STALE_PLAN: ['ERROR_RECOVERY_CARD'],
   PERMISSION_BLOCKED: ['ERROR_RECOVERY_CARD'],
-  // REGISTER_SALE only — see isCanonicalRegisterSaleSuccess below.
+  // Executable writes only — see isCanonicalExecutableWriteSuccess below.
   COMPLETED: ['SUCCESS_RECEIPT'],
 };
 
@@ -55,10 +55,6 @@ function isRecord(value: JsonValue | undefined | null): value is Record<string, 
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-/**
- * Narrow gate: COMPLETED + SUCCESS_RECEIPT is allowed only for REGISTER_SALE
- * when the payload carries a canonical executed receipt (never for other writes).
- */
 function isCanonicalRegisterSaleSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
@@ -74,10 +70,40 @@ function isCanonicalRegisterSaleSuccess(
   if (typeof receipt.paymentMode !== 'string') return false;
   if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
   if (payload.executableWrite !== true && payload.capability !== 'REGISTER_SALE') {
-    // Accept either explicit executableWrite flag or capability marker from confirm API.
     if (typeof payload.message !== 'string') return false;
   }
   return true;
+}
+
+function isCanonicalReceivablePaymentSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'REGISTER_RECEIVABLE_PAYMENT') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.paymentId !== 'string' || !receipt.paymentId) return false;
+  if (typeof receipt.receivableEntryId !== 'string' || !receipt.receivableEntryId) return false;
+  if (typeof receipt.destination !== 'string') return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (payload.executableWrite !== true && payload.capability !== 'REGISTER_RECEIVABLE_PAYMENT') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
+function isCanonicalExecutableWriteSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  return (
+    isCanonicalRegisterSaleSuccess(intent, response) ||
+    isCanonicalReceivablePaymentSuccess(intent, response)
+  );
 }
 
 export function validateAssistantResponse(
@@ -96,14 +122,13 @@ export function validateAssistantResponse(
   }
 
   if (isWriteIntent(intent)) {
-    if (isCanonicalRegisterSaleSuccess(intent, response)) {
+    if (isCanonicalExecutableWriteSuccess(intent, response)) {
       return { kind: 'VALID', response: candidate as StructuredAssistantResponse };
     }
 
     const compatibleTypes = writeCompatibility[
       response.interactionState as AssistantInteractionState
     ];
-    // COMPLETED is only for the narrow REGISTER_SALE success path above.
     if (
       response.interactionState === 'COMPLETED' ||
       !compatibleTypes?.includes(response.responseType as AssistantResponseType)
@@ -113,8 +138,8 @@ export function validateAssistantResponse(
         reason: 'WRITE_RESPONSE_BLOCKED',
         title: 'Esta operación no se ejecutó.',
         message:
-          intent === 'REGISTER_SALE'
-            ? 'No se pudo confirmar el resultado de la venta de forma segura.'
+          intent === 'REGISTER_SALE' || intent === 'REGISTER_RECEIVABLE_PAYMENT'
+            ? 'No se pudo confirmar el resultado de forma segura.'
             : 'La ejecución conversacional de esta acción todavía no está habilitada.',
         manualHref: manualRoutes[intent],
       };

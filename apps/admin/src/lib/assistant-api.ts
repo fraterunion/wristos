@@ -240,11 +240,11 @@ export async function confirmAssistantActionRun(input: {
     return {
       interactionState: normalizedState,
       responseType: responseType === 'SUCCESS_RECEIPT' ? 'SUCCESS_RECEIPT' : 'ERROR_RECOVERY_CARD',
-      message: typeof raw.message === 'string' ? raw.message : 'No se pudo confirmar la venta.',
+      message: typeof raw.message === 'string' ? raw.message : 'No se pudo confirmar la acción.',
       receipt,
       planFingerprint: typeof raw.planFingerprint === 'string' ? raw.planFingerprint : input.planFingerprint,
       executableWrite: true,
-      capability: typeof raw.capability === 'string' ? raw.capability : 'REGISTER_SALE',
+      capability: typeof raw.capability === 'string' ? raw.capability : 'UNKNOWN',
       replayed: Boolean(raw.replayed),
       recovered: Boolean(raw.recovered),
       actionRunId: input.actionRunId,
@@ -254,8 +254,8 @@ export async function confirmAssistantActionRun(input: {
       // Confirm retries are safe — never imply the user must start a new sale.
       const message =
         error.status === 409 || error.status === 408 || error.status >= 500
-          ? 'La confirmación no respondió a tiempo o sigue en curso. Reintenta la misma confirmación — no se crea una venta nueva.'
-          : statusMessages[error.status] ?? 'No pude confirmar la venta. Reintenta la misma confirmación.';
+          ? 'La confirmación no respondió a tiempo o sigue en curso. Reintenta la misma confirmación — no se crea un registro nuevo.'
+          : statusMessages[error.status] ?? 'No pude confirmar la acción. Reintenta la misma confirmación.';
       throw new AssistantRequestError(error.status, message);
     }
     throw error;
@@ -285,7 +285,7 @@ export function confirmResultToAssistantResponse(
         result.interactionState === 'COMPLETED'
           ? null
           : result.interactionState === 'EXECUTING'
-            ? 'La venta puede estar registrándose. Reintenta la misma confirmación.'
+            ? 'La acción puede estar registrándose. Reintenta la misma confirmación.'
             : 'No se realizó ningún cambio.',
     },
     warnings: [],

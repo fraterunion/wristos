@@ -67,6 +67,37 @@ describe('assistant response safety validation', () => {
     if (result.kind === 'VALID') assert.equal(result.response, candidate as unknown as StructuredAssistantResponse);
   });
 
+  it('accepts canonical REGISTER_RECEIVABLE_PAYMENT SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. El pago quedó registrado.',
+      executableWrite: true,
+      capability: 'REGISTER_RECEIVABLE_PAYMENT',
+      receipt: {
+        kind: 'RECEIVED_MONEY',
+        paymentId: 'pay-1',
+        receivableEntryId: 'entry-1',
+        amount: '35000.00',
+        currency: 'MXN',
+        destination: 'BANK',
+        remainingReceivable: '65000.00',
+      },
+    });
+    const result = validateAssistantResponse('REGISTER_RECEIVABLE_PAYMENT', candidate);
+    assert.equal(result.kind, 'VALID');
+  });
+
+  it('blocks malformed REGISTER_RECEIVABLE_PAYMENT success', () => {
+    const result = validateAssistantResponse(
+      'REGISTER_RECEIVABLE_PAYMENT',
+      response('COMPLETED', 'SUCCESS_RECEIPT', {
+        message: 'Listo',
+        executableWrite: true,
+        receipt: { amount: '1' },
+      }),
+    );
+    assert.equal(result.kind, 'FAIL_CLOSED');
+  });
+
   it('still blocks COMPLETED for unbound write intents', () => {
     const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
       message: 'Listo',

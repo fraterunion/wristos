@@ -220,7 +220,35 @@ export class NaturalLanguageAssistantService {
         (outcome.candidate.intent === 'REGISTER_SALE' || outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT') &&
         resolution.entityType === 'CLIENT'
       ) {
-        entities = mergeTrustedIds(entities, { customerId: resolution.id });
+        const paymentNeedsPayableTarget =
+          outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' &&
+          (entities.destination === 'APPLY_TO_PAYABLE' ||
+            typeof entities.payableQuery === 'string') &&
+          (typeof entities.customerId === 'string' || typeof entities.accountId === 'string');
+        if (paymentNeedsPayableTarget) {
+          entities = mergeTrustedIds(entities, { payableClientId: resolution.id });
+        } else {
+          entities = mergeTrustedIds(entities, { customerId: resolution.id });
+        }
+      }
+      if (
+        outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' &&
+        resolution.entityType === 'ACCOUNT_ENTRY'
+      ) {
+        const paymentNeedsPayableAccount =
+          entities.destination === 'APPLY_TO_PAYABLE' &&
+          typeof entities.accountId === 'string';
+        if (paymentNeedsPayableAccount) {
+          entities = mergeTrustedIds(entities, {
+            payableAccountId: resolution.id,
+            payableEntryId: resolution.id,
+          });
+        } else {
+          entities = mergeTrustedIds(entities, {
+            accountId: resolution.id,
+            accountEntryId: resolution.id,
+          });
+        }
       }
     } else if (
       outcome.candidate.intent === 'GET_CLIENT_ACCOUNTS' &&
@@ -235,6 +263,17 @@ export class NaturalLanguageAssistantService {
       loaded.working?.lastResolvedEntities?.clientId
     ) {
       entities = mergeTrustedIds(entities, { customerId: loaded.working.lastResolvedEntities.clientId });
+    }
+
+    if (
+      outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' &&
+      loaded.working?.lastResolvedEntities?.accountEntryId &&
+      !('accountId' in entities)
+    ) {
+      entities = mergeTrustedIds(entities, {
+        accountId: loaded.working.lastResolvedEntities.accountEntryId,
+        accountEntryId: loaded.working.lastResolvedEntities.accountEntryId,
+      });
     }
 
     await this.aiRequests.recordInterpretation(request.id, {
