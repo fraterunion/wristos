@@ -33,6 +33,10 @@ import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto
 import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
 import { isHistoricalDealSourceTag } from './historical-ar-exclusion';
+import {
+  ReceivablePaymentService,
+  toReceivableDestination,
+} from './receivable-payment.service';
 
 type SettlementPaymentLinks = {
   settlementAsReceivablePayment: (AccountSettlement & {
@@ -77,6 +81,7 @@ export class CuentasService {
     private readonly prisma: PrismaService,
     private readonly fxService: FxService,
     private readonly treasuryService: TreasuryService,
+    private readonly receivablePayments: ReceivablePaymentService,
   ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -588,11 +593,41 @@ export class CuentasService {
     actorUserId?: string,
   ) {
     const destination = this.resolvePaymentDestination(dto);
+
+    // RECEIVABLE (received money + APPLY_TO_PAYABLE) → canonical ReceivablePaymentService.
+    // Settlement path is receivable-only; treasury receivable path uses durable registerIdempotencyKey.
     if (destination === AccountPaymentDestination.APPLY_TO_PAYABLE) {
-      return this.createPayableSettlement(entryId, tenantId, dto, actorUserId);
+      const result = await this.receivablePayments.register(tenantId, {
+        receivableEntryId: entryId,
+        amount: dto.amount,
+        destination: 'APPLY_TO_PAYABLE',
+        payableEntryId: dto.payableEntryId,
+        paymentDate: new Date(dto.paidAt),
+        notes: dto.notes,
+        currency: dto.currency,
+        registerIdempotencyKey: dto.registerIdempotencyKey ?? dto.idempotencyKey,
+        actorUserId,
+      });
+      return this.buildSettlementResponse(result.settlement!.id, tenantId);
     }
 
     const entry = await this.findEntryOrThrow(entryId, tenantId);
+    if (entry.type === AccountEntryType.RECEIVABLE) {
+      await this.receivablePayments.register(tenantId, {
+        receivableEntryId: entryId,
+        amount: dto.amount,
+        destination: toReceivableDestination(destination),
+        paymentDate: new Date(dto.paidAt),
+        notes: dto.notes,
+        currency: dto.currency,
+        exchangeRateUsed: dto.exchangeRateUsed,
+        registerIdempotencyKey: dto.registerIdempotencyKey ?? dto.idempotencyKey,
+        actorUserId,
+      });
+      return this.findEntry(entryId, tenantId);
+    }
+
+    // PAYABLE treasury outflow (supplier payment) — atomic AccountPayment + Treasury.
     this.assertManualEntry(entry);
 
     const currency = dto.currency ?? entry.currency;
@@ -612,33 +647,36 @@ export class CuentasService {
       );
     }
 
-    const payment = await this.prisma.accountPayment.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        entry: { connect: { id: entryId } },
-        amount,
-        currency,
-        method,
-        paidAt: new Date(dto.paidAt),
-        notes: dto.notes,
-        cashAccount,
-        exchangeRateUsed:
-          currency === Currency.USD && dto.exchangeRateUsed !== undefined
-            ? new Prisma.Decimal(dto.exchangeRateUsed)
-            : null,
-      },
-    });
+    await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.accountPayment.create({
+        data: {
+          tenantId,
+          entryId,
+          amount,
+          currency,
+          method,
+          paidAt: new Date(dto.paidAt),
+          notes: dto.notes,
+          cashAccount,
+          exchangeRateUsed:
+            currency === Currency.USD && dto.exchangeRateUsed !== undefined
+              ? new Prisma.Decimal(dto.exchangeRateUsed)
+              : null,
+        },
+      });
 
-    await this.treasuryService.createFromAccountPayment({
-      tenantId,
-      accountPaymentId: payment.id,
-      account: cashAccount,
-      direction: this.treasuryDirectionForEntry(entry.type),
-      amount: payment.amount,
-      currency: payment.currency,
-      exchangeRateUsed: payment.exchangeRateUsed,
-      transactionDate: payment.paidAt,
-      description: this.treasuryDescriptionForEntry(entry),
+      await this.treasuryService.createFromAccountPayment({
+        tenantId,
+        accountPaymentId: payment.id,
+        account: cashAccount,
+        direction: this.treasuryDirectionForEntry(entry.type),
+        amount: payment.amount,
+        currency: payment.currency,
+        exchangeRateUsed: payment.exchangeRateUsed,
+        transactionDate: payment.paidAt,
+        description: this.treasuryDescriptionForEntry(entry),
+        tx,
+      });
     });
 
     return this.findEntry(entryId, tenantId);
@@ -749,7 +787,8 @@ export class CuentasService {
 
   async removePayment(entryId: string, paymentId: string, tenantId: string) {
     const entry = await this.findEntryOrThrow(entryId, tenantId);
-    this.assertManualEntry(entry);
+    // Deal-linked RECEIVABLE AccountPayments may be reversed; Deal/Watch untouched.
+    // In-place edit of deal-linked entries remains blocked via updatePayment.
     await this.findPaymentOrThrow(paymentId, entryId, tenantId);
 
     const linkedSettlement = await this.findActiveSettlementForPayment(paymentId, tenantId);
@@ -757,12 +796,13 @@ export class CuentasService {
       return this.reverseSettlement(linkedSettlement.id, tenantId);
     }
 
-    await this.prisma.accountPayment.update({
-      where: { id: paymentId },
-      data: { deletedAt: new Date() },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.accountPayment.update({
+        where: { id: paymentId },
+        data: { deletedAt: new Date() },
+      });
+      await this.treasuryService.deleteByAccountPaymentId(paymentId, tx);
     });
-
-    await this.treasuryService.deleteByAccountPaymentId(paymentId);
 
     return this.findEntry(entryId, tenantId);
   }
@@ -1148,7 +1188,16 @@ export class CuentasService {
 
     if (!entry) return null;
 
-    const paidTotal = await this.getDealPaidTotal(tenantId, dealId, db);
+    const accountPayments = await db.accountPayment.findMany({
+      where: { tenantId, entryId: entry.id, deletedAt: null },
+      select: { amount: true },
+    });
+    const paidTotal = await this.resolvePaidTotal(
+      { ...entry, payments: accountPayments as EntryWithPayments['payments'] },
+      tenantId,
+      undefined,
+      db,
+    );
     const { status, closedAt } = this.resolveStatus(entry, paidTotal);
 
     if (
@@ -1180,7 +1229,16 @@ export class CuentasService {
 
     const now = new Date();
     for (const entry of entries) {
-      const paidTotal = await this.getDealPaidTotal(tenantId, dealId, db);
+      const accountPayments = await db.accountPayment.findMany({
+        where: { tenantId, entryId: entry.id, deletedAt: null },
+        select: { amount: true },
+      });
+      const paidTotal = await this.resolvePaidTotal(
+        { ...entry, payments: accountPayments as EntryWithPayments['payments'] },
+        tenantId,
+        undefined,
+        db,
+      );
       const { status } = this.resolveStatus(entry, paidTotal);
       if (status !== AccountEntryStatus.PAID) {
         await db.accountEntry.update({
@@ -1210,12 +1268,7 @@ export class CuentasService {
     const results = [];
 
     for (const entry of entries) {
-      const paidTotal = this.isDealLinked(entry)
-        ? dealPaidMap.get(entry.dealId!) ?? new Prisma.Decimal(0)
-        : entry.payments.reduce(
-            (sum, p) => sum.plus(p.amount),
-            new Prisma.Decimal(0),
-          );
+      const paidTotal = await this.resolvePaidTotal(entry, tenantId, dealPaidMap);
 
       const balance = entry.totalAmount.minus(paidTotal);
       const { status, closedAt } = this.resolveStatus(entry, paidTotal);
@@ -1238,16 +1291,29 @@ export class CuentasService {
     return results;
   }
 
-  private resolvePaidTotal(entry: EntryWithPayments, tenantId: string): Promise<Prisma.Decimal> {
-    if (this.isDealLinked(entry)) {
-      if (!entry.dealId) return Promise.resolve(new Prisma.Decimal(0));
-      return this.getDealPaidTotal(tenantId, entry.dealId);
-    }
-    const paid = entry.payments.reduce(
+  /**
+   * Canonical paid total:
+   * - MANUAL → Σ AccountPayment
+   * - DEAL_AUTO → Σ Deal.Payment(PAID) + Σ AccountPayment
+   *   (sale/Ventas write Deal Payment; Cuentas/AI write AccountPayment — never both for one event)
+   */
+  private async resolvePaidTotal(
+    entry: EntryWithPayments,
+    tenantId: string,
+    dealPaidMap?: Map<string, Prisma.Decimal>,
+    db: DbClient = this.prisma,
+  ): Promise<Prisma.Decimal> {
+    const accountPaid = entry.payments.reduce(
       (sum, p) => sum.plus(p.amount),
       new Prisma.Decimal(0),
     );
-    return Promise.resolve(paid);
+    if (!this.isDealLinked(entry) || !entry.dealId) {
+      return accountPaid;
+    }
+    const dealPaid =
+      dealPaidMap?.get(entry.dealId) ??
+      (await this.getDealPaidTotal(tenantId, entry.dealId, db));
+    return dealPaid.plus(accountPaid);
   }
 
   private resolveStatus(
@@ -1353,9 +1419,9 @@ export class CuentasService {
       updatedAt: entry.updatedAt.toISOString(),
       paidTotal: paidTotal.toFixed(2),
       balance: balance.toFixed(2),
-      payments: this.isDealLinked(entry)
-        ? []
-        : entry.payments.map((p) => this.serializePayment(p)),
+      // AccountPayments only (Cuentas/AI collections + settlements). Deal.Payment
+      // sale/Ventas legs are reflected in paidTotal/balance, not this array.
+      payments: entry.payments.map((p) => this.serializePayment(p)),
     };
     return base;
   }
@@ -1431,10 +1497,15 @@ export class CuentasService {
     return where;
   }
 
+  /**
+   * Retained for PAYABLE treasury outflows and in-place payment edits.
+   * Deal-linked RECEIVABLE collections use ReceivablePaymentService (eligible).
+   * Correction of deal-linked AccountPayments uses removePayment (allowed).
+   */
   private assertManualEntry(entry: AccountEntry) {
     if (this.isDealLinked(entry)) {
       throw new BadRequestException(
-        'Payments can only be recorded on manual entries without deal linkage',
+        'This mutation applies only to manual entries without deal linkage',
       );
     }
   }

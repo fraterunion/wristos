@@ -9,6 +9,7 @@ import {
 import { NotFoundException } from '@nestjs/common';
 import { CuentasService } from './cuentas.service';
 import { AccountPaymentDestination } from './dto/create-account-payment.dto';
+import { ReceivablePaymentService } from './receivable-payment.service';
 
 function d(n: number | string) {
   return new Prisma.Decimal(n);
@@ -85,7 +86,15 @@ describe('CuentasService — account-to-account settlement', () => {
           Object.assign(entry, data);
           return entry;
         }),
+        findFirstOrThrow: jest.fn(async ({ where }: any) => {
+          const entry = state.entries.get(where.id);
+          if (!entry) throw new Error('entry not found');
+          return entry;
+        }),
         findMany: jest.fn(async () => []),
+      },
+      treasuryEntry: {
+        findFirst: jest.fn(async () => null),
       },
       accountPayment: {
         create: jest.fn(async ({ data }: any) => {
@@ -104,6 +113,7 @@ describe('CuentasService — account-to-account settlement', () => {
             notes: data.notes,
             cashAccount: data.cashAccount,
             exchangeRateUsed: data.exchangeRateUsed,
+            registerIdempotencyKey: data.registerIdempotencyKey ?? null,
             deletedAt: null,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -138,10 +148,24 @@ describe('CuentasService — account-to-account settlement', () => {
           return { count: ids.length };
         }),
         findFirst: jest.fn(async ({ where }: any) => {
+          if (where.registerIdempotencyKey) {
+            for (const row of state.payments.values()) {
+              if (row.tenantId !== (where.tenantId ?? row.tenantId)) continue;
+              if (row.registerIdempotencyKey !== where.registerIdempotencyKey) continue;
+              if (where.deletedAt === null && row.deletedAt) continue;
+              return row;
+            }
+            return null;
+          }
           const row = state.payments.get(where.id);
-          if (!row || row.deletedAt) return null;
+          if (!row || (where.deletedAt === null && row.deletedAt)) return null;
           if (where.entryId && row.entryId !== where.entryId) return null;
           if (where.tenantId && row.tenantId !== where.tenantId) return null;
+          return row;
+        }),
+        findFirstOrThrow: jest.fn(async ({ where }: any) => {
+          const row = state.payments.get(where.id);
+          if (!row) throw new Error('payment not found');
           return row;
         }),
         aggregate: jest.fn(),
@@ -161,38 +185,39 @@ describe('CuentasService — account-to-account settlement', () => {
               );
               if (!match) continue;
             }
-            if (where.include || true) {
-              return {
-                ...s,
-                receivablePayment: {
-                  ...state.payments.get(s.receivablePaymentId),
-                  settlementAsReceivablePayment: {
-                    ...s,
-                    payableEntry: {
-                      id: s.payableEntryId,
-                      counterpartyName: 'Pepe',
-                      concept: 'Compra Pepe',
-                      type: AccountEntryType.PAYABLE,
-                    },
-                  },
-                  settlementAsPayablePayment: null,
-                },
-                payablePayment: {
-                  ...state.payments.get(s.payablePaymentId),
-                  settlementAsReceivablePayment: null,
-                  settlementAsPayablePayment: {
-                    ...s,
-                    receivableEntry: {
-                      id: s.receivableEntryId,
-                      counterpartyName: 'José',
-                      concept: 'Saldo José',
-                      type: AccountEntryType.RECEIVABLE,
-                    },
+            const recvEntry = state.entries.get(s.receivableEntryId);
+            const payEntry = state.entries.get(s.payableEntryId);
+            return {
+              ...s,
+              receivableEntry: recvEntry,
+              payableEntry: payEntry,
+              receivablePayment: {
+                ...state.payments.get(s.receivablePaymentId),
+                settlementAsReceivablePayment: {
+                  ...s,
+                  payableEntry: {
+                    id: s.payableEntryId,
+                    counterpartyName: 'Pepe',
+                    concept: 'Compra Pepe',
+                    type: AccountEntryType.PAYABLE,
                   },
                 },
-              };
-            }
-            return s;
+                settlementAsPayablePayment: null,
+              },
+              payablePayment: {
+                ...state.payments.get(s.payablePaymentId),
+                settlementAsReceivablePayment: null,
+                settlementAsPayablePayment: {
+                  ...s,
+                  receivableEntry: {
+                    id: s.receivableEntryId,
+                    counterpartyName: 'José',
+                    concept: 'Saldo José',
+                    type: AccountEntryType.RECEIVABLE,
+                  },
+                },
+              },
+            };
           }
           return null;
         }),
@@ -209,7 +234,10 @@ describe('CuentasService — account-to-account settlement', () => {
           return row;
         }),
       },
-      payment: { groupBy: jest.fn(async () => []) },
+      payment: {
+        groupBy: jest.fn(async () => []),
+        aggregate: jest.fn(async () => ({ _sum: { amount: d(0) } })),
+      },
       $transaction: jest.fn(async (fn: any) => fn(prisma as any)),
     } as any;
 
@@ -221,10 +249,12 @@ describe('CuentasService — account-to-account settlement', () => {
       deleteByAccountPaymentId: jest.fn(),
     };
 
+    const receivablePayments = new ReceivablePaymentService(prisma as never, treasury as never);
     const service = new CuentasService(
       prisma as never,
       { getUsdMxn: jest.fn() } as never,
       treasury as never,
+      receivablePayments,
     );
 
     // Patch findEntry to use in-memory compute without full persist complexity

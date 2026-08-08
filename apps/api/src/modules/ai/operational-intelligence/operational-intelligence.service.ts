@@ -375,12 +375,19 @@ export class OperationalIntelligenceService {
       const bucket = byCurrency[currency];
       const total = new Prisma.Decimal(entry.totalAmount);
 
-      let paid: Prisma.Decimal;
-      if (entry.dealId && entry.deal) {
-        paid = entry.deal.payments.reduce((s: Prisma.Decimal, p: { amount: Prisma.Decimal }) => s.plus(p.amount), ZERO);
-      } else {
-        paid = entry.payments.reduce((s: Prisma.Decimal, p: { amount: Prisma.Decimal }) => s.plus(p.amount), ZERO);
-      }
+      // Deal-linked: Σ Deal.Payment + Σ AccountPayment (no double-write of one event).
+      const accountPaid = entry.payments.reduce(
+        (s: Prisma.Decimal, p: { amount: Prisma.Decimal }) => s.plus(p.amount),
+        ZERO,
+      );
+      const dealPaid =
+        entry.dealId && entry.deal
+          ? entry.deal.payments.reduce(
+              (s: Prisma.Decimal, p: { amount: Prisma.Decimal }) => s.plus(p.amount),
+              ZERO,
+            )
+          : ZERO;
+      const paid = dealPaid.plus(accountPaid);
       const outstanding = total.minus(paid);
       if (outstanding.lt(0)) continue;
 

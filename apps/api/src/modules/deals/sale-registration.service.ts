@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AccountEntry,
+  AccountEntryType,
   Currency,
   Deal,
   DealStage,
@@ -332,7 +333,25 @@ export class SaleRegistrationService {
       where: { tenantId, dealId, status: PaymentStatus.PAID, deletedAt: null },
       _sum: { amount: true },
     });
-    const paidTotal = paidAgg._sum.amount ?? new Prisma.Decimal(0);
+    const dealPaid = paidAgg._sum.amount ?? new Prisma.Decimal(0);
+    const linkedEntry = await this.prisma.accountEntry.findFirst({
+      where: {
+        tenantId,
+        dealId,
+        type: AccountEntryType.RECEIVABLE,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    let accountPaid = new Prisma.Decimal(0);
+    if (linkedEntry) {
+      const accountAgg = await this.prisma.accountPayment.aggregate({
+        where: { tenantId, entryId: linkedEntry.id, deletedAt: null },
+        _sum: { amount: true },
+      });
+      accountPaid = accountAgg._sum.amount ?? new Prisma.Decimal(0);
+    }
+    const paidTotal = dealPaid.plus(accountPaid);
     const rawPending = deal.agreedPrice.minus(paidTotal);
     const pendingAmount = rawPending.lessThan(0) ? new Prisma.Decimal(0) : rawPending;
     const computedStatus =

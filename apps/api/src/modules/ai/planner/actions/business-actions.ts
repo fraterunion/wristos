@@ -179,7 +179,37 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     conditionalMissing: registerSaleConditionalMissing,
     warnings: [warning('WATCH_RESERVED', 'The selected watch is reserved.', (e) => e.watchStatus === 'RESERVED')],
   }),
-  define({ id: 'REGISTER_RECEIVABLE_PAYMENT', name: 'Register Receivable Payment', category: 'ACCOUNTS', tier: 'HIGH', required: ['accountId', 'amount', 'destination'], optional: ['currency', 'date', 'outstandingAmount'], effects: [{ area: 'Accounts', description: 'Outstanding receivable is reduced.' }, { area: 'Treasury', description: 'Destination balance increases.' }], warnings: [warning('AMOUNT_EXCEEDS_OUTSTANDING', 'Payment amount exceeds the outstanding balance.', (e) => typeof e.amount === 'number' && typeof e.outstandingAmount === 'number' && e.amount > e.outstandingAmount)] }),
+  define({
+    id: 'REGISTER_RECEIVABLE_PAYMENT',
+    name: 'Register Receivable Payment',
+    category: 'ACCOUNTS',
+    tier: 'HIGH',
+    required: ['accountId', 'amount', 'destination'],
+    optional: ['currency', 'date', 'outstandingAmount', 'payableAccountId'],
+    effects: [
+      { area: 'Accounts', description: 'Outstanding receivable is reduced.' },
+      {
+        area: 'Treasury',
+        description:
+          'CASH/BANK/CESAR: destination liquidity increases once. APPLY_TO_PAYABLE: liquidity unchanged; payable decreases.',
+      },
+    ],
+    warnings: [
+      warning(
+        'AMOUNT_EXCEEDS_OUTSTANDING',
+        'Payment amount exceeds the outstanding balance.',
+        (e) =>
+          typeof e.amount === 'number' &&
+          typeof e.outstandingAmount === 'number' &&
+          e.amount > e.outstandingAmount,
+      ),
+      warning(
+        'UNSUPPORTED_DESTINATION',
+        'CRYPTO is not a receivable-payment destination.',
+        (e) => e.destination === 'CRYPTO',
+      ),
+    ],
+  }),
   define({ id: 'REGISTER_PURCHASE', name: 'Register Purchase', category: 'INVENTORY', tier: 'HIGH', required: ['watch', 'cost', 'currency'], optional: ['date', 'serial', 'duplicateSerial'], effects: [{ area: 'Inventory', description: 'A purchased watch is added to inventory.' }, { area: 'Treasury', description: 'Purchase funding is recorded.' }], warnings: [warning('DUPLICATE_SERIAL', 'The supplied serial already exists.', (e) => e.duplicateSerial === true)] }),
   define({ id: 'REGISTER_EXPENSE', name: 'Register Expense', category: 'EXPENSES', tier: 'MEDIUM', required: ['concept', 'amount', 'currency'], optional: ['date', 'sourceAccountId'], effects: [{ area: 'Expenses', description: 'Operating expense is recorded.' }, { area: 'Treasury', description: 'Source balance is reduced.' }] }),
   define({ id: 'REGISTER_SETTLEMENT', name: 'Register Settlement', category: 'ACCOUNTS', tier: 'HIGH', required: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'], optional: ['date'], effects: [{ area: 'Accounts', description: 'The selected accounts are settled by the confirmed amount.' }] }),

@@ -50,6 +50,9 @@ describe('legacy Receivable write guardrail', () => {
         })),
       },
       accountEntry,
+      accountPayment: {
+        findMany: jest.fn(async () => []),
+      },
       receivable,
       receivablePayment,
       payment: {
@@ -66,6 +69,7 @@ describe('legacy Receivable write guardrail', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
 
     await service.syncDealReceivable('deal-op', 't1');
