@@ -199,20 +199,148 @@ function classify(text: string, currentDate: string): FakeOutput {
   if (/^[a-záéíóúñ]+ me pag[oó]\.?$/.test(t)) {
     return { intent: 'REGISTER_RECEIVABLE_PAYMENT', entities: { customerQuery: t.split(' ')[0] }, missingEntities: ['accountId', 'amount', 'destination'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
-  const purchaseMatch = t.match(/compr[eé] ([a-z0-9 ]+?) en ([\d.,]+ ?(mil|k)?)( d[oó]lares)?/);
-  if (purchaseMatch) {
+  const purchaseMatch = t.match(/compr[eé] ([a-z0-9 ]+?) (?:por |en )?([\d.,]+ ?(mil|k)?)( d[oó]lares)?/);
+  if (purchaseMatch || /compr[eé] (un |una )?(rolex|ap|patek|watch|reloj)/.test(t)) {
+    if (purchaseMatch) {
+      return {
+        intent: 'REGISTER_PURCHASE',
+        entities: {
+          watchQuery: purchaseMatch[1].trim(),
+          cost: String(parseFakeAmount(purchaseMatch[2])),
+          currency: purchaseMatch[4] ? 'USD' : 'MXN',
+        },
+        missingEntities: [],
+        ambiguities: [],
+        confidence: 'HIGH',
+        language: 'es',
+      };
+    }
     return {
       intent: 'REGISTER_PURCHASE',
-      entities: { watchQuery: purchaseMatch[1].trim(), cost: String(parseFakeAmount(purchaseMatch[2])), currency: purchaseMatch[4] ? 'USD' : 'MXN' },
-      missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es',
+      entities: { watchQuery: t.replace(/^compr[eé]\s+/, '') },
+      missingEntities: ['cost', 'currency'],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
     };
   }
   if (/^compr[eé] ([a-z0-9 ]+)\.?$/.test(t)) {
     return { intent: 'REGISTER_PURCHASE', entities: { watchQuery: t.replace(/^compr[eé] /, '').replace(/\.$/, '') }, missingEntities: ['cost', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
-  const expenseMatch = t.match(/gast[eé] ([\d.,]+) en ([a-z0-9 ]+)/);
-  if (expenseMatch) {
-    return { intent: 'REGISTER_EXPENSE', entities: { amount: String(parseFakeAmount(expenseMatch[1])), currency: 'MXN', concept: expenseMatch[2].trim() }, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  if (/compr[eé].*\b(usdt|crypto|bitcoin)\b|\bagrega ([\d.,]+) usdt/.test(t)) {
+    const m = t.match(/([\d.,]+)\s*usdt/) ?? t.match(/agrega ([\d.,]+) usdt/);
+    return {
+      intent: 'REGISTER_CRYPTO_POSITION',
+      entities: { asset: 'USDT', ...(m ? { quantity: m[1].replace(/,/g, '') } : {}) },
+      missingEntities: m ? ['cost', 'currency'] : ['quantity', 'cost', 'currency'],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
+  }
+  if (/transfer[ií].*(bancos|efectivo)|de bancos a efectivo|de efectivo a bancos/.test(t)) {
+    return {
+      intent: 'UNKNOWN',
+      entities: {},
+      missingEntities: [],
+      ambiguities: [{ field: 'intent', reason: 'treasury transfer is not REGISTER_EXPENSE' }],
+      confidence: 'LOW',
+      language: 'es',
+    };
+  }
+  if (/retir[eé].*(utilidad|para c[eé]sar)|retir[eé] .*c[eé]sar/.test(t)) {
+    return {
+      intent: 'UNKNOWN',
+      entities: {},
+      missingEntities: [],
+      ambiguities: [{ field: 'intent', reason: 'capital movement is not REGISTER_EXPENSE' }],
+      confidence: 'LOW',
+      language: 'es',
+    };
+  }
+  if (/me depositaron|me pagaron|recib[ií]\b/.test(t) && !/gast[eé]|pagu[eé]/.test(t)) {
+    return {
+      intent: 'UNKNOWN',
+      entities: {},
+      missingEntities: [],
+      ambiguities: [{ field: 'intent', reason: 'inflow language is not an operating expense' }],
+      confidence: 'LOW',
+      language: 'es',
+    };
+  }
+  if (/comisi[oó]n(es)? bancaria|cargo bancario|me cobraron.*banco/.test(t)) {
+    const amountMatch = t.match(/([\d.,]+(?:\s*(?:mil|k))?)/);
+    return {
+      intent: 'REGISTER_EXPENSE',
+      entities: {
+        concept: 'comisión bancaria',
+        currency: 'MXN',
+        ...(amountMatch ? { amount: String(parseFakeAmount(amountMatch[1])) } : {}),
+      },
+      missingEntities: amountMatch ? ['category', 'source'] : ['amount', 'category', 'source'],
+      ambiguities: [{ field: 'category', reason: 'bank fee is unsupported as operating expense' }],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+  if (/^efectivo\.?$|^bancos\.?$|^banco\.?$|^cuenta c[eé]sar\.?$|^c[eé]sar\.?$/.test(t)) {
+    const source = /efectivo/.test(t) ? 'CASH' : /c[eé]sar/.test(t) ? 'CESAR' : 'BANK';
+    return {
+      intent: 'REGISTER_EXPENSE',
+      entities: { source },
+      missingEntities: ['amount', 'currency', 'category'],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+  const expensePaidMatch = t.match(
+    /(?:gast[eé]|pagu[eé])\s+([\d.,]+(?:\s*(?:mil|k))?)\s*(?:pesos|mxn)?\s*(?:de|en)\s+(.+?)(?:\s+(?:desde|de|en|con)\s+(.+))?$/,
+  );
+  const expenseAlt = t.match(
+    /(?:gast[eé]|pagu[eé])\s+([\d.,]+(?:\s*(?:mil|k))?)\s+(?:de|en)\s+(.+)$/,
+  );
+  if (expensePaidMatch || expenseAlt) {
+    const m = expensePaidMatch ?? expenseAlt!;
+    const amountRaw = m[1];
+    let rest = (m[2] ?? '').trim();
+    let sourceHint = (m[3] ?? '').trim();
+    if (!sourceHint) {
+      const desde = rest.match(/\s+(?:desde|en|de|con)\s+(efectivo|bancos?|transferencia|cuenta de c[eé]sar|c[eé]sar)\s*$/);
+      if (desde) {
+        sourceHint = desde[1];
+        rest = rest.slice(0, desde.index).trim();
+      } else if (/\ba bancos\b/.test(rest)) {
+        sourceHint = 'bancos';
+        rest = rest.replace(/\ba bancos\b/, '').trim();
+      } else if (/\ben efectivo\b/.test(rest)) {
+        sourceHint = 'efectivo';
+        rest = rest.replace(/\ben efectivo\b/, '').trim();
+      }
+    }
+    const currency = /d[oó]lares|usd/.test(t) ? 'USD' : 'MXN';
+    let source: string | undefined;
+    if (/efectivo|cash/.test(sourceHint)) source = 'CASH';
+    else if (/banco|transfer/.test(sourceHint)) source = 'BANK';
+    else if (/c[eé]sar/.test(sourceHint)) source = 'CESAR';
+    else if (/crypto|usdt/.test(sourceHint)) source = 'CRYPTO';
+    const entities: Record<string, unknown> = {
+      amount: String(parseFakeAmount(amountRaw)),
+      currency,
+      concept: rest || undefined,
+    };
+    if (source && source !== 'CRYPTO') entities.source = source;
+    if (source === 'CRYPTO') entities.sourceAccount = 'CRYPTO';
+    const missing: string[] = [];
+    if (!source || source === 'CRYPTO') missing.push('source');
+    return {
+      intent: 'REGISTER_EXPENSE',
+      entities,
+      missingEntities: missing,
+      ambiguities: currency === 'USD' ? [{ field: 'currency', reason: 'USD expenses unsupported in V1' }] : [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
   }
   if (/agrega ([\d.,]+) usdt/.test(t)) {
     const m = t.match(/agrega ([\d.,]+) usdt/)!;

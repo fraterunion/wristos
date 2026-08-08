@@ -63,7 +63,7 @@ export function manualCtaLabel(intent: BusinessActionId): string {
   return MANUAL_CTA_LABEL[intent as WritePreviewAction] ?? 'Continuar en el módulo';
 }
 
-export type PreviewCtaKind = 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'MANUAL_MODULE';
+export type PreviewCtaKind = 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'CONFIRM_EXPENSE' | 'MANUAL_MODULE';
 
 
 function isRecord(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
@@ -533,14 +533,18 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'REGISTER_SALE' && response.payload.executable === true;
   const executablePayment =
     intent === 'REGISTER_RECEIVABLE_PAYMENT' && response.payload.executable === true;
+  const executableExpense =
+    intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
-  const intro = executablePayment
-    ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
-        ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
-        : 'Voy a registrar este pago:')
-    : executableSale
-      ? 'Perfecto. Esto es lo que voy a registrar:'
-      : 'Perfecto. Esto es lo que voy a preparar:';
+  const intro = executableExpense
+    ? 'Voy a registrar este gasto:'
+    : executablePayment
+      ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
+          ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
+          : 'Voy a registrar este pago:')
+      : executableSale
+        ? 'Perfecto. Esto es lo que voy a registrar:'
+        : 'Perfecto. Esto es lo que voy a preparar:';
   return [
     {
       kind: 'preview',
@@ -549,16 +553,20 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
       title,
       fields,
       effects,
-      ctaLabel: executablePayment
-        ? 'Confirmar pago'
-        : executableSale
-          ? 'Confirmar venta'
-          : manualCtaLabel(intent),
-      ctaKind: executablePayment
-        ? 'CONFIRM_PAYMENT'
-        : executableSale
-          ? 'CONFIRM_SALE'
-          : 'MANUAL_MODULE',
+      ctaLabel: executableExpense
+        ? 'Confirmar gasto'
+        : executablePayment
+          ? 'Confirmar pago'
+          : executableSale
+            ? 'Confirmar venta'
+            : manualCtaLabel(intent),
+      ctaKind: executableExpense
+        ? 'CONFIRM_EXPENSE'
+        : executablePayment
+          ? 'CONFIRM_PAYMENT'
+          : executableSale
+            ? 'CONFIRM_SALE'
+            : 'MANUAL_MODULE',
       planFingerprint,
       actionRunId: response.actionRunId,
     },
@@ -598,6 +606,53 @@ function saleReceiptBlocks(response: StructuredAssistantResponse): ConversationB
       lines,
       dealHref: receipt && typeof receipt.dealId === 'string' ? `/ventas?deal=${receipt.dealId}` : '/ventas',
       correctHref: '/ventas',
+    },
+  ];
+}
+
+function expenseReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. El gasto quedó registrado.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const currency = asString(receipt.currency) ?? 'MXN';
+    const concept = asString(receipt.concept);
+    const amount = formatMoney(receipt.amount, currency);
+    if (concept) lines.push(concept);
+    if (amount) lines.push(amount);
+    if (asString(receipt.category) === 'OTHER') {
+      lines.push('Categoría: Otro');
+    }
+    const source =
+      asString(receipt.sourceLabel) ||
+      (() => {
+        const raw = asString(receipt.sourceAccount);
+        if (raw === 'CASH') return 'Efectivo';
+        if (raw === 'BANK') return 'Bancos';
+        if (raw === 'CESAR') return 'Cuenta César';
+        return raw;
+      })();
+    if (source) lines.push(`Pagado desde: ${source}`);
+    const date = asString(receipt.expenseDate);
+    if (date) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+      const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+      lines.push(
+        m
+          ? `Fecha: ${Number(m[3])} ${months[Number(m[2]) - 1]} ${m[1]}`
+          : `Fecha: ${date}`,
+      );
+    }
+  }
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: '/expenses',
+      correctHref: '/expenses',
     },
   ];
 }
@@ -705,6 +760,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'REGISTER_RECEIVABLE_PAYMENT') {
         main = paymentReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REGISTER_EXPENSE') {
+        main = expenseReceiptBlocks(response);
         break;
       }
       const summary = asString(response.payload.message) ?? asString(response.payload.summary);

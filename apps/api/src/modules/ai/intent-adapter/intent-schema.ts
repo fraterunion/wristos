@@ -245,8 +245,25 @@ export const entitySchemas = {
   REGISTER_EXPENSE: z
     .object({
       concept: z.string().trim().min(1).max(160).optional(),
+      notes: z.string().trim().min(1).max(2000).optional(),
       amount: money.optional(),
       currency: currency.optional(),
+      category: z
+        .enum([
+          'GASOLINE',
+          'TOLLS',
+          'WATCHMAKER',
+          'PARKING',
+          'MEALS',
+          'FLIGHTS',
+          'TRAVEL',
+          'MARKETING',
+          'COMMISSIONS',
+          'OTHER',
+        ])
+        .optional(),
+      source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      sourceAccount: z.string().trim().min(1).max(64).optional(),
       effectiveDate: isoDate.optional(),
     })
     .strip(),

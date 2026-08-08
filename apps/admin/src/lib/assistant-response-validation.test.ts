@@ -98,13 +98,42 @@ describe('assistant response safety validation', () => {
     assert.equal(result.kind, 'FAIL_CLOSED');
   });
 
+  it('accepts canonical REGISTER_EXPENSE SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. El gasto quedó registrado.',
+      executableWrite: true,
+      capability: 'REGISTER_EXPENSE',
+      receipt: {
+        expenseId: 'exp-1',
+        category: 'GASOLINE',
+        sourceAccount: 'CASH',
+        amount: '2500.00',
+        currency: 'MXN',
+      },
+    });
+    const result = validateAssistantResponse('REGISTER_EXPENSE', candidate);
+    assert.equal(result.kind, 'VALID');
+  });
+
+  it('rejects malformed REGISTER_EXPENSE SUCCESS_RECEIPT', () => {
+    const result = validateAssistantResponse(
+      'REGISTER_EXPENSE',
+      response('COMPLETED', 'SUCCESS_RECEIPT', {
+        message: 'Listo',
+        executableWrite: true,
+        receipt: { amount: '1' },
+      }),
+    );
+    assert.equal(result.kind, 'FAIL_CLOSED');
+  });
+
   it('still blocks COMPLETED for unbound write intents', () => {
     const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
       message: 'Listo',
       receipt: { dealId: 'x', paymentMode: 'PAID', amount: '1' },
       executableWrite: true,
     });
-    const result = validateAssistantResponse('REGISTER_EXPENSE', candidate);
+    const result = validateAssistantResponse('REGISTER_PURCHASE', candidate);
     assert.equal(result.kind, 'FAIL_CLOSED');
   });
 

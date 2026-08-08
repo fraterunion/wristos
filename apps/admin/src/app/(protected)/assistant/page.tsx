@@ -328,13 +328,17 @@ export default function AssistantPage() {
 
   const confirmSale = useCallback(async (item: AssistantHistoryItem, args: { actionRunId: string; planFingerprint: string }) => {
     const executableIntent =
-      item.intent === 'REGISTER_SALE' || item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
+      item.intent === 'REGISTER_SALE' ||
+      item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+      item.intent === 'REGISTER_EXPENSE';
     if (pending || messagePending || confirmingSale || !executableIntent) return;
     const isPayment = item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
+    const isExpense = item.intent === 'REGISTER_EXPENSE';
+    const confirmLabel = isExpense ? 'Confirmar gasto' : isPayment ? 'Confirmar pago' : 'Confirmar venta';
     setError(null);
     setMessageError(null);
     setConfirmingSale(true);
-    setMessagePendingLabel(isPayment ? 'Confirmar pago' : 'Confirmar venta');
+    setMessagePendingLabel(confirmLabel);
     try {
       const result = await confirmAssistantActionRun(args);
       // In-flight: keep the original preview so the user retries the SAME actionRun.
@@ -352,7 +356,7 @@ export default function AssistantPage() {
       setHistory((current) => [
         {
           id,
-          label: isPayment ? 'Confirmar pago' : 'Confirmar venta',
+          label: confirmLabel,
           intent: item.intent,
           entities: item.entities,
           response,
@@ -368,9 +372,11 @@ export default function AssistantPage() {
         setMessageError(error.message);
       } else {
         setMessageError(
-          isPayment
-            ? 'No pude confirmar el pago. Reintenta la misma confirmación.'
-            : 'No pude confirmar la venta. Reintenta la misma confirmación.',
+          isExpense
+            ? 'No pude confirmar el gasto. Reintenta la misma confirmación.'
+            : isPayment
+              ? 'No pude confirmar el pago. Reintenta la misma confirmación.'
+              : 'No pude confirmar la venta. Reintenta la misma confirmación.',
         );
       }
     } finally {

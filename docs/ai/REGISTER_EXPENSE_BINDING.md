@@ -1,436 +1,174 @@
-# REGISTER_EXPENSE — Domain + Future Binding (Commit 15A)
+# REGISTER_EXPENSE — Write Binding (Commit 15B)
 
-Status: **DOMAIN ONLY — AI write execution NOT implemented**
+Status: **WRITE BOUND — confirmed execution enabled**
 Canonical command: `ExpenseRegistrationService.register()`
-AI binding: **unbound** (must stay unbound until Commit 15B)
+AI binding: `RegisterExpenseWriteBinding` @ `1.0.0`
+Idempotency: `OperatingExpense.registerIdempotencyKey = ai-action-run:<actionRunId>`
 
 ---
 
-## Product goal (future 15B)
+## Deployed 15A domain (prerequisite)
 
-Conversational examples:
-
-- “Gasté 2,500 en gasolina.” → amount + concept; **source clarify** if missing
-- “Pagué 18 mil de renta a bancos.” → amount + BANK + category map / clarify
-- “Compré material de oficina por 3,200 en efectivo.” → amount + CASH + OTHER/clarify
-
-Flow (future):
-
-```
-NL → REGISTER_EXPENSE intent
-→ allowlisted category map / clarify
-→ source required (CASH|BANK|CESAR)
-→ deterministic preview
-→ Confirmar gasto
-→ ExpenseRegistrationService.register()
-→ receipt + audit
-```
-
-No confirmation → zero mutation.
-One ActionRun → one economic expense (durable idempotency).
-
----
-
-## Canonical expense semantics (15A)
-
-A **paid operating expense** writes atomically:
+Atomic paid operating expense:
 
 | Record | Role |
 |---|---|
 | `OperatingExpense` | P&L operating spend |
-| `TreasuryEntry` OUTFLOW | Liquidity leave from exactly one of CASH / BANK / CESAR |
+| `TreasuryEntry` OUTFLOW | Liquidity leave from CASH / BANK / CESAR |
 
-`commission` on the Treasury row stays **null**.
-Ordinary BANK-paid rent is **not** a bank commission event.
+Provenance: `operating-expense:<expenseId>:outflow`
+MXN only. `BANK_FEES` rejected. Soft-delete reverse via Gastos.
 
-Gastos V1 means **paid expenses only**. No accrued / unpaid / CXP auto-open from this command.
+Schema for idempotency / source / soft-delete is already live — **no Prisma migration in 15B**.
 
 ---
 
-## What counts as expense
+## Safety model
 
-Allowlisted `OperatingExpenseCategory` for **new** registration:
+Claude interprets NL only. Expense writes require:
 
-| Enum | Typical language |
+```
+NL → REGISTER_EXPENSE → normalize/enrich → Planner
+→ missing-field clarify if needed → READY_FOR_CONFIRMATION
+→ authenticated Confirmar gasto → freshness/permission
+→ WritePlanRunner → ExpenseRegistrationService.register()
+→ BusinessActionResult → receipt → audit
+```
+
+No confirmation → **no expense**.
+Duplicate confirm → **one** economic expense (durable idempotency).
+Post-commit runtime failure → recover from `OperatingExpense.registerIdempotencyKey`.
+
+---
+
+## Category semantics (V1 allowlist)
+
+| Enum | Language examples |
 |---|---|
 | `GASOLINE` | gasolina |
 | `TOLLS` | casetas |
-| `WATCHMAKER` | relojero / servicio |
+| `WATCHMAKER` | relojero |
 | `PARKING` | estacionamiento |
-| `MEALS` | comidas |
-| `FLIGHTS` | vuelos |
-| `TRAVEL` | viáticos / hotel |
-| `MARKETING` | marketing / ads |
-| `COMMISSIONS` | comisión de ventas / agente (OpEx, not Control Bancos) |
-| `OTHER` | catch-all when mapped with confidence |
+| `MEALS` | comida / restaurante (business context) |
+| `FLIGHTS` | vuelo / boleto de avión |
+| `TRAVEL` | viaje / hotel de viaje / viáticos |
+| `MARKETING` | marketing / publicidad |
+| `COMMISSIONS` | comisión de ventas / agente — **not** bank fees |
+| `OTHER` | catch-all with visible concept |
 
-`description` / concept lives in `notes` (free text). Category is **required enum** — no free-text categories; AI must not invent enums.
+**No `RENT` enum.** “Renta” → `OTHER` + concept `Renta` (preview shows Categoría: Otro, Concepto: Renta).
 
-There is **no** `RENT` enum. “Renta” → map to `OTHER` only when planner confidently treats it as OpEx, or clarify.
+Bank-fee phrases → **unsupported** (do not map to `COMMISSIONS` / OpEx).
+
+Deterministic resolver: `expense-category-resolver.ts` (not LLM confidence).
 
 ---
 
-## What does NOT count as expense
+## Source / date / currency
 
-| Utterance / event | Correct domain |
+| Field | Policy |
 |---|---|
-| “Compré un Rolex por 500 mil” | `REGISTER_PURCHASE` / inventory — **not** expense |
-| “José me pagó 35 mil” | `REGISTER_RECEIVABLE_PAYMENT` |
-| “Le pagué 100 mil a Pepe” (CXP) | payable settlement — **not** generic expense |
-| “Retiré dinero para César” | capital / transfer — not OpEx unless product later defines it |
-| “Compré USDT” | crypto position — not expense |
-| Sale BANCOS fee | Treasury bank-fee OUTFLOW + `commission` — **not** OpEx `BANK_FEES` |
-| Partner distribution | `InvestorDistribution` |
-| Account transfer CASH↔BANK | not modeled as expense |
+| Source | `CASH` \| `BANK` \| `CESAR` — **no default**; ask “¿Desde dónde lo pagaste?” |
+| Date | Defaults to today (manual Gastos policy); preview **must** show fecha |
+| Currency | **MXN only** — USD/crypto clarify / reject; no FX |
 
-`REGISTER_EXPENSE` must stay a **narrow** operating-spend command.
+Inflows (“me depositaron”, “me pagaron”, “recibí”) are **not** expenses.
 
 ---
 
-## BANK_FEES policy
+## Non-expense boundaries
 
-| Question | Answer |
+| Utterance | Intent |
 |---|---|
-| A. Manual standalone BANK_FEES today? | UI hides it; API enum existed historically |
-| B. Canonical registration? | **Rejected** by `ExpenseRegistrationService` |
-| C. Analytics double-count? | Control Bancos KPI = `TreasuryEntry.commission`; residual OpEx BANK_FEES (legacy) folds into operativos, never into bank KPI |
+| Compré Rolex… | `REGISTER_PURCHASE` |
+| José me pagó… | `REGISTER_RECEIVABLE_PAYMENT` |
+| Le pagué a Pepe… | payment / APPLY_TO_PAYABLE |
+| Compré USDT… | `REGISTER_CRYPTO_POSITION` |
+| Transferí bancos↔efectivo | transfer — not expense |
+| Retiré utilidad para César | capital — not expense |
+| Comisión bancaria | unsupported bank fee |
 
-Sale path already: Treasury fee OUTFLOW with commission, **no** OpEx BANK_FEES.
-
----
-
-## Money source policy
-
-Frozen sources for cash-linked registration:
-
-- `CASH`
-- `BANK`
-- `CESAR`
-
-Not supported:
-
-- `CRYPTO`
-- transfers
-- multi-source splits
-
-Stored on `OperatingExpense.sourceAccount` (`TreasuryAccount?`).
-Legacy / import rows may have `sourceAccount = null` and no Treasury OUTFLOW (read-only compatibility).
+No generic `CASH_OUT` intent.
 
 ---
 
-## Currency / date policy
+## Confirmation lifecycle
 
-| Topic | Policy |
+1. Preview with deterministic effects (Gastos +, Treasury −, utilidad neta −, Capital unchanged)
+2. Primary CTA: **Confirmar gasto** → `POST /api/ai/action-runs/:id/confirm` only
+3. Never `POST /expenses` from Assistant
+4. Double-tap disabled while pending; network retry = same ActionRun
+
+---
+
+## Idempotency + recovery
+
+Marker: `ai-action-run:<actionRunId>` on `OperatingExpense` (server-derived only).
+
+Post-commit crash (`EXECUTING` + domain committed):
+
+1. Lookup expense by tenant + key
+2. Replay via `ExpenseRegistrationService.register()` (compatible payload)
+3. Verify Treasury provenance `operating-expense:<id>:outflow`
+4. Missing OUTFLOW → **invariant failure** (no silent success, no second movement)
+5. Finalize ActionRun `COMPLETED` + true success receipt
+
+---
+
+## BusinessActionResult / receipt
+
+```
+executionState: EXECUTED
+affectedEntities: OPERATING_EXPENSE CREATED + TREASURY_ENTRY OUTFLOW
+receipt: expenseId, amount, currency, category, concept, sourceAccount, expenseDate
+rollbackPossible: false  // conversational reverse not implemented; correct in Gastos
+```
+
+---
+
+## Capital semantics (unchanged)
+
+| Surface | Profit definition |
 |---|---|
-| Currency V1 | **MXN only** |
-| USD | rejected until a canonical FX policy exists |
-| Canonical amount | `OperatingExpense.amount` (+ `currency`) |
-| Treasury | `amount` + `amountMxn` (MXN: equal); `commission = null` |
-| Date omitted (manual) | UI defaults to today; API requires `expenseDate` |
-| Date omitted (future AI) | may default to today **only if preview shows the date** |
-| Relative phrases | use existing deterministic timezone normalization (future planner) |
+| Dashboard / Analytics / OI | **Net** of Gastos |
+| Capital | Historical **gross** trading profit (no OpEx) |
+
+Expense preview/receipt must not describe Capital as net business profit.
 
 ---
 
-## Atomicity
+## Correction
 
-`ExpenseRegistrationService.register()` uses one Prisma `$transaction`:
-
-1. create `OperatingExpense`
-2. create Treasury OUTFLOW via `TreasuryService.createFromOperatingExpense`
-
-Forbidden states:
-
-- expense without OUTFLOW
-- OUTFLOW without expense
-
-`loadResult` refuses incomplete replay.
+Manual: Gastos soft-delete reverse (canonical 15A).
+Receipt links: Ver gastos / Corregir en Gastos.
 
 ---
 
-## Durable idempotency
+## Permission
 
-Schema (additive, **not migrated in prod by this commit**):
-
-```
-OperatingExpense.registerIdempotencyKey String?
-@@unique([tenantId, registerIdempotencyKey])
-```
-
-Also:
-
-- `currency` default `MXN`
-- `sourceAccount` nullable
-- `deletedAt` soft-delete
-
-Future AI marker:
-
-```
-registerIdempotencyKey = ai-action-run:<actionRunId>
-```
-
-Replay: compatible payload → same expense + same Treasury; conflicting payload → `ConflictException`.
+Same V1 as manual Gastos: JWT + tenant membership.
+Future granular expense permission = separate hardening.
 
 ---
 
-## Treasury provenance
-
-No new Treasury FK. Use existing `TreasuryEntry.provenanceKey`:
-
-```
-operating-expense:<expenseId>:outflow
-```
-
-Unique per tenant. Soft-delete on reverse. Replay must not create a second OUTFLOW.
-
----
-
-## Post-commit recovery (design for 15B)
-
-If ActionRun reaches EXECUTING after domain commit but runtime completion fails:
-
-1. Lookup `OperatingExpense` by `tenantId` + `registerIdempotencyKey = ai-action-run:<actionRunId>`
-2. Verify payload compatibility
-3. Verify Treasury by provenance key
-4. Reconstruct receipt
-5. Finalize ActionRun `COMPLETED`
-
-Do **not** use Treasury presence alone as proof without the expense marker.
-
----
-
-## Correction / reversal
-
-| Question | 15A behavior |
-|---|---|
-| Edit in place? | Notes only for cash-linked rows |
-| Soft-delete? | Yes (`deletedAt`) |
-| Reverse Treasury? | Yes, atomic with expense soft-delete |
-| Conversational reversal? | Not promised — “Corregir en Gastos” |
-| Analytics | Soft-deleted expenses excluded (`deletedAt: null`) |
-
----
-
-## Permissions
-
-Manual mutations: `JwtAuthGuard` only (any authenticated tenant user).
-Future AI must inherit the **same or stricter** policy. No role elevation via Assistant.
-
----
-
-## Future AI intent / preview contract
-
-Entities (planned):
-
-```
-{
-  amount,          // required
-  currency,        // MXN V1
-  category,        // allowlisted enum or clarify
-  description,     // → notes
-  source,          // CASH|BANK|CESAR or clarify
-  expenseDate      // optional → today if policy + preview show it
-}
-```
-
-Preview (Spanish):
-
-```
-Voy a registrar este gasto:
-Concepto / Categoría / Monto / Pagado desde / Fecha
-Efectos: Gastos +X · <Fuente> −X
-[Confirmar gasto] [Editar] [Cancelar]
-```
-
----
-
-## Profit / liquidity
-
-For an 18k BANK expense:
-
-| Surface | Effect |
-|---|---|
-| OperatingExpense | +18k |
-| Treasury BANK | −18k OUTFLOW once |
-| Dashboard / Analytics monthly net profit | −18k once (includes OpEx) |
-| OI `GET_MONTHLY_PROFIT` | same Analytics path (−18k) |
-| Dashboard liquidity BANK | −18k once |
-| Bank commission P&L | **unchanged** (`commission` null) |
-| Capital `totalBusinessProfit` | **unchanged** (excludes OpEx — see gate below) |
-
----
-
-## Capital / OpEx financial gate (OPTION C)
-
-### Exact Capital formulas (current code)
-
-```
-totalBusinessProfit = Σ CLOSED_WON revenue − Σ COGS − Σ Treasury BANK commission > 0
-capitalNeto         = totalCapitalContributed + totalBusinessProfit − totalDistributionsPaid
-profitEntitlement   = totalBusinessProfit × ownershipPercent / 100
-pendingProfit       = profitEntitlement − distributionsPaid
-ROI                 = (capitalNeto − contributed) / contributed   (UI; requires contributions)
-```
-
-Annual month `businessProfit` uses the same definition (revenue − COGS − bank fees; **no OpEx**).
-
-Analytics / Dashboard / OI monthly net profit:
-
-```
-netProfit = sales − COGS − bank commissions − OperatingExpense(deletedAt null)
-```
-
-### Does a normal OpEx reduce…?
-
-| Metric | Reduces? |
-|---|---|
-| 1. monthly net profit (Analytics/Dashboard/OI) | **Yes** |
-| 2. Capital `totalBusinessProfit` | **No** |
-| 3. `capitalNeto` | **No** (via profit) |
-| 4. investor profit entitlement | **No** |
-| 5. pending partner profit | **No** |
-| 6. ROI (derived from capitalNeto) | **No** |
-| 7. annual/monthly partner Capital table | **No** |
-
-### Intended business semantics
-
-Workbook model (`docs/migrations/MASTER_WORKBOOK_ANALYSIS.md`):
-
-> Net monthly profit ≈ sum(utilidades) − **gastos del mes** − bank commissions
-> Split net profit 75% Cesar / 25% Edgar
-
-So **true business profit should include OpEx** before partner entitlement.
-
-Capital today is therefore a **financial inconsistency** relative to workbook + Analytics labels — not an intentionally documented “gross trading profit” product (until labeled).
-
-### Historical impact (Wrist Caviar production, read-only audit)
-
-| Item | Value |
-|---|---|
-| OperatingExpense rows | 287 |
-| OpEx sum | **MXN 3,083,674.74** (2025: 703,467 · 2026: 2,380,207.74) |
-| Residual OpEx BANK_FEES | 0 |
-| Distributions already paid | **MXN 2,732,961.16** (13 rows) |
-| Ownership | CESAR 75% / EDGAR 25% |
-
-If Capital started subtracting OpEx without reconciliation:
-
-- `totalBusinessProfit` ↓ 3,083,674.74
-- CESAR entitlement ↓ ~2,312,756
-- EDGAR entitlement ↓ ~770,919
-- Prior distributions would no longer reconcile to the new entitlement base
-
-**Decision: OPTION C — do not change Capital formulas in 15A.**
-
-UI clarification (no formula change): Capital labels the figure **“Utilidad bruta acumulada”** with:
-
-> Capital refleja utilidad bruta de trading histórica.
-> La utilidad neta operativa del Dashboard también descuenta Gastos.
-
-**Business decision still required before treating Capital as partner-net-profit** — tracked as future work item **`CAPITAL_OPEX_RECONCILIATION`** (below). Do not implement a cutover in 15A.
-
----
-
-## CAPITAL_OPEX_RECONCILIATION (future — not in 15A)
-
-Explicit future product/accounting decision. **Do not choose or implement in Commit 15A.**
-
-Possible approaches (non-exhaustive):
-
-1. Preserve historical Capital methodology permanently (gross trading profit forever).
-2. Introduce an effective-date cutover (new periods net of OpEx; history frozen).
-3. Reconcile prior years with explicit partner adjustments.
-4. Migrate Capital to net operating profit only after a formal reconciliation.
-
-Until that decision ships, Capital formulas stay frozen as gross trading profit.
-
----
-
-## Historical / legacy compatibility
-
-- No rewrite of imported expenses
-- `currency` DEFAULT `MXN` — valid for Wrist Caviar (business books are MXN; prior UI “USD” label was incorrect display, not stored FX)
-- `sourceAccount` nullable — legacy rows have **no** invented CASH/BANK/CESAR source
-- `registerIdempotencyKey` nullable — no backfill
-- `deletedAt` nullable — soft-delete only going forward
-- No Treasury backfill for legacy OpEx-only rows
-- Legacy delete: soft-delete OpEx only; **never invents** a Treasury reversal
-
----
-
-## Reversal semantics
-
-Canonical paid expense:
-
-1. Soft-delete `OperatingExpense` (`deletedAt`)
-2. Soft-delete Treasury OUTFLOW by provenance `operating-expense:<id>:outflow`
-
-Not a compensating INFLOW. Retry is idempotent (`alreadyReversed`).
-
-Liquidity and Analytics restore once OpEx + OUTFLOW are soft-deleted.
-
----
-
-## Category / Rent policy (V1)
-
-No `RENT` enum. Future AI must **not** silently invent enums.
-
-Preferred V1:
-
-- clarify category when uncertain, **or**
-- map to `OTHER` only when preview surfaces **Categoría: Otro** + **Concepto: Renta oficina**
-
-Do not hide “renta” inside free-text without showing OTHER.
-
----
-
-## Schema gate (blocker before 15B)
-
-Migration file (local only — **do not deploy migrate** until approved):
-
-`prisma/migrations/20260808060000_operating_expense_register_idempotency/migration.sql`
-
-Additions:
-
-| Column | Nullability | Default |
-|---|---|---|
-| `currency` | NOT NULL | `'MXN'` |
-| `sourceAccount` | NULL | — |
-| `registerIdempotencyKey` | NULL | — |
-| `deletedAt` | NULL | — |
-
-Indexes: unique `(tenantId, registerIdempotencyKey)`; index `(tenantId, deletedAt)`.
-
-Additive only. No destructive SQL. No historical amount/source rewrite.
-
-Before AI execution:
-
-1. Apply migration to production manually
-2. Verify unique constraint live
-3. Capital/OpEx reconciliation decision (or accept labeled divergence)
-4. WRITE binding + DEMO QA + WC hash proof
-
----
-
-## Executable writes after 15A
+## Executable writes after 15B
 
 | Capability | Status |
 |---|---|
 | `REGISTER_SALE` | WRITE bound |
 | `REGISTER_RECEIVABLE_PAYMENT` | WRITE bound |
-| `REGISTER_EXPENSE` | **unbound** |
+| `REGISTER_EXPENSE` | **WRITE bound** |
 | `REGISTER_PURCHASE` | unbound |
 | `REGISTER_SETTLEMENT` | unbound |
 | `REGISTER_CRYPTO_*` | unbound |
 
 ---
 
-## Exact blocker before Commit 15B
+## Rollout
 
-1. Production migrate of OperatingExpense idempotency / source / soft-delete columns
-2. **Capital vs OpEx business decision** (reconcile historical partner profit **or** permanently accept “utilidad bruta” definition)
-3. WRITE binding + confirmation freshness + recovery → `ExpenseRegistrationService.register()`
-4. Planner category allowlist + source clarification
-5. DEMO QA matrix + Wrist Caviar hash proof
+1. Merge 15B after quality gates (no schema migrate)
+2. DEMO QA: CASH/BANK/CESAR expense, rent/OTHER, missing source, USD reject, bank fee unsupported, double confirm, recovery
+3. WC smoke: one small DEMO-like expense path; Capital formula unchanged
+4. Monitor ActionRun COMPLETED + OperatingExpense idempotency uniqueness
 
-Do **not** bind AI until (1) is live and domain QA is green.
+Future: `CAPITAL_OPEX_RECONCILIATION` backlog if partners want OpEx in Capital.

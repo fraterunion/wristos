@@ -1,30 +1,43 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { WriteCapabilityBindingRegistry } from '../write-capability-binding-registry';
+import { RegisterExpenseWriteBinding } from '../write/register-expense.binding';
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
 
-describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly two WRITE bindings: REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT', () => {
-    const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
-      capability: 'REGISTER_SALE',
+function buildRegistry() {
+  const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
+    capability: 'REGISTER_SALE',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'register_sale_canonical@1.0.0',
+  });
+  const payment = Object.assign(
+    new RegisterReceivablePaymentWriteBinding({} as never, {} as never),
+    {
+      capability: 'REGISTER_RECEIVABLE_PAYMENT',
       version: '1.0.0',
       mode: 'WRITE',
-      bindingName: 'register_sale_canonical@1.0.0',
-    });
-    const payment = Object.assign(
-      new RegisterReceivablePaymentWriteBinding({} as never, {} as never),
-      {
-        capability: 'REGISTER_RECEIVABLE_PAYMENT',
-        version: '1.0.0',
-        mode: 'WRITE',
-        bindingName: 'register_receivable_payment_canonical@1.0.0',
-      },
-    );
-    const registry = new WriteCapabilityBindingRegistry(sale, payment);
-    registry.onModuleInit();
+      bindingName: 'register_receivable_payment_canonical@1.0.0',
+    },
+  );
+  const expense = Object.assign(new RegisterExpenseWriteBinding({} as never, {} as never), {
+    capability: 'REGISTER_EXPENSE',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'register_expense_canonical@1.0.0',
+  });
+  const registry = new WriteCapabilityBindingRegistry(sale, payment, expense);
+  registry.onModuleInit();
+  return registry;
+}
+
+describe('WriteCapabilityBindingRegistry', () => {
+  it('contains exactly three WRITE bindings: SALE + RECEIVABLE_PAYMENT + EXPENSE', () => {
+    const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(2);
+    expect(bindings).toHaveLength(3);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
+      'REGISTER_EXPENSE',
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_SALE',
     ]);
@@ -34,11 +47,16 @@ describe('WriteCapabilityBindingRegistry', () => {
 
   it.each([
     'REGISTER_PURCHASE',
-    'REGISTER_EXPENSE',
     'REGISTER_SETTLEMENT',
     'REGISTER_CRYPTO_POSITION',
     'REGISTER_CRYPTO_PRICE',
   ])('keeps %s explicitly unbound for WRITE', (capability) => {
+    const registry = buildRegistry();
+    expect(registry.hasBinding(capability)).toBe(false);
+    expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
+  });
+
+  it('rejects construction when REGISTER_EXPENSE is missing', () => {
     const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
       capability: 'REGISTER_SALE',
       mode: 'WRITE',
@@ -50,26 +68,15 @@ describe('WriteCapabilityBindingRegistry', () => {
         mode: 'WRITE',
       },
     );
-    const registry = new WriteCapabilityBindingRegistry(sale, payment);
-    registry.onModuleInit();
-    expect(registry.hasBinding(capability)).toBe(false);
-    expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
-  });
-
-  it('rejects construction when REGISTER_RECEIVABLE_PAYMENT is missing', () => {
-    const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
-      capability: 'REGISTER_SALE',
-      mode: 'WRITE',
-    });
     const wrong = {
-      capability: 'REGISTER_EXPENSE',
+      capability: 'REGISTER_PURCHASE',
       version: '1.0.0',
       mode: 'WRITE',
       bindingName: 'x',
     } as never;
-    const registry = new WriteCapabilityBindingRegistry(sale, wrong);
+    const registry = new WriteCapabilityBindingRegistry(sale, payment, wrong);
     expect(() => registry.onModuleInit()).toThrow(
-      /exactly REGISTER_SALE and REGISTER_RECEIVABLE_PAYMENT/,
+      /exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, and REGISTER_EXPENSE/,
     );
   });
 });
@@ -203,21 +210,76 @@ describe('RegisterReceivablePaymentWriteBinding mapInput', () => {
   });
 });
 
+describe('RegisterExpenseWriteBinding mapInput', () => {
+  const binding = new RegisterExpenseWriteBinding({} as never, {} as never);
+  const context = {
+    tenantId: 't1',
+    userId: 'u1',
+    permissions: [],
+    conversationId: 'c1',
+    workspaceId: null,
+    actionRunId: 'run-exp-1',
+    requestId: 'r1',
+    locale: 'es-MX',
+    timezone: 'UTC',
+    now: new Date('2026-08-08T00:00:00Z'),
+    planFingerprint: 'c'.repeat(64),
+  };
+
+  it('derives registerIdempotencyKey from actionRunId only and maps gasoline cash', () => {
+    const input = binding.mapInput(
+      {
+        stepId: 's1',
+        capability: 'REGISTER_EXPENSE',
+        arguments: {
+          amount: '2500',
+          currency: 'MXN',
+          category: 'GASOLINE',
+          source: 'CASH',
+          expenseDate: '2026-08-08',
+          concept: 'Gasolina',
+          registerIdempotencyKey: 'forged',
+        },
+        dependsOn: [],
+        estimatedEffects: [],
+        reversibility: 'NONE',
+      },
+      context,
+    );
+    expect(input.registerIdempotencyKey).toBe('ai-action-run:run-exp-1');
+    expect(input.category).toBe('GASOLINE');
+    expect(input.source).toBe('CASH');
+    expect(input.amount).toBe(2500);
+    expect(input.currency).toBe('MXN');
+  });
+
+  it('maps rent concept to OTHER via resolver', () => {
+    const input = binding.mapInput(
+      {
+        stepId: 's1',
+        capability: 'REGISTER_EXPENSE',
+        arguments: {
+          amount: 18000,
+          currency: 'MXN',
+          source: 'BANK',
+          expenseDate: '2026-08-08',
+          concept: 'renta',
+        },
+        dependsOn: [],
+        estimatedEffects: [],
+        reversibility: 'NONE',
+      },
+      context,
+    );
+    expect(input.category).toBe('OTHER');
+    expect(input.concept).toMatch(/renta/i);
+    expect(input.source).toBe('BANK');
+  });
+});
+
 describe('WritePlanRunner fail-closed unbound', () => {
   it('documents that unbound writes throw Forbidden via registry', () => {
-    const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
-      capability: 'REGISTER_SALE',
-      mode: 'WRITE',
-    });
-    const payment = Object.assign(
-      new RegisterReceivablePaymentWriteBinding({} as never, {} as never),
-      {
-        capability: 'REGISTER_RECEIVABLE_PAYMENT',
-        mode: 'WRITE',
-      },
-    );
-    const registry = new WriteCapabilityBindingRegistry(sale, payment);
-    registry.onModuleInit();
+    const registry = buildRegistry();
     expect(() => registry.getBinding('REGISTER_PURCHASE')).toThrow(NotFoundException);
     expect(() => {
       throw new ForbiddenException('This write capability is not bound for conversational execution');

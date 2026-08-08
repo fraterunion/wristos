@@ -3,6 +3,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
 import { CrmModule } from '../crm/crm.module';
 import { CuentasModule } from '../cuentas/cuentas.module';
 import { DealsModule } from '../deals/deals.module';
+import { ExpensesModule } from '../expenses/expenses.module';
 import { HistoryModule } from '../history/history.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { AIController } from './ai.controller';
@@ -20,6 +21,7 @@ import { CapabilityBindingRegistry } from './bindings/capability-binding-registr
 import { CapabilityBindingService } from './bindings/capability-binding.service';
 import { ReadPlanRunner } from './bindings/read-plan-runner';
 import { ReceivablePaymentEntityResolver } from './bindings/write/receivable-payment-entity-resolver.service';
+import { RegisterExpenseWriteBinding } from './bindings/write/register-expense.binding';
 import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './bindings/write/register-sale.binding';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
@@ -36,7 +38,15 @@ import { WorkingContextService } from './context/working-context.service';
 import { OperationalIntelligenceService } from './operational-intelligence/operational-intelligence.service';
 
 @Module({
-  imports: [AnalyticsModule, InventoryModule, CrmModule, CuentasModule, HistoryModule, DealsModule],
+  imports: [
+    AnalyticsModule,
+    InventoryModule,
+    CrmModule,
+    CuentasModule,
+    HistoryModule,
+    DealsModule,
+    ExpensesModule,
+  ],
   controllers: [AIController],
   providers: [
     AuditService,
@@ -54,6 +64,7 @@ import { OperationalIntelligenceService } from './operational-intelligence/opera
     ReadPlanRunner,
     RegisterSaleWriteBinding,
     RegisterReceivablePaymentWriteBinding,
+    RegisterExpenseWriteBinding,
     ReceivablePaymentEntityResolver,
     WriteCapabilityBindingRegistry,
     WritePlanRunner,
