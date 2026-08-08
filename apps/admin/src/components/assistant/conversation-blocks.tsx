@@ -172,7 +172,8 @@ export function ConversationBlocks({
                 onConfirm={
                   (block.ctaKind === 'CONFIRM_SALE' ||
                     block.ctaKind === 'CONFIRM_PAYMENT' ||
-                    block.ctaKind === 'CONFIRM_EXPENSE') &&
+                    block.ctaKind === 'CONFIRM_EXPENSE' ||
+                    block.ctaKind === 'CONFIRM_PURCHASE') &&
                   block.actionRunId &&
                   block.planFingerprint &&
                   onConfirmSale

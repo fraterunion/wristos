@@ -117,6 +117,26 @@ function isCanonicalExpenseSuccess(
   return true;
 }
 
+function isCanonicalPurchaseSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'REGISTER_PURCHASE') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.watchId !== 'string' || !receipt.watchId) return false;
+  if (typeof receipt.paymentMode !== 'string' || !receipt.paymentMode) return false;
+  if (typeof receipt.costMxn !== 'string' && typeof receipt.costMxn !== 'number') return false;
+  if (payload.executableWrite !== true && payload.capability !== 'REGISTER_PURCHASE') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
 function isCanonicalExecutableWriteSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
@@ -124,7 +144,8 @@ function isCanonicalExecutableWriteSuccess(
   return (
     isCanonicalRegisterSaleSuccess(intent, response) ||
     isCanonicalReceivablePaymentSuccess(intent, response) ||
-    isCanonicalExpenseSuccess(intent, response)
+    isCanonicalExpenseSuccess(intent, response) ||
+    isCanonicalPurchaseSuccess(intent, response)
   );
 }
 
@@ -162,7 +183,8 @@ export function validateAssistantResponse(
         message:
           intent === 'REGISTER_SALE' ||
           intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
-          intent === 'REGISTER_EXPENSE'
+          intent === 'REGISTER_EXPENSE' ||
+          intent === 'REGISTER_PURCHASE'
             ? 'No se pudo confirmar el resultado de forma segura.'
             : 'La ejecución conversacional de esta acción todavía no está habilitada.',
         manualHref: manualRoutes[intent],

@@ -93,7 +93,7 @@ export class AIController {
   async confirmActionRun(@CurrentUser() user: CurrentUserType, @Param('id') id: string, @Body() dto: ConfirmActionRunDto) {
     const run = await this.runtime.findOne(user.tenantId, id);
     if (this.writeRegistry.hasBinding(run.intent)) {
-      // Bound WRITE (REGISTER_SALE | REGISTER_RECEIVABLE_PAYMENT | REGISTER_EXPENSE): atomic confirm + canonical execution.
+      // Bound WRITE (REGISTER_SALE | REGISTER_RECEIVABLE_PAYMENT | REGISTER_EXPENSE | REGISTER_PURCHASE): atomic confirm + canonical execution.
       // Client never sets EXECUTING/COMPLETED — server owns the lifecycle.
       return this.writeRunner.confirmAndExecute({
         tenantId: user.tenantId,

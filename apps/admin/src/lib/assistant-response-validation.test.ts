@@ -115,6 +115,35 @@ describe('assistant response safety validation', () => {
     assert.equal(result.kind, 'VALID');
   });
 
+  it('accepts canonical REGISTER_PURCHASE SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. La compra quedó registrada.',
+      executableWrite: true,
+      capability: 'REGISTER_PURCHASE',
+      receipt: {
+        watchId: 'watch-1',
+        paymentMode: 'PAID',
+        costMxn: '280000.00',
+      },
+    });
+    const result = validateAssistantResponse('REGISTER_PURCHASE', candidate);
+    assert.equal(result.kind, 'VALID');
+  });
+
+  it('rejects malformed REGISTER_PURCHASE SUCCESS_RECEIPT', () => {
+    assert.equal(
+      validateAssistantResponse(
+        'REGISTER_PURCHASE',
+        response('COMPLETED', 'SUCCESS_RECEIPT', {
+          executableWrite: true,
+          capability: 'REGISTER_PURCHASE',
+          receipt: { paymentMode: 'PAID' },
+        }),
+      ).kind,
+      'FAIL_CLOSED',
+    );
+  });
+
   it('rejects malformed REGISTER_EXPENSE SUCCESS_RECEIPT', () => {
     const result = validateAssistantResponse(
       'REGISTER_EXPENSE',

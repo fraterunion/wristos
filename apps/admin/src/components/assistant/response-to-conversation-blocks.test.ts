@@ -205,9 +205,30 @@ describe('responseToConversationBlocks', () => {
     assert.equal(preview.intro, 'Voy a registrar este gasto:');
   });
 
+  it('maps executable REGISTER_PURCHASE preview to Confirmar compra CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      planFingerprint: 'd'.repeat(64),
+      preview: {
+        title: 'Register Purchase',
+        fields: [
+          { label: 'Reloj', value: 'Rolex GMT-Master II Batman' },
+          { label: 'Costo', value: '$280,000 MXN' },
+        ],
+        warnings: [],
+        estimatedEffects: [{ area: 'Inventario', description: '+1 reloj' }],
+      },
+    });
+    (candidate as { actionRunId?: string }).actionRunId = 'run-purchase';
+    const blocks = responseToConversationBlocks('REGISTER_PURCHASE', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
+    assert.equal(preview.ctaLabel, 'Confirmar compra');
+    assert.equal(preview.ctaKind, 'CONFIRM_PURCHASE');
+    assert.equal(preview.intro, 'Voy a registrar esta compra:');
+  });
+
   it('every unbound write intent has a truthful non-"Confirmar" CTA label', () => {
     const intents = [
-      'REGISTER_PURCHASE',
       'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
     ] as const;
     for (const intent of intents) {
@@ -216,6 +237,7 @@ describe('responseToConversationBlocks', () => {
       assert.notEqual(label, 'Confirmar venta');
       assert.notEqual(label, 'Confirmar pago');
       assert.notEqual(label, 'Confirmar gasto');
+      assert.notEqual(label, 'Confirmar compra');
       assert.ok(label.length > 0);
     }
   });

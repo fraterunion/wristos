@@ -199,33 +199,132 @@ function classify(text: string, currentDate: string): FakeOutput {
   if (/^[a-záéíóúñ]+ me pag[oó]\.?$/.test(t)) {
     return { intent: 'REGISTER_RECEIVABLE_PAYMENT', entities: { customerQuery: t.split(' ')[0] }, missingEntities: ['accountId', 'amount', 'destination'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
-  const purchaseMatch = t.match(/compr[eé] ([a-z0-9 ]+?) (?:por |en )?([\d.,]+ ?(mil|k)?)( d[oó]lares)?/);
-  if (purchaseMatch || /compr[eé] (un |una )?(rolex|ap|patek|watch|reloj)/.test(t)) {
-    if (purchaseMatch) {
-      return {
-        intent: 'REGISTER_PURCHASE',
-        entities: {
-          watchQuery: purchaseMatch[1].trim(),
-          cost: String(parseFakeAmount(purchaseMatch[2])),
-          currency: purchaseMatch[4] ? 'USD' : 'MXN',
-        },
-        missingEntities: [],
-        ambiguities: [],
-        confidence: 'HIGH',
-        language: 'es',
-      };
-    }
+  const purchaseMatch = t.match(
+    /compr[eé] (?:un |una )?(?:reloj )?([a-z0-9áéíóúñ .\-]+?) (?:a |de )?([a-záéíóúñ ]+ )?por ([\d.,]+ ?(mil|k)?)( d[oó]lares)?/,
+  );
+  const purchaseMatchAlt = t.match(
+    /compr[eé] (?:un |una )?([a-z0-9áéíóúñ .\-]+?) (?:por |en )([\d.,]+ ?(mil|k)?)( d[oó]lares)?/,
+  );
+  // Non-inventory "compré …" (gasolina, etc.) is EXPENSE — not REGISTER_PURCHASE.
+  if (
+    /compr[eé]\s+(gasolina|estacionamiento|comida|almuerzo|cena|vuelo|boleto|renta|publicidad|peaje|toll)/.test(
+      t,
+    )
+  ) {
+    const concept =
+      t.match(
+        /compr[eé]\s+(gasolina|estacionamiento|comida|almuerzo|cena|vuelo|boleto|renta|publicidad|peaje)/,
+      )?.[1] ?? 'gasto';
     return {
-      intent: 'REGISTER_PURCHASE',
-      entities: { watchQuery: t.replace(/^compr[eé]\s+/, '') },
-      missingEntities: ['cost', 'currency'],
+      intent: 'REGISTER_EXPENSE',
+      entities: { concept, currency: 'MXN' },
+      missingEntities: ['amount', 'category', 'source'],
       ambiguities: [],
       confidence: 'MEDIUM',
       language: 'es',
     };
   }
-  if (/^compr[eé] ([a-z0-9 ]+)\.?$/.test(t)) {
-    return { intent: 'REGISTER_PURCHASE', entities: { watchQuery: t.replace(/^compr[eé] /, '').replace(/\.$/, '') }, missingEntities: ['cost', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
+  if (/agrega (este |el )?reloj|al cat[aá]logo|solo (al )?inventario/.test(t)) {
+    return {
+      intent: 'UNKNOWN',
+      entities: {},
+      missingEntities: [],
+      ambiguities: [
+        {
+          field: 'intent',
+          reason: 'inventory-only catalog add is not REGISTER_PURCHASE',
+        },
+      ],
+      confidence: 'LOW',
+      language: 'es',
+    };
+  }
+  if (
+    purchaseMatch ||
+    purchaseMatchAlt ||
+    /compr[eé] (un |una )?(rolex|ap|patek|batman|daytona|yacht|submariner|watch|reloj|nautilus|royal oak)/.test(
+      t,
+    )
+  ) {
+    // Crypto inventory language stays crypto — not inventory purchase
+    if (/\b(usdt|crypto|bitcoin|btc)\b/.test(t)) {
+      // fall through to crypto matcher below
+    } else {
+      const m = purchaseMatch ?? purchaseMatchAlt;
+      const entities: Record<string, string> = {};
+      if (m) {
+        entities.watchQuery = (m[1] ?? '').trim();
+        if (purchaseMatch && purchaseMatch[2]) {
+          entities.sellerQuery = purchaseMatch[2].trim().replace(/^a |^de /i, '');
+          entities.sellerCounterpartyName = entities.sellerQuery;
+        }
+        const amountGroup = purchaseMatch ? purchaseMatch[3] : purchaseMatchAlt?.[2];
+        const usdGroup = purchaseMatch ? purchaseMatch[5] : purchaseMatchAlt?.[4];
+        if (amountGroup) entities.cost = String(parseFakeAmount(amountGroup));
+        entities.currency = usdGroup ? 'USD' : 'MXN';
+      } else {
+        entities.watchQuery = t.replace(/^compr[eé]\s+/, '').replace(/\.$/, '');
+      }
+
+      if (/a cr[eé]dito|qued[oó] pendiente|no (le )?pagu[eé]/.test(t)) {
+        entities.paymentMode = 'CREDIT';
+      } else if (/pagad[oa]|contado|completo|lo pagu[eé]|ya qued[oó] pagad/.test(t)) {
+        entities.paymentMode = 'PAID';
+      } else if (/le di |pagu[eé] .* y |quedaron|parcial/.test(t)) {
+        entities.paymentMode = 'PARTIAL';
+        const paidM = t.match(/(?:le di |pagu[eé] )([\d.,]+ ?(mil|k)?)/);
+        if (paidM) entities.initialPaymentAmount = String(parseFakeAmount(paidM[1]));
+      }
+
+      if (/efectivo|cash/.test(t)) entities.sourceAccount = 'CASH';
+      else if (/banco|transfer/.test(t)) entities.sourceAccount = 'BANK';
+      else if (/c[eé]sar/.test(t)) entities.sourceAccount = 'CESAR';
+
+      if (/todav[ií]a no|no (me )?llega|en camino|en tr[aá]nsito/.test(t)) {
+        entities.status = 'IN_TRANSIT';
+      } else if (/ya (lo )?tengo|ya lleg[oó]/.test(t)) {
+        entities.status = 'AVAILABLE';
+      }
+
+      const missing: string[] = [];
+      if (!entities.cost) missing.push('cost');
+      if (!entities.paymentMode) missing.push('paymentMode');
+      if (
+        (entities.paymentMode === 'PAID' || entities.paymentMode === 'PARTIAL') &&
+        !entities.sourceAccount
+      ) {
+        missing.push('sourceAccount');
+      }
+      if (
+        (entities.paymentMode === 'CREDIT' || entities.paymentMode === 'PARTIAL') &&
+        !entities.sellerQuery &&
+        !entities.sellerCounterpartyName
+      ) {
+        missing.push('seller');
+      }
+
+      return {
+        intent: 'REGISTER_PURCHASE',
+        entities,
+        missingEntities: missing,
+        ambiguities: [],
+        confidence: entities.cost ? 'HIGH' : 'MEDIUM',
+        language: 'es',
+      };
+    }
+  }
+  if (
+    /^compr[eé] ([a-z0-9 ]+)\.?$/.test(t) &&
+    !/\b(usdt|crypto|bitcoin|gasolina|renta|estacionamiento)\b/.test(t)
+  ) {
+    return {
+      intent: 'REGISTER_PURCHASE',
+      entities: { watchQuery: t.replace(/^compr[eé] /, '').replace(/\.$/, '') },
+      missingEntities: ['cost', 'paymentMode'],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
   }
   if (/compr[eé].*\b(usdt|crypto|bitcoin)\b|\bagrega ([\d.,]+) usdt/.test(t)) {
     const m = t.match(/([\d.,]+)\s*usdt/) ?? t.match(/agrega ([\d.,]+) usdt/);
