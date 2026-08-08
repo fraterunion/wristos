@@ -165,7 +165,15 @@ describe('PlannerService', () => {
   });
 
   it('emits deterministic overpayment and duplicate-serial warnings', () => {
-    expect(planner.plan({ intent: 'REGISTER_RECEIVABLE_PAYMENT', entities: { accountId: 'a1', amount: 11, destination: 'BANK', outstandingAmount: 10 } }, context).warnings[0]?.code).toBe('AMOUNT_EXCEEDS_OUTSTANDING');
+    const overpay = planner.plan(
+      {
+        intent: 'REGISTER_RECEIVABLE_PAYMENT',
+        entities: { accountId: 'a1', amount: 11, destination: 'BANK', outstandingAmount: 10 },
+      },
+      context,
+    );
+    expect(overpay.state).toBe('NEEDS_CLARIFICATION');
+    expect(overpay.missingEntities.some((m) => m.entity === 'amount')).toBe(true);
     expect(planner.plan({ intent: 'REGISTER_PURCHASE', entities: { watch: 'Rolex', cost: '1.00', currency: 'MXN', duplicateSerial: true } }, context).warnings[0]?.code).toBe('DUPLICATE_SERIAL');
   });
 });

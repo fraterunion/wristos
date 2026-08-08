@@ -143,8 +143,15 @@ export function intentToCandidateEntityType(intent: string | undefined): Context
 export function extractPresentedCandidatesFromEntityList(payload: {
   intent: string;
   data: unknown;
+  entityType?: unknown;
 }): { type: ContextEntityType; candidates: PresentedCandidate[] } | null {
-  const type = intentToCandidateEntityType(payload.intent);
+  const explicitType =
+    payload.entityType === 'CLIENT' ||
+    payload.entityType === 'WATCH' ||
+    payload.entityType === 'ACCOUNT_ENTRY'
+      ? payload.entityType
+      : null;
+  const type = explicitType ?? intentToCandidateEntityType(payload.intent);
   if (!type) return null;
   if (!payload.data || typeof payload.data !== 'object') return null;
   const data = payload.data as Record<string, unknown>;
@@ -175,6 +182,7 @@ export function extractPresentedCandidatesFromEntityList(payload: {
       (typeof row.clientLabel === 'string' && row.clientLabel) ||
       (typeof row.label === 'string' && row.label) ||
       (typeof row.displayName === 'string' && row.displayName) ||
+      (typeof row.concept === 'string' && row.concept) ||
       [row.brand, row.model, row.reference].filter((v) => typeof v === 'string').join(' ').trim() ||
       id;
     candidates.push({ id, label: String(label).slice(0, 160), ordinal: candidates.length + 1 });

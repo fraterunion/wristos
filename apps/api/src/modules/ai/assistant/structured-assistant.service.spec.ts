@@ -8,7 +8,21 @@ describe('StructuredAssistantService', () => {
   const persistence = { prepare: jest.fn(), checkpointPlan: jest.fn(), complete: jest.fn(), currentWorkspaceVersion: jest.fn() };
   const planner = { plan: jest.fn() };
   const readRunner = { run: jest.fn() };
-  const service = new StructuredAssistantService(requests as never, persistence as never, planner as never, readRunner as never);
+  const receivablePaymentResolver = {
+    resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
+      entities,
+      clarify: null,
+      uniqueReceivableSelected: false,
+      uniquePayableSelected: false,
+    })),
+  };
+  const service = new StructuredAssistantService(
+    requests as never,
+    persistence as never,
+    planner as never,
+    readRunner as never,
+    receivablePaymentResolver as never,
+  );
   const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] };
   const prepared = { conversationId: 'c1', workspaceId: 'w1', workspaceVersion: 1 };
   const basePlan = { businessAction: 'GET_LIQUIDITY', state: 'READY_FOR_CONFIRMATION', missingEntities: [], clarificationQuestions: [], warnings: [], confirmationTier: 'NONE', executionSteps: [{ stepId: 's1', capability: 'GET_LIQUIDITY', arguments: {}, dependsOn: [], estimatedEffects: [], reversibility: 'FULL' }], preview: {}, workspaceVersion: 1, entityVersions: {}, fingerprint: 'a'.repeat(64) };
@@ -64,6 +78,26 @@ describe('StructuredAssistantService', () => {
     expect(response.responseType).toBe('ACTION_PREVIEW_CARD');
     expect(response.payload.executable).toBe(true);
     expect(response.payload.message).toBe('Revisa el resumen y confirma para registrar la venta.');
+    expect(readRunner.run).not.toHaveBeenCalled();
+  });
+
+  it('marks REGISTER_RECEIVABLE_PAYMENT preview as executable for confirmation without executing yet', async () => {
+    planner.plan.mockReturnValue({
+      ...basePlan,
+      businessAction: 'REGISTER_RECEIVABLE_PAYMENT',
+      confirmationTier: 'HIGH',
+      executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_RECEIVABLE_PAYMENT' }],
+    });
+    const response = await service.execute(actor, {
+      intent: 'REGISTER_RECEIVABLE_PAYMENT',
+      entities: { accountId: 'a1', amount: '35000.00', destination: 'BANK' },
+      surface: 'API',
+      clientRequestId: 'write-payment',
+    });
+    expect(receivablePaymentResolver.resolve).toHaveBeenCalled();
+    expect(response.responseType).toBe('ACTION_PREVIEW_CARD');
+    expect(response.payload.executable).toBe(true);
+    expect(response.payload.message).toBe('Revisa el resumen y confirma para registrar el pago.');
     expect(readRunner.run).not.toHaveBeenCalled();
   });
 

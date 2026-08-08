@@ -13,6 +13,7 @@ import { BusinessActionResult, BusinessExecutionPlan } from '../planner/planner.
 import { PlannerService } from '../planner/planner.service';
 import { RuntimeService } from '../runtime/runtime.service';
 import { WriteCapabilityBindingRegistry } from './write-capability-binding-registry';
+import { registerReceivablePaymentIdempotencyKey } from './write/register-receivable-payment.binding';
 import { WriteExecutionContext } from './write/write-capability-binding-definition';
 
 export type ConfirmWriteResult = {
@@ -40,6 +41,17 @@ export function registerSaleIdempotencyKey(actionRunId: string): string {
   return `ai-action-run:${actionRunId}`;
 }
 
+function writeIdempotencyKey(intent: string, actionRunId: string): string {
+  if (intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+    return registerReceivablePaymentIdempotencyKey(actionRunId);
+  }
+  return registerSaleIdempotencyKey(actionRunId);
+}
+
+function capabilityLabel(capability: string): 'venta' | 'pago' {
+  return capability === 'REGISTER_RECEIVABLE_PAYMENT' ? 'pago' : 'venta';
+}
+
 @Injectable()
 export class WritePlanRunner {
   constructor(
@@ -51,10 +63,14 @@ export class WritePlanRunner {
 
   /**
    * Atomic confirm + exclusive write execution for bound WRITE capabilities.
-   * Deal.registerIdempotencyKey remains the durable business uniqueness boundary.
    *
-   * Post-commit recovery: if ActionRun is EXECUTING/FAILED but Deal already
-   * exists under ai-action-run:<id>, reconstruct receipt and finalize COMPLETED.
+   * Durable business uniqueness boundaries:
+   * - REGISTER_SALE → Deal.registerIdempotencyKey
+   * - REGISTER_RECEIVABLE_PAYMENT → AccountPayment.registerIdempotencyKey
+   *   or AccountSettlement.idempotencyKey (APPLY_TO_PAYABLE)
+   *
+   * Post-commit recovery: EXECUTING/FAILED + durable marker under
+   * ai-action-run:<id> → reconstruct receipt and finalize COMPLETED.
    */
   async confirmAndExecute(args: {
     tenantId: string;
@@ -74,6 +90,7 @@ export class WritePlanRunner {
     }
 
     if (claim.kind === 'IN_PROGRESS') {
+      const label = capabilityLabel(claim.run.intent);
       return {
         actionRun: claim.run,
         executionState: 'IN_PROGRESS',
@@ -83,11 +100,13 @@ export class WritePlanRunner {
         interactionState: 'EXECUTING',
         responseType: 'ERROR_RECOVERY_CARD',
         message:
-          'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
+          label === 'pago'
+            ? 'El pago se está registrando. Reintenta la misma confirmación en un momento. No inicies un pago nuevo.'
+            : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
         receipt: null,
         planFingerprint: claim.run.planFingerprint,
         executableWrite: true,
-        capability: 'REGISTER_SALE',
+        capability: claim.run.intent,
       };
     }
 
@@ -106,13 +125,12 @@ export class WritePlanRunner {
         priorStatus: claim.kind === 'RECOVER' ? claim.priorStatus : undefined,
       });
     } catch (error) {
-      // Financial trust: if the canonical Deal committed, never report "no change".
-      const recoveredAfterError = await this.tryRecoverCommittedSale(args, run, plan, error);
+      // Financial trust: if the canonical domain committed, never report "no change".
+      const recoveredAfterError = await this.tryRecoverCommittedWrite(args, run, plan, error);
       if (recoveredAfterError) return recoveredAfterError;
 
       const failureType = this.failureType(error);
       if (run.status === AIActionRunStatus.EXECUTING || run.status === AIActionRunStatus.READY_FOR_CONFIRMATION) {
-        // Only fail when still EXECUTING and no committed Deal (checked above).
         if (run.status === AIActionRunStatus.EXECUTING) {
           await this.runtime.failExecution(
             args.tenantId,
@@ -175,7 +193,7 @@ export class WritePlanRunner {
     meta: { replayed: boolean; recovered: boolean; priorStatus?: AIActionRunStatus },
   ): Promise<ConfirmWriteResult> {
     const binding = this.writeRegistry.getBinding(plan.executionSteps[0]!.capability);
-    const idempotencyKey = registerSaleIdempotencyKey(run.id);
+    const idempotencyKey = writeIdempotencyKey(plan.executionSteps[0]!.capability, run.id);
     const resultPayload = {
       businessActionResult: primary as unknown as Prisma.InputJsonValue,
       planFingerprint: plan.fingerprint,
@@ -225,9 +243,9 @@ export class WritePlanRunner {
 
   /**
    * After domain success + runtime persistence failure (or crash before COMPLETED),
-   * recover from Deal.registerIdempotencyKey if present.
+   * recover from the durable domain marker for this capability.
    */
-  private async tryRecoverCommittedSale(
+  private async tryRecoverCommittedWrite(
     args: {
       tenantId: string;
       userId: string;
@@ -241,12 +259,10 @@ export class WritePlanRunner {
     plan: BusinessExecutionPlan,
     originalError: unknown,
   ): Promise<ConfirmWriteResult | null> {
-    const deal = await this.findCommittedDeal(args.tenantId, run.id);
-    if (!deal) return null;
+    const committed = await this.findCommittedWriteMarker(args.tenantId, run.intent, run.id);
+    if (!committed) return null;
 
     try {
-      // Re-run binding against committed Deal — register() is idempotent and
-      // assertCompatibleReplay rejects payload conflicts.
       const primary = await this.executeWriteSteps(plan, run, args);
       return await this.finalizeSuccess(args, run, plan, primary, {
         replayed: true,
@@ -254,28 +270,45 @@ export class WritePlanRunner {
         priorStatus: run.status,
       });
     } catch (recoveryError) {
-      // Payload conflict under same key — fail closed without claiming "no change".
       if (recoveryError instanceof ConflictException) {
         throw recoveryError;
       }
-      // Deal exists but we could not rebuild receipt — still must not say "no change".
+      const prefix =
+        run.intent === 'REGISTER_RECEIVABLE_PAYMENT'
+          ? 'CANONICAL_PAYMENT_COMMITTED_RUNTIME_PENDING'
+          : 'CANONICAL_SALE_COMMITTED_RUNTIME_PENDING';
       throw new ConflictException(
-        `CANONICAL_SALE_COMMITTED_RUNTIME_PENDING: ${
+        `${prefix}: ${
           originalError instanceof Error ? originalError.constructor.name : 'UnknownError'
         }`,
       );
     }
   }
 
-  private async findCommittedDeal(tenantId: string, actionRunId: string) {
-    return this.prisma.deal.findFirst({
-      where: {
-        tenantId,
-        registerIdempotencyKey: registerSaleIdempotencyKey(actionRunId),
-        deletedAt: null,
-      },
-      select: { id: true, watchId: true, clientId: true },
+  private async findCommittedWriteMarker(
+    tenantId: string,
+    intent: string,
+    actionRunId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<boolean> {
+    const key = writeIdempotencyKey(intent, actionRunId);
+    if (intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+      const payment = await db.accountPayment.findFirst({
+        where: { tenantId, registerIdempotencyKey: key, deletedAt: null },
+        select: { id: true },
+      });
+      if (payment) return true;
+      const settlement = await db.accountSettlement.findFirst({
+        where: { tenantId, idempotencyKey: key, deletedAt: null },
+        select: { id: true },
+      });
+      return Boolean(settlement);
+    }
+    const deal = await db.deal.findFirst({
+      where: { tenantId, registerIdempotencyKey: key, deletedAt: null },
+      select: { id: true },
     });
+    return Boolean(deal);
   }
 
   private async claimConfirmation(args: {
@@ -306,31 +339,14 @@ export class WritePlanRunner {
       }
 
       if (current.status === AIActionRunStatus.EXECUTING) {
-        const deal = await tx.deal.findFirst({
-          where: {
-            tenantId: args.tenantId,
-            registerIdempotencyKey: registerSaleIdempotencyKey(current.id),
-            deletedAt: null,
-          },
-          select: { id: true },
-        });
-        if (deal) {
+        if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
         return { kind: 'IN_PROGRESS' as const, run: current };
       }
 
       if (current.status === AIActionRunStatus.FAILED) {
-        const deal = await tx.deal.findFirst({
-          where: {
-            tenantId: args.tenantId,
-            registerIdempotencyKey: registerSaleIdempotencyKey(current.id),
-            deletedAt: null,
-          },
-          select: { id: true },
-        });
-        if (deal) {
-          // Business committed but runtime wrongly failed — recover to COMPLETED.
+        if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
         throw new ConflictException('AI action run already failed');
@@ -340,16 +356,7 @@ export class WritePlanRunner {
         throw new ConflictException('AI action run is not ready for confirmation');
       }
       if (current.confirmedAt) {
-        // Confirmed but not EXECUTING — unexpected; try recovery if Deal exists.
-        const deal = await tx.deal.findFirst({
-          where: {
-            tenantId: args.tenantId,
-            registerIdempotencyKey: registerSaleIdempotencyKey(current.id),
-            deletedAt: null,
-          },
-          select: { id: true },
-        });
-        if (deal) {
+        if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
         throw new ConflictException('AI action run is already confirmed');
@@ -380,15 +387,7 @@ export class WritePlanRunner {
           return { kind: 'REPLAY' as const, run: again };
         }
         if (again?.status === AIActionRunStatus.EXECUTING) {
-          const deal = await tx.deal.findFirst({
-            where: {
-              tenantId: args.tenantId,
-              registerIdempotencyKey: registerSaleIdempotencyKey(again.id),
-              deletedAt: null,
-            },
-            select: { id: true },
-          });
-          if (deal) {
+          if (await this.findCommittedWriteMarker(args.tenantId, again.intent, again.id, tx)) {
             return { kind: 'RECOVER' as const, run: again, priorStatus: again.status };
           }
           return { kind: 'IN_PROGRESS' as const, run: again };
@@ -528,6 +527,7 @@ export class WritePlanRunner {
     result: BusinessActionResult,
     meta: { replayed: boolean; recovered: boolean },
   ): ConfirmWriteResult {
+    const label = capabilityLabel(run.intent);
     return {
       actionRun: run,
       executionState: meta.replayed || meta.recovered ? 'REPLAYED' : 'EXECUTED',
@@ -537,18 +537,26 @@ export class WritePlanRunner {
       interactionState: 'COMPLETED',
       responseType: 'SUCCESS_RECEIPT',
       message:
-        meta.recovered || meta.replayed
-          ? 'Listo. La venta ya estaba registrada.'
-          : 'Listo. La venta quedó registrada.',
+        label === 'pago'
+          ? meta.recovered || meta.replayed
+            ? 'Listo. El pago ya estaba registrado.'
+            : 'Listo. El pago quedó registrado.'
+          : meta.recovered || meta.replayed
+            ? 'Listo. La venta ya estaba registrada.'
+            : 'Listo. La venta quedó registrada.',
       receipt: result.receipt,
       planFingerprint: run.planFingerprint,
       executableWrite: true,
-      capability: 'REGISTER_SALE',
+      capability: run.intent,
     };
   }
 
   private failureEnvelope(run: AIActionRun, failureType: string): ConfirmWriteResult {
-    if (failureType.startsWith('CANONICAL_SALE_COMMITTED')) {
+    const label = capabilityLabel(run.intent);
+    if (
+      failureType.startsWith('CANONICAL_SALE_COMMITTED') ||
+      failureType.startsWith('CANONICAL_PAYMENT_COMMITTED')
+    ) {
       return {
         actionRun: run,
         executionState: 'FAILED',
@@ -558,11 +566,13 @@ export class WritePlanRunner {
         interactionState: 'FAILED',
         responseType: 'ERROR_RECOVERY_CARD',
         message:
-          'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
+          label === 'pago'
+            ? 'El pago ya quedó registrado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+            : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
         receipt: null,
         planFingerprint: run.planFingerprint,
         executableWrite: true,
-        capability: 'REGISTER_SALE',
+        capability: run.intent,
       };
     }
 
@@ -571,13 +581,20 @@ export class WritePlanRunner {
       failureType.includes('stale') ||
       failureType.includes('WORKSPACE_');
     const permission = failureType.includes('PERMISSION') || failureType.includes('Forbidden');
-    const message = stale
-      ? failureType === 'STALE_WATCH_SOLD'
-        ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-        : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-      : permission
-        ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
-        : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
+    const message =
+      label === 'pago'
+        ? stale
+          ? 'La cuenta o el saldo cambió desde que preparaste este pago. No se realizó ningún cambio.'
+          : permission
+            ? 'Ya no tienes permiso para registrar este pago. No se realizó ningún cambio.'
+            : 'No pude registrar el pago. La operación se revirtió y no se realizó ningún cambio.'
+        : stale
+          ? failureType === 'STALE_WATCH_SOLD'
+            ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+            : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+          : permission
+            ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
+            : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
     return {
       actionRun: run,
       executionState: 'FAILED',
@@ -590,22 +607,30 @@ export class WritePlanRunner {
       receipt: null,
       planFingerprint: run.planFingerprint,
       executableWrite: true,
-      capability: 'REGISTER_SALE',
+      capability: run.intent,
     };
   }
 
   private failureType(error: unknown): string {
     if (error instanceof ConflictException) {
       const msg = String(error.message);
+      if (msg.includes('CANONICAL_PAYMENT_COMMITTED')) return 'CANONICAL_PAYMENT_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('CANONICAL_SALE_COMMITTED')) return 'CANONICAL_SALE_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('STALE_WATCH_SOLD')) return 'STALE_WATCH_SOLD';
       if (msg.includes('STALE_WATCH_MISSING')) return 'STALE_WATCH_MISSING';
       if (msg.includes('STALE_WATCH_NOT_SELLABLE')) return 'STALE_WATCH_NOT_SELLABLE';
       if (msg.includes('STALE_CUSTOMER_MISSING')) return 'STALE_CUSTOMER_MISSING';
+      if (msg.includes('STALE_RECEIVABLE')) return msg.includes('OUTSTANDING')
+        ? 'STALE_RECEIVABLE_OUTSTANDING'
+        : 'STALE_RECEIVABLE';
+      if (msg.includes('STALE_PAYABLE')) return 'STALE_PAYABLE';
+      if (msg.includes('STALE_CURRENCY')) return 'STALE_CURRENCY';
       if (msg.includes('WORKSPACE_ACTIVE_RUN_CHANGED')) return 'STALE_WORKSPACE';
       if (msg.includes('WORKSPACE_MISSING')) return 'STALE_WORKSPACE';
       if (msg.toLowerCase().includes('stale')) return 'STALE_PLAN';
-      if (msg.includes('Idempotency key already used')) return 'IDEMPOTENCY_PAYLOAD_CONFLICT';
+      if (msg.includes('Idempotency key already used') || msg.includes('registerIdempotencyKey')) {
+        return 'IDEMPOTENCY_PAYLOAD_CONFLICT';
+      }
       return 'CONFLICT';
     }
     if (error instanceof ForbiddenException) return 'PERMISSION_DENIED';

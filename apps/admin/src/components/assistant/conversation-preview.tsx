@@ -23,7 +23,7 @@ export function ConversationPreview({
   fields: Array<{ label: string; value: string }>;
   effects: string[];
   ctaLabel: string;
-  ctaKind: 'CONFIRM_SALE' | 'MANUAL_MODULE';
+  ctaKind: 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'MANUAL_MODULE';
   ctaHref?: string;
   onConfirm?: () => void;
   onEdit?: () => void;
@@ -32,6 +32,7 @@ export function ConversationPreview({
   showAvatar?: boolean;
   delayMs?: number;
 }) {
+  const confirmable = ctaKind === 'CONFIRM_SALE' || ctaKind === 'CONFIRM_PAYMENT';
   return (
     <AssistantMessage showAvatar={showAvatar} delayMs={delayMs}>
       <div className="space-y-3">
@@ -57,7 +58,7 @@ export function ConversationPreview({
           </ul>
         ) : null}
         <div className="flex flex-wrap gap-2 pt-1">
-          {ctaKind === 'CONFIRM_SALE' && onConfirm ? (
+          {confirmable && onConfirm ? (
             <button
               type="button"
               disabled={busy}
@@ -116,12 +117,12 @@ export function ConversationReceipt({
         <div className="flex flex-wrap gap-2 pt-1">
           {dealHref ? (
             <Link href={dealHref} className="inline-flex min-h-9 items-center rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black">
-              Ver venta
+              {dealHref.startsWith('/cuentas') ? 'Ver cuenta' : 'Ver venta'}
             </Link>
           ) : null}
           {correctHref ? (
             <Link href={correctHref} className="inline-flex min-h-9 items-center rounded-full border border-white/15 px-4 py-1.5 text-[13px] font-medium text-white/75">
-              Corregir en Ventas
+              {correctHref.startsWith('/cuentas') ? 'Corregir en Cuentas' : 'Corregir en Ventas'}
             </Link>
           ) : null}
         </div>

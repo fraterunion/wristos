@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
+import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-payment-entity-resolver.service';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
 import { BusinessExecutionPlan } from '../planner/planner.types';
@@ -9,6 +10,7 @@ import { PreparedAssistantRequest, StructuredAssistantPersistence } from './stru
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
 
 const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS', 'GET_INVENTORY_AGING', 'GET_TOP_INVENTORY_CAPITAL', 'GET_TOP_DEBTORS', 'GET_RECEIVABLE_SUMMARY', 'GET_SALES_MARGIN_SUMMARY', 'GET_PROFIT_BY_BRAND', 'GET_TOP_SALES', 'GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY']);
+const EXECUTABLE_WRITES = new Set(['REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT']);
 
 @Injectable()
 export class StructuredAssistantService {
@@ -17,6 +19,7 @@ export class StructuredAssistantService {
     private readonly persistence: StructuredAssistantPersistence,
     private readonly planner: PlannerService,
     private readonly readRunner: ReadPlanRunner,
+    private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
   ) {}
 
   async execute(actor: AssistantActorContext, input: StructuredAssistantRequest): Promise<StructuredAssistantResponse> {
@@ -42,32 +45,62 @@ export class StructuredAssistantService {
       await this.requests.transition(request.id, [AIRequestStatus.RECEIVED], AIRequestStatus.VALIDATING);
       this.assertRequestBounds(input);
       prepared = await this.persistence.prepare(request.id, actor, input, request.traceId);
-      const plan = this.planner.plan({ intent: input.intent, entities: input.entities }, { workspaceVersion: prepared.workspaceVersion, entityVersions: input.entityVersions ?? {} });
-      const checkpoint = await this.persistence.checkpointPlan(request.id, actor, input, prepared, plan);
+
+      let entities = input.entities;
+      if (input.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+        const resolved = await this.receivablePaymentResolver.resolve(actor.tenantId, entities);
+        entities = resolved.entities;
+        if (resolved.clarify) {
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            resolved.clarify.message,
+            resolved.clarify.items,
+            resolved.clarify.entityType,
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+      }
+
+      const plannedInput = { ...input, entities };
+      const plan = this.planner.plan(
+        { intent: plannedInput.intent, entities },
+        { workspaceVersion: prepared.workspaceVersion, entityVersions: plannedInput.entityVersions ?? {} },
+      );
+      const checkpoint = await this.persistence.checkpointPlan(request.id, actor, plannedInput, prepared, plan);
 
       if (plan.state === 'NEEDS_CLARIFICATION') {
         const response = this.clarificationResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
-        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: input.intent, entities: input.entities });
+        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: plannedInput.intent, entities });
       }
-      if (!READ_ACTIONS.has(input.intent)) {
+      if (!READ_ACTIONS.has(plannedInput.intent)) {
         const response = this.writePreviewResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
-        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION, { intent: input.intent, entities: input.entities });
+        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION, { intent: plannedInput.intent, entities });
       }
 
       const result = await this.readRunner.run({
         plan,
-        current: { workspaceVersion: prepared.workspaceVersion, entityVersions: input.entityVersions ?? {} },
+        current: { workspaceVersion: prepared.workspaceVersion, entityVersions: plannedInput.entityVersions ?? {} },
         expectedFingerprint: plan.fingerprint,
         actionRunId: checkpoint.actionRun.id,
         toolContext: {
           tenantId: actor.tenantId, userId: actor.userId, role: actor.role, permissions: actor.permissions,
           conversationId: prepared.conversationId, workspaceId: prepared.workspaceId, actionRunId: checkpoint.actionRun.id,
-          requestId: request.traceId, locale: input.locale ?? 'es-MX', timezone: input.timezone ?? 'UTC', now: request.receivedAt,
+          requestId: request.traceId, locale: plannedInput.locale ?? 'es-MX', timezone: plannedInput.timezone ?? 'UTC', now: request.receivedAt,
         },
       });
-      const response = this.readResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, input.intent, plan, result);
+      const response = this.readResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plannedInput.intent, plan, result);
       const failed = result.executionState !== 'COMPLETED';
-      return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, failed ? AIAuditEventType.ASSISTANT_REQUEST_FAILED : AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, failed ? AIRequestStatus.FAILED : AIRequestStatus.COMPLETED, { intent: input.intent, entities: input.entities });
+      return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, failed ? AIAuditEventType.ASSISTANT_REQUEST_FAILED : AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, failed ? AIRequestStatus.FAILED : AIRequestStatus.COMPLETED, { intent: plannedInput.intent, entities });
     } catch (error) {
       const response = this.errorResponse(request.id, request.traceId, prepared, error);
       if (!prepared) return this.requests.failUnattached(request, actor, input.intent, response, this.failureType(error));
@@ -86,22 +119,57 @@ export class StructuredAssistantService {
   }
 
   private writePreviewResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, plan: BusinessExecutionPlan): StructuredAssistantResponse {
-    const executable = plan.businessAction === 'REGISTER_SALE';
+    const executable = EXECUTABLE_WRITES.has(plan.businessAction);
+    const isPayment = plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,
       executable,
       correctionPolicy: executable
-        ? 'Después de registrarla, cualquier corrección se realiza desde Ventas.'
+        ? isPayment
+          ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
+          : 'Después de registrarla, cualquier corrección se realiza desde Ventas.'
         : null,
       message: executable
-        ? 'Revisa el resumen y confirma para registrar la venta.'
+        ? isPayment
+          ? 'Revisa el resumen y confirma para registrar el pago.'
+          : 'Revisa el resumen y confirma para registrar la venta.'
         : 'Esta acción todavía no está habilitada para ejecución desde el asistente.',
       unchanged: 'No se ejecutó ni modificó ningún dato de negocio.',
       nextAction: executable
-        ? 'Confirma la venta para ejecutar el registro canónico.'
+        ? isPayment
+          ? 'Confirma el pago para ejecutar el registro canónico.'
+          : 'Confirma la venta para ejecutar el registro canónico.'
         : 'Usa el flujo canónico de la aplicación para completar esta acción.',
     }, plan);
+  }
+
+  private accountDisambiguationResponse(
+    requestId: string,
+    traceId: string,
+    prepared: PreparedAssistantRequest,
+    message: string,
+    items: Array<Record<string, JsonValue>>,
+    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY',
+  ): StructuredAssistantResponse {
+    return {
+      requestId,
+      conversationId: prepared.conversationId,
+      workspaceId: prepared.workspaceId,
+      interactionState: 'NEEDS_DISAMBIGUATION',
+      responseType: 'ENTITY_PICKER',
+      payload: {
+        message,
+        entityType,
+        data: { items },
+        unchanged: 'No se ejecutó ninguna acción.',
+        nextAction: 'Elige con “el primero”, “el segundo”, o nómbralo.',
+      },
+      warnings: [],
+      suggestedActions: [],
+      traceId,
+      createdAt: new Date().toISOString(),
+    };
   }
 
   private readResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, intent: string, plan: BusinessExecutionPlan, result: ReadPlanResult): StructuredAssistantResponse {

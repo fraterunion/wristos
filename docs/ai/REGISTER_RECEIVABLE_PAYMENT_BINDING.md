@@ -1,16 +1,16 @@
-# REGISTER_RECEIVABLE_PAYMENT — Domain Binding (Commit 14A)
+# REGISTER_RECEIVABLE_PAYMENT — Write Binding (Commit 14B)
 
-Status: **canonical domain verified — ready for PR**
-AI write execution: **not implemented** (Commit 14B)
+Status: **AI write execution implemented locally (Commit 14B)**
+Domain prerequisite: **Commit 14A deployed** (`ReceivablePaymentService.register()`)
 
 ## Product goal
 
-Conversational examples (future):
+Conversational examples:
 
-- “José me pagó 35 mil.” → received money (needs destination)
-- “José me pagó 35 mil a bancos.” → `BANK`
-- “José le pagó 100 mil a Pepe.” → `APPLY_TO_PAYABLE`
-- “me pagó en USDT / crypto” → **unsupported** (clarify; no crypto mutation)
+- “José me pagó 35 mil.” → needs destination clarify
+- “José me pagó 35 mil a bancos.” → `BANK` + preview → **Confirmar pago**
+- “José le pagó 100 mil a Pepe.” → `APPLY_TO_PAYABLE` + preview → **Confirmar pago**
+- “me pagó en USDT / crypto” → unsupported (clarify; no crypto mutation)
 
 Two **distinct** economic flows:
 
@@ -19,269 +19,231 @@ Two **distinct** economic flows:
 | **A. Received money** | CXC ↓ + CASH/BANK/CESAR ↑ | changes |
 | **B. Account-to-account settlement** | CXC ↓ + CXP ↓ | **unchanged** |
 
-Do not conflate them.
-
-## Non-negotiable safety
-
-Manual Cuentas UI and future AI must share the same canonical command:
-
-`ReceivablePaymentService.register()`
-
-No AI-specific accounting formulas.
+Do not conflate them. Standalone `REGISTER_SETTLEMENT` remains **unbound**.
 
 ---
 
-## Deal Payment vs AccountPayment (source of truth)
+## Safety model
 
-**Decision: dual-ledger, single economic write per path — no double-write.**
+The LLM does **not** register payments. Canonical flow:
+
+```
+Natural language
+→ REGISTER_RECEIVABLE_PAYMENT intent
+→ trusted entity resolution
+→ deterministic Planner
+→ READY_FOR_CONFIRMATION
+→ explicit authenticated confirmation
+→ freshness validation
+→ WritePlanRunner
+→ REGISTER_RECEIVABLE_PAYMENT binding
+→ ReceivablePaymentService.register()
+→ receipt + immutable audit
+```
+
+No confirmation → no payment.
+Duplicate / concurrent confirmation → one economic payment (durable idempotency).
+Post-commit runtime failure → recover from durable payment/settlement marker.
+
+---
+
+## Executable writes after 14B
+
+| Capability | Status |
+|---|---|
+| `REGISTER_SALE` | WRITE bound |
+| `REGISTER_RECEIVABLE_PAYMENT` | WRITE bound |
+| `REGISTER_PURCHASE` | unbound |
+| `REGISTER_EXPENSE` | unbound |
+| `REGISTER_SETTLEMENT` | unbound (standalone) |
+| `REGISTER_CRYPTO_POSITION` | unbound |
+| `REGISTER_CRYPTO_PRICE` | unbound |
+
+`APPLY_TO_PAYABLE` is a **destination** inside receivable payment, not a separate executable intent.
+
+---
+
+## Dual ledger (from 14A — unchanged)
 
 | Path | Writes | Treasury |
 |---|---|---|
-| Canonical sale / Ventas `addPayment` | Deal `Payment` | `createFromDealPayment` (+ optional BANCOS fee) |
-| Cuentas / future AI `ReceivablePaymentService` | `AccountPayment` on the existing `AccountEntry` | `createFromAccountPayment` (**no** bank fee) |
+| Ventas / sale registration | Deal `Payment` | `createFromDealPayment` (+ optional BANCOS fee) |
+| Cuentas / AI `ReceivablePaymentService` | `AccountPayment` | `createFromAccountPayment` (**no** bank fee) |
 
-**Answer to the gate:**
-
-- Deal `Payment` rows are **not** only initial-at-sale snapshots.
-- They represent money collected through the **Ventas / sale-registration** path.
-- Post-sale collections through **Cuentas / AI** use `AccountPayment` and must **not** also create a Deal `Payment` for the same event.
-
-Canonical deal-linked outstanding:
+Outstanding for deal-linked CXC:
 
 ```
-paid = Σ Deal.Payment(PAID, deletedAt null)
-     + Σ AccountPayment(on the deal’s AccountEntry, deletedAt null)
-
-outstanding = AccountEntry.totalAmount − paid
+paid = Σ Deal.Payment(PAID) + Σ AccountPayment(on entry)
+outstanding = totalAmount − paid
 ```
 
-This keeps Cuentas, Ventas payment-summary, OI CXC, and `syncDealReceivable` status aligned **without** a new FK / sync migration.
+---
 
-Do **not** invent `AccountPayment.dealPaymentId` unless a future product requires listing a single merged payment timeline with durable cross-links.
+## Write binding
 
-Effects that must **not** change on collection:
+| Field | Value |
+|---|---|
+| Capability | `REGISTER_RECEIVABLE_PAYMENT` |
+| Mode | `WRITE` |
+| Version | `1.0.0` |
+| Binding name | `register_receivable_payment_canonical@1.0.0` |
+| Domain | `ReceivablePaymentService.register()` |
+| Runner | same `WritePlanRunner` as `REGISTER_SALE` |
 
-- Deal stage / `CLOSED_WON`
-- Watch `SOLD`
-- `agreedPrice`, cost basis, original sale date
+Trusted execution args:
+
+```ts
+{
+  receivableEntryId, // planner accountId
+  amount,
+  destination: 'CASH' | 'BANK' | 'CESAR' | 'APPLY_TO_PAYABLE',
+  payableEntryId?,   // APPLY_TO_PAYABLE only
+  paymentDate?,
+  notes?,
+}
+```
+
+Server derives:
+
+- received money: `registerIdempotencyKey = ai-action-run:<actionRunId>`
+- settlement: `idempotencyKey = ai-action-run:<actionRunId>`
+
+Client/LLM never supplies these keys. Fake IDs from text are stripped.
 
 ---
 
-## Payable-entry eligibility
+## Trusted resolution / disambiguation
 
-A RECEIVABLE is payable when:
+```
+customer reference → canonical client → eligible open CXC
+→ unique → select (surfaced in preview warning/labels)
+→ multiple → clarify (ENTITY_PICKER) — never silent first/oldest/largest
+```
 
-- same tenant
-- `deletedAt = null`
-- `type = RECEIVABLE`
-- status not `CANCELLED` / not already fully paid (outstanding > 0)
-- currency MXN or USD
+Settlement:
 
-Sources eligible:
+```
+Pepe (payableQuery) → unique client → eligible open CXP (same currency)
+→ unique / clarify
+```
 
-- `MANUAL`
-- `DEAL_AUTO` / `dealId != null` (sale-generated CXC)
-
-`assertManualEntry` remains only for:
-
-- PAYABLE treasury outflows
-- in-place `updatePayment`
-- settlement **target** PAYABLE (must stay manual / non-deal)
-
-Root cause of the old block: `assertManualEntry` assumed all deal-linked outstanding lived only in Deal `Payment`, so Cuentas `AccountPayment` was forbidden. That mixed an outstanding-model concern with payment eligibility.
+MANUAL and DEAL_AUTO receivables both call the same domain command.
 
 ---
 
-## Records written
-
-### Endpoint
-
-`POST /cuentas/entries/:id/payments` → `CuentasService.createPayment` → `ReceivablePaymentService.register()` for RECEIVABLE + `APPLY_TO_PAYABLE`.
-
-Auth: `JwtAuthGuard` only (any authenticated tenant member). No role ACL today.
-
-### CASH / BANK / CESAR (MANUAL or DEAL_AUTO)
-
-1. `AccountPayment` (`cashAccount` set)
-2. `TreasuryEntry` INFLOW (`accountPaymentId` 1:1, provenance `account-payment:<id>`)
-3. `AccountEntry.status` OPEN → PARTIAL → PAID
-
-No second `AccountEntry`. No Deal rewrite. No Watch rewrite. No Deal `Payment` row from this command.
-
-### APPLY_TO_PAYABLE (including deal-linked CXC)
-
-1. Receivable `AccountPayment` `SETTLEMENT`
-2. Payable `AccountPayment` `SETTLEMENT`
-3. `AccountSettlement`
-4. Status refresh both sides
-
-Treasury unchanged. Deal / Watch unchanged.
-
-### Frontend
-
-One `createAccountPayment` request. No separate Treasury API.
-
-### Bank fees on CXC receipt
-
-**Not modeled.** “José me pagó 35 mil a bancos” → BANK +35,000 only. Do not borrow sale-acquiring BANCOS fee policy.
-
----
-
-## Destination contract (frozen)
-
-Exactly:
-
-`CASH | BANK | CESAR | APPLY_TO_PAYABLE`
-
-**CRYPTO is rejected** at:
-
-- intent entity schema (`REGISTER_RECEIVABLE_PAYMENT`)
-- domain command (`ReceivablePaymentService.register`)
-
-Reason: crypto is an asset/liquidity position domain (`REGISTER_CRYPTO_*`), not a customer CXC payment destination. No USDT→holding mutation from payment language.
-
-User-facing maps (future planner):
+## Destination semantics
 
 | Language | Destination |
 |---|---|
 | en efectivo | CASH |
-| a bancos / me depositó / transferencia (when explicit) | BANK |
+| a bancos / me depositó / transferencia (explicit) | BANK |
 | a la cuenta de César | CESAR |
 | le pagó a Pepe | APPLY_TO_PAYABLE |
-| en USDT / crypto | unsupported / clarify |
+| en USDT / crypto / Bitcoin | unsupported / clarify |
+
+Never mutate Crypto holdings from this binding.
 
 ---
 
-## Canonical command
+## Amount validation (before READY_FOR_CONFIRMATION)
 
-```ts
-ReceivablePaymentService.register(tenantId, {
-  receivableEntryId,
-  amount,
-  destination: 'CASH' | 'BANK' | 'CESAR' | 'APPLY_TO_PAYABLE',
-  payableEntryId?,          // settlement only
-  paymentDate?,
-  notes?,
-  currency?,
-  exchangeRateUsed?,        // required if USD
-  registerIdempotencyKey?,  // durable
-  actorUserId?,
-})
-```
+- `amount > 0`
+- `amount <= receivable outstanding`
+- settlement: `amount <= payable outstanding`
+- currency compatibility
+- no silent cap / min / max adjustment
 
-Result:
-
-```ts
-{
-  destination,
-  receivablePayment,
-  receivableEntry,
-  treasuryEntry?,      // null for settlement
-  settlement?,         // { id, idempotencyKey } | null
-  payablePayment?,
-  payableEntry?,
-  replayed: boolean,
-}
-```
+Overpay → `NEEDS_CLARIFICATION` (not a soft warning that still confirms).
 
 ---
 
-## Idempotency
+## Confirmation lifecycle
 
-| Flow | Durable key | Unique |
-|---|---|---|
-| CASH/BANK/CESAR | `AccountPayment.registerIdempotencyKey` | `@@unique([tenantId, registerIdempotencyKey])` |
-| APPLY_TO_PAYABLE | `AccountSettlement.idempotencyKey` | `@@unique([tenantId, idempotencyKey])` |
+1. Planner builds HIGH-tier preview (`ACTION_PREVIEW_CARD`, `executable: true`)
+2. Frontend CTA: **Confirmar pago** → `POST /ai/action-runs/:id/confirm` only
+3. `WritePlanRunner` claims READY → EXECUTING, validates freshness, executes binding
+4. COMPLETED + `SUCCESS_RECEIPT` only after durable domain + runtime finalize
 
-Applies to MANUAL and DEAL_AUTO receivables.
-
-### Schema gate
-
-Migration (local / not production-applied):
-
-`prisma/migrations/20260808010000_account_payment_register_idempotency_key`
-
-**No additional migration** required for deal-linked eligibility (dual-ledger outstanding formula).
+Double-click / network retry reuses the **same** ActionRun.
 
 ---
 
-## Recovery marker (for 14B)
+## Freshness (immediately before execute)
+
+Receivable: exists, same tenant, not deleted, RECEIVABLE, payable, outstanding sufficient, currency match.
+Payable (settlement): exists, PAYABLE, outstanding sufficient, same currency.
+Workspace: active run + fingerprint.
+Actor: active tenant membership (same as manual Cuentas JwtAuthGuard V1).
+
+Any change → `STALE_*` → **no payment**.
+
+Future granular Cuentas permissions may harden both AI and manual paths together.
+
+---
+
+## Idempotency + post-commit recovery
 
 | Flow | Marker |
 |---|---|
-| Received money | `AccountPayment.registerIdempotencyKey = ai-action-run:<actionRunId>` |
-| Settlement | `AccountSettlement.idempotencyKey = ai-action-run:<actionRunId>` |
+| Received money | `AccountPayment.registerIdempotencyKey = ai-action-run:<id>` |
+| Settlement | `AccountSettlement.idempotencyKey = ai-action-run:<id>` |
+
+`EXECUTING` + marker exists → reconstruct receipt → COMPLETED.
+`EXECUTING` + no marker → IN_PROGRESS (retry same confirm).
+No in-memory lock as correctness boundary. No new schema in 14B.
 
 ---
 
-## Correction / reversal
+## Receipt / correction
 
-| Flow | Reverse | Side effects |
-|---|---|---|
-| Received money | soft-delete `AccountPayment` + Treasury (atomic) | restores CXC outstanding/status; Deal/Watch untouched |
-| Settlement | soft-delete settlement + both legs | restores CXC/CXP; Treasury n/a |
+Received money receipt: `paymentId`, `receivableEntryId`, amount, currency, destination, `remainingReceivable`, paymentDate.
+Settlement receipt: both remainings, `liquidityChanged: false`, settlement + two payment legs.
 
-No conversational reversal in V1. Receipt CTA: “Corregir en Cuentas”.
+CTA: **Ver cuenta** / **Corregir en Cuentas**. No conversational reversal.
 
 ---
 
-## Permissions
+## Frontend safety matrix
 
-Today: any JWT user in tenant.  
-AI must inherit **same or stricter** policy.
-
----
-
-## Future AI contract (design only)
-
-Trusted:
-
-- `receivableEntryId`
-- `amount`
-- `destination`
-
-Conditional:
-
-- `APPLY_TO_PAYABLE` → `payableEntryId`
-
-Never:
-
-- CRYPTO destination
-- raw IDs from Claude/user text as trusted without resolution
-- silent first-account selection
-
-Clarify when multiple open CXC/CXP, ambiguous names, omitted destination, overpayment, currency mismatch.
-
-### Preview
-
-Received (BANK): CxC before→after + Bancos +amount. No Crypto.
-Settlement: CxC + CxP before→after; Liquidez sin cambio.
-
----
-
-## Atomicity
-
-| Path | Status |
+| Intent | READY / preview / COMPLETED success |
 |---|---|
-| RECEIVABLE CASH/BANK/CESAR | Serializable tx: AccountPayment + Treasury + status |
-| Settlement | Serializable tx: settlement + both legs + status |
-| removePayment | soft-delete payment + Treasury together |
+| `REGISTER_SALE` | unchanged executable |
+| `REGISTER_RECEIVABLE_PAYMENT` | allowed when receipt is canonical (`paymentId` + `receivableEntryId` + destination) |
+| Other writes | COMPLETED still blocked |
+
+Malformed payment success → fail closed.
 
 ---
 
-## Blockers before Commit 14B
+## Schema gate
 
-1. **Production migrate** `registerIdempotencyKey` (TYPE C).
-2. AI write binding / confirmation runner (intentional next commit).
-3. Planner must resolve trusted `receivableEntryId` / `payableEntryId` with disambiguation (no silent pick).
-
-Deal-linked CXC + destination contract are **resolved** for domain readiness.
+**NO migration in 14B.**
+14A already deployed `AccountPayment.registerIdempotencyKey` (+ settlement key).
 
 ---
 
-## Test coverage
+## Rollout plan
 
-- `receivable-payment.service.spec.ts` — MANUAL + DEAL_AUTO CASH/BANK/CESAR, status, overpay, idempotency, CRYPTO reject
-- Settlement suite — APPLY_TO_PAYABLE
-- Intent schema — destination allowlist
-- Sale registration / OI / payments summary — dual-ledger outstanding
+1. Local quality gates (this commit)
+2. PR review — TYPE B (backend AI + TYPE A admin UX)
+3. Merge → Railway + Vercel auto-deploy
+4. Controlled DEMO QA: confirm payment, double-confirm, settlement, crypto reject, stale outstanding
+5. Production Wrist Caviar only after DEMO green
+
+---
+
+## Audit
+
+Reuse existing execution audit. Sanitized: actionRunId, capability, bindingVersion, planFingerprint, destination, amount/value per safe-money conventions, entity hashes, idempotency key hash, result hash, recovery flag, duration, failure type.
+
+Never: customer names, raw provider text, full account objects, secrets.
+
+---
+
+## Domain reference (14A)
+
+See also dual-ledger outstanding, MANUAL/DEAL_AUTO eligibility, settlement atomicity, and reverse via Cuentas soft-delete in the Commit 14A sections retained in git history / domain tests:
+
+- `receivable-payment.service.spec.ts`
+- settlement suite
+- intent schema destination allowlist

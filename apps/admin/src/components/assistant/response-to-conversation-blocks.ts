@@ -63,7 +63,7 @@ export function manualCtaLabel(intent: BusinessActionId): string {
   return MANUAL_CTA_LABEL[intent as WritePreviewAction] ?? 'Continuar en el módulo';
 }
 
-export type PreviewCtaKind = 'CONFIRM_SALE' | 'MANUAL_MODULE';
+export type PreviewCtaKind = 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'MANUAL_MODULE';
 
 
 function isRecord(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
@@ -531,19 +531,34 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     : [];
   const executableSale =
     intent === 'REGISTER_SALE' && response.payload.executable === true;
+  const executablePayment =
+    intent === 'REGISTER_RECEIVABLE_PAYMENT' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
+  const intro = executablePayment
+    ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
+        ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
+        : 'Voy a registrar este pago:')
+    : executableSale
+      ? 'Perfecto. Esto es lo que voy a registrar:'
+      : 'Perfecto. Esto es lo que voy a preparar:';
   return [
     {
       kind: 'preview',
       id: blockId(response, 'preview'),
-      intro: executableSale
-        ? 'Perfecto. Esto es lo que voy a registrar:'
-        : 'Perfecto. Esto es lo que voy a preparar:',
+      intro,
       title,
       fields,
       effects,
-      ctaLabel: executableSale ? 'Confirmar venta' : manualCtaLabel(intent),
-      ctaKind: executableSale ? 'CONFIRM_SALE' : 'MANUAL_MODULE',
+      ctaLabel: executablePayment
+        ? 'Confirmar pago'
+        : executableSale
+          ? 'Confirmar venta'
+          : manualCtaLabel(intent),
+      ctaKind: executablePayment
+        ? 'CONFIRM_PAYMENT'
+        : executableSale
+          ? 'CONFIRM_SALE'
+          : 'MANUAL_MODULE',
       planFingerprint,
       actionRunId: response.actionRunId,
     },
@@ -583,6 +598,54 @@ function saleReceiptBlocks(response: StructuredAssistantResponse): ConversationB
       lines,
       dealHref: receipt && typeof receipt.dealId === 'string' ? `/ventas?deal=${receipt.dealId}` : '/ventas',
       correctHref: '/ventas',
+    },
+  ];
+}
+
+function paymentReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. El pago quedó registrado.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const kind = asString(receipt.kind);
+    const currency = asString(receipt.currency) ?? 'MXN';
+    if (kind === 'SETTLEMENT') {
+      const cxc = asString(receipt.customerName);
+      const remainingCxc = formatMoney(receipt.remainingReceivable, currency);
+      if (cxc || remainingCxc) lines.push(`CxC ${[cxc, remainingCxc].filter(Boolean).join(' · ')}`);
+      const cxp = asString(receipt.payableLabel);
+      const remainingCxp = formatMoney(receipt.remainingPayable, currency);
+      if (cxp || remainingCxp) lines.push(`CxP ${[cxp, remainingCxp].filter(Boolean).join(' · ')}`);
+      lines.push('Liquidez: Sin cambio');
+    } else {
+      const customer = asString(receipt.customerName);
+      const amount = formatMoney(receipt.amount, currency);
+      if (customer || amount) lines.push([customer, amount].filter(Boolean).join(' · '));
+      const dest =
+        asString(receipt.destinationLabel) ||
+        (() => {
+          const destRaw = asString(receipt.destination);
+          if (destRaw === 'CASH') return 'Efectivo';
+          if (destRaw === 'BANK') return 'Bancos';
+          if (destRaw === 'CESAR') return 'Cuenta César';
+          return destRaw;
+        })();
+      if (dest) lines.push(`Destino: ${dest}`);
+      const remaining = formatMoney(receipt.remainingReceivable, currency);
+      if (remaining) lines.push(`CxC pendiente: ${remaining}`);
+    }
+  }
+  const entryId =
+    receipt && typeof receipt.receivableEntryId === 'string' ? receipt.receivableEntryId : null;
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: entryId ? `/cuentas?entry=${entryId}` : '/cuentas',
+      correctHref: '/cuentas',
     },
   ];
 }
@@ -638,6 +701,10 @@ export function responseToConversationBlocks(
     case 'SUCCESS_RECEIPT': {
       if (intent === 'REGISTER_SALE') {
         main = saleReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+        main = paymentReceiptBlocks(response);
         break;
       }
       const summary = asString(response.payload.message) ?? asString(response.payload.summary);

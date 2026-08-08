@@ -150,12 +150,50 @@ function classify(text: string, currentDate: string): FakeOutput {
   if (/^vend[ií] ([a-z0-9 ]+)\.?$/.test(t)) {
     return { intent: 'REGISTER_SALE', entities: { watchQuery: t.replace(/^vend[ií] /, '').replace(/\.$/, '') }, missingEntities: ['watchId', 'customerId', 'price', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
-  const paymentMatch = t.match(/([a-záéíóúñ]+) me pag[oó] ([\d.,]+ ?(mil|k)?)/);
-  if (paymentMatch) {
+  const settlementMatch = t.match(/([a-záéíóúñ]+) le pag[oó] ([\d.,]+ ?(mil|k)?) a ([a-záéíóúñ]+)/);
+  if (settlementMatch) {
     return {
       intent: 'REGISTER_RECEIVABLE_PAYMENT',
-      entities: { customerQuery: paymentMatch[1], amount: String(parseFakeAmount(paymentMatch[2])) },
-      missingEntities: ['accountId', 'destination'], ambiguities: [], confidence: 'HIGH', language: 'es',
+      entities: {
+        customerQuery: settlementMatch[1],
+        amount: String(parseFakeAmount(settlementMatch[2])),
+        destination: 'APPLY_TO_PAYABLE',
+        payableQuery: settlementMatch[4],
+      },
+      missingEntities: ['accountId', 'payableAccountId'],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
+  }
+  const paymentMatch = t.match(/([a-záéíóúñ]+) me pag[oó] ([\d.,]+ ?(mil|k)?)(.*)/);
+  if (paymentMatch) {
+    const rest = paymentMatch[4] ?? '';
+    let destination: string | undefined;
+    if (/crypto|usdt|bitcoin|btc/i.test(rest)) {
+      return {
+        intent: 'REGISTER_RECEIVABLE_PAYMENT',
+        entities: { customerQuery: paymentMatch[1], amount: String(parseFakeAmount(paymentMatch[2])) },
+        missingEntities: ['accountId', 'destination'],
+        ambiguities: [{ field: 'destination', reason: 'CRYPTO is unsupported for receivable payments', candidates: [] }],
+        confidence: 'MEDIUM',
+        language: 'es',
+      };
+    }
+    if (/efectivo|cash/i.test(rest)) destination = 'CASH';
+    else if (/banco|transfer|deposit/i.test(rest)) destination = 'BANK';
+    else if (/c[eé]sar/i.test(rest)) destination = 'CESAR';
+    return {
+      intent: 'REGISTER_RECEIVABLE_PAYMENT',
+      entities: {
+        customerQuery: paymentMatch[1],
+        amount: String(parseFakeAmount(paymentMatch[2])),
+        ...(destination ? { destination } : {}),
+      },
+      missingEntities: destination ? ['accountId'] : ['accountId', 'destination'],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
     };
   }
   if (/^[a-záéíóúñ]+ me pag[oó]\.?$/.test(t)) {
@@ -175,9 +213,6 @@ function classify(text: string, currentDate: string): FakeOutput {
   const expenseMatch = t.match(/gast[eé] ([\d.,]+) en ([a-z0-9 ]+)/);
   if (expenseMatch) {
     return { intent: 'REGISTER_EXPENSE', entities: { amount: String(parseFakeAmount(expenseMatch[1])), currency: 'MXN', concept: expenseMatch[2].trim() }, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
-  }
-  if (/le pag[oó] .* a /.test(t)) {
-    return { intent: 'REGISTER_RECEIVABLE_PAYMENT', entities: {}, missingEntities: ['accountId', 'amount', 'destination'], ambiguities: [{ field: 'destination', reason: 'multiple parties mentioned', candidates: [] }], confidence: 'MEDIUM', language: 'es' };
   }
   if (/agrega ([\d.,]+) usdt/.test(t)) {
     const m = t.match(/agrega ([\d.,]+) usdt/)!;

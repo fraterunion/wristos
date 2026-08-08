@@ -1,21 +1,28 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { BusinessCapability } from '../planner/planner.types';
+import { RegisterReceivablePaymentWriteBinding } from './write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './write/register-sale.binding';
 import { WriteCapabilityBindingDefinition } from './write/write-capability-binding-definition';
 
 /**
  * Construction-time allowlist for WRITE capability bindings.
- * Commit 12B: exactly one binding — REGISTER_SALE.
+ * Commit 14B: exactly two bindings — REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT.
  * No dynamic registration API. No user-supplied binding names.
  */
 @Injectable()
 export class WriteCapabilityBindingRegistry implements OnModuleInit {
   private readonly bindings = new Map<BusinessCapability, WriteCapabilityBindingDefinition>();
 
-  constructor(private readonly registerSale: RegisterSaleWriteBinding) {}
+  constructor(
+    private readonly registerSale: RegisterSaleWriteBinding,
+    private readonly registerReceivablePayment: RegisterReceivablePaymentWriteBinding,
+  ) {}
 
   onModuleInit() {
-    const bindings: WriteCapabilityBindingDefinition[] = [this.registerSale];
+    const bindings: WriteCapabilityBindingDefinition[] = [
+      this.registerSale,
+      this.registerReceivablePayment,
+    ];
     if (new Set(bindings.map((b) => b.capability)).size !== bindings.length) {
       throw new Error('Duplicate write capability binding');
     }
@@ -25,8 +32,14 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       }
       this.bindings.set(binding.capability, binding);
     }
-    if (this.bindings.size !== 1 || !this.bindings.has('REGISTER_SALE')) {
-      throw new Error('WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE');
+    if (
+      this.bindings.size !== 2 ||
+      !this.bindings.has('REGISTER_SALE') ||
+      !this.bindings.has('REGISTER_RECEIVABLE_PAYMENT')
+    ) {
+      throw new Error(
+        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE and REGISTER_RECEIVABLE_PAYMENT',
+      );
     }
   }
 

@@ -6,7 +6,7 @@ import { createAssistantAction } from './assistant-api';
 import { postLoginRoute } from './mobile-routing';
 
 describe('assistant surface contracts', () => {
-  it('exposes fourteen reads and seven write-preview actions (REGISTER_SALE is the only executable write)', () => {
+  it('exposes fourteen reads and seven write-preview actions (sale + receivable payment are executable writes)', () => {
     assert.deepEqual(READ_ACTIONS, [
       'GET_LIQUIDITY',
       'GET_MONTHLY_PROFIT',

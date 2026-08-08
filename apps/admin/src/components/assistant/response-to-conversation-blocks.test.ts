@@ -158,15 +158,39 @@ describe('responseToConversationBlocks', () => {
     assert.equal(preview.intro, 'Perfecto. Esto es lo que voy a registrar:');
   });
 
+  it('maps executable REGISTER_RECEIVABLE_PAYMENT preview to Confirmar pago CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      planFingerprint: 'b'.repeat(64),
+      preview: {
+        title: 'Register Receivable Payment',
+        fields: [
+          { label: 'Cliente', value: 'José' },
+          { label: 'Pago', value: '$35,000 MXN' },
+          { label: 'Destino', value: 'Bancos' },
+        ],
+        warnings: [],
+        estimatedEffects: [{ area: 'CxC', description: 'CxC $100,000 → $65,000' }],
+      },
+    });
+    (candidate as { actionRunId?: string }).actionRunId = 'run-pay';
+    const blocks = responseToConversationBlocks('REGISTER_RECEIVABLE_PAYMENT', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
+    assert.equal(preview.ctaLabel, 'Confirmar pago');
+    assert.equal(preview.ctaKind, 'CONFIRM_PAYMENT');
+    assert.equal(preview.intro, 'Voy a registrar este pago:');
+  });
+
   it('every unbound write intent has a truthful non-"Confirmar" CTA label', () => {
     const intents = [
-      'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_PURCHASE',
+      'REGISTER_PURCHASE',
       'REGISTER_EXPENSE', 'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
     ] as const;
     for (const intent of intents) {
       const label = manualCtaLabel(intent);
       assert.notEqual(label, 'Confirmar');
       assert.notEqual(label, 'Confirmar venta');
+      assert.notEqual(label, 'Confirmar pago');
       assert.ok(label.length > 0);
     }
   });

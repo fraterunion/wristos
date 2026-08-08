@@ -127,10 +127,11 @@ export function deriveWorkingContextAfterResponse(args: {
   const now = args.now ?? new Date();
   let working = args.previous;
 
-  if (args.responseType === 'ENTITY_LIST') {
+  if (args.responseType === 'ENTITY_LIST' || args.responseType === 'ENTITY_PICKER') {
     const presented = extractPresentedCandidatesFromEntityList({
       intent: args.intent,
       data: args.payload.data,
+      entityType: args.payload.entityType,
     });
     if (presented) {
       working = applyPresentedCandidates(working, presented, {
@@ -150,6 +151,15 @@ export function deriveWorkingContextAfterResponse(args: {
     working = applySelectedEntity(working, { type: 'CLIENT', id: clientId, label }, now);
   }
 
+  const customerId = typeof args.entities.customerId === 'string' ? args.entities.customerId : null;
+  if (customerId && args.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+    const label =
+      (typeof args.entities.customerName === 'string' && args.entities.customerName) ||
+      (working?.lastPresentedCandidates?.candidates.find((c) => c.id === customerId)?.label) ||
+      'Cliente';
+    working = applySelectedEntity(working, { type: 'CLIENT', id: customerId, label }, now);
+  }
+
   const watchId = typeof args.entities.watchId === 'string' ? args.entities.watchId : null;
   if (watchId && (args.intent === 'SEARCH_INVENTORY' || args.intent === 'REGISTER_SALE' || args.intent === 'REGISTER_PURCHASE')) {
     const label =
@@ -157,6 +167,19 @@ export function deriveWorkingContextAfterResponse(args: {
       (working?.lastPresentedCandidates?.candidates.find((c) => c.id === watchId)?.label) ||
       'Reloj';
     working = applySelectedEntity(working, { type: 'WATCH', id: watchId, label }, now);
+  }
+
+  const accountId =
+    (typeof args.entities.accountId === 'string' && args.entities.accountId) ||
+    (typeof args.entities.accountEntryId === 'string' && args.entities.accountEntryId) ||
+    null;
+  if (accountId && args.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+    const label =
+      (typeof args.entities.receivableLabel === 'string' && args.entities.receivableLabel) ||
+      (typeof args.entities.accountLabel === 'string' && args.entities.accountLabel) ||
+      (working?.lastPresentedCandidates?.candidates.find((c) => c.id === accountId)?.label) ||
+      'Cuenta';
+    working = applySelectedEntity(working, { type: 'ACCOUNT_ENTRY', id: accountId, label }, now);
   }
 
   if (!working) return null;

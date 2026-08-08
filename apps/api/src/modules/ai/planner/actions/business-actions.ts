@@ -13,6 +13,7 @@ const warning = (code: string, message: string, predicate: (entities: Structured
 const questions: Record<string, string> = {
   watchId: 'Which watch should be used?', customerId: 'Who is the customer?', price: 'What is the price?', currency: 'What currency applies?',
   date: 'What date applies?', accountId: 'Which account should be used?', amount: 'What amount should be applied?', destination: 'Where should the payment be received?',
+  payableAccountId: 'Which payable account should receive the settlement?',
   watch: 'Which watch is being purchased?', cost: 'What is the purchase cost?', concept: 'What is the expense for?', sourceAccountId: 'Which account is funding the settlement?',
   destinationAccountId: 'Which account receives the settlement?', asset: 'Which crypto asset?', quantity: 'What quantity applies?', unitPrice: 'What is the crypto unit price?',
   year: 'Which year?', month: 'Which month?', query: 'What should be searched?', clientId: 'Which client?',
@@ -59,7 +60,29 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
   };
 };
 
-const destinationLabel: Record<string, string> = { CASH: 'Efectivo', BANCOS: 'Bancos', CESAR: 'César' };
+const destinationLabel: Record<string, string> = {
+  CASH: 'Efectivo',
+  BANK: 'Bancos',
+  BANCOS: 'Bancos',
+  CESAR: 'Cuenta César',
+  APPLY_TO_PAYABLE: 'Aplicar a cuenta por pagar',
+};
+
+function moneyNumber(value: JsonValue | undefined): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function formatMoneyPreview(amount: JsonValue | undefined, currency: JsonValue | undefined): string {
+  const n = moneyNumber(amount);
+  const cur = typeof currency === 'string' && currency ? currency : 'MXN';
+  if (n === null) return String(amount ?? '');
+  return `$${n.toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${cur}`;
+}
 
 /** Preview effects must match the canonical sale registration command semantics. */
 function registerSaleEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
@@ -152,6 +175,146 @@ function registerSaleConditionalMissing(entities: StructuredEntities): Array<{ e
   return missing;
 }
 
+function registerReceivablePaymentEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
+  const destination = typeof entities.destination === 'string' ? entities.destination : null;
+  const destLabel =
+    (typeof entities.destinationLabel === 'string' && entities.destinationLabel) ||
+    (destination ? destinationLabel[destination] ?? destination : null);
+  const before = entities.outstandingBefore ?? entities.outstandingAmount;
+  const after = entities.outstandingAfter;
+  const cxc =
+    present(before) && present(after)
+      ? `CxC ${formatMoneyPreview(before, entities.currency)} → ${formatMoneyPreview(after, entities.currency)}`
+      : 'CxC: el saldo pendiente disminuye por el monto del pago.';
+  if (destination === 'APPLY_TO_PAYABLE') {
+    const pBefore = entities.payableOutstandingBefore ?? entities.payableOutstandingAmount;
+    const pAfter = entities.payableOutstandingAfter;
+    const cxp =
+      present(pBefore) && present(pAfter)
+        ? `CxP ${formatMoneyPreview(pBefore, entities.currency)} → ${formatMoneyPreview(pAfter, entities.currency)}`
+        : 'CxP: el saldo pendiente disminuye por el mismo monto.';
+    return [
+      { area: 'CxC', description: cxc },
+      { area: 'CxP', description: cxp },
+      { area: 'Liquidity', description: 'Liquidez: Sin cambio' },
+      { area: 'Correction', description: 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.' },
+    ];
+  }
+  return [
+    { area: 'CxC', description: cxc },
+    {
+      area: 'Treasury',
+      description: destLabel ? `${destLabel}: +${formatMoneyPreview(entities.amount, entities.currency)}` : 'Destino de liquidez aumenta por el monto.',
+    },
+    { area: 'Correction', description: 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.' },
+  ];
+}
+
+function registerReceivablePaymentPreviewFields(entities: StructuredEntities): Array<{ label: string; value: JsonValue }> {
+  const destination = typeof entities.destination === 'string' ? entities.destination : null;
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  if (destination === 'APPLY_TO_PAYABLE') {
+    if (present(entities.customerName) || present(entities.receivableLabel)) {
+      rows.push({
+        label: 'CxC',
+        value: [entities.customerName, entities.receivableLabel].filter(present).join(' · ') || null,
+      });
+    }
+    if (present(entities.outstandingBefore) || present(entities.outstandingAmount)) {
+      const before = entities.outstandingBefore ?? entities.outstandingAmount;
+      rows.push({
+        label: 'CxC saldo',
+        value: present(entities.outstandingAfter)
+          ? `${formatMoneyPreview(before, entities.currency)} → ${formatMoneyPreview(entities.outstandingAfter, entities.currency)}`
+          : formatMoneyPreview(before, entities.currency),
+      });
+    }
+    if (present(entities.payableLabel)) {
+      rows.push({ label: 'CxP', value: entities.payableLabel ?? null });
+    }
+    if (present(entities.payableOutstandingBefore) || present(entities.payableOutstandingAmount)) {
+      const before = entities.payableOutstandingBefore ?? entities.payableOutstandingAmount;
+      rows.push({
+        label: 'CxP saldo',
+        value: present(entities.payableOutstandingAfter)
+          ? `${formatMoneyPreview(before, entities.currency)} → ${formatMoneyPreview(entities.payableOutstandingAfter, entities.currency)}`
+          : formatMoneyPreview(before, entities.currency),
+      });
+    }
+    if (present(entities.amount)) {
+      rows.push({ label: 'Pago', value: formatMoneyPreview(entities.amount, entities.currency) });
+    }
+    rows.push({ label: 'Liquidez', value: 'Sin cambio' });
+    return rows;
+  }
+
+  if (present(entities.customerName)) rows.push({ label: 'Cliente', value: entities.customerName ?? null });
+  if (present(entities.receivableLabel) || present(entities.accountLabel)) {
+    rows.push({ label: 'Cuenta por cobrar', value: entities.receivableLabel ?? entities.accountLabel ?? null });
+  }
+  if (present(entities.amount)) {
+    rows.push({ label: 'Pago', value: formatMoneyPreview(entities.amount, entities.currency) });
+  }
+  if (destination) {
+    rows.push({
+      label: 'Destino',
+      value: (typeof entities.destinationLabel === 'string' && entities.destinationLabel) || destinationLabel[destination] || destination,
+    });
+  }
+  if (present(entities.outstandingBefore) || present(entities.outstandingAmount)) {
+    const before = entities.outstandingBefore ?? entities.outstandingAmount;
+    rows.push({
+      label: 'CxC',
+      value: present(entities.outstandingAfter)
+        ? `${formatMoneyPreview(before, entities.currency)} → ${formatMoneyPreview(entities.outstandingAfter, entities.currency)}`
+        : formatMoneyPreview(before, entities.currency),
+    });
+  }
+  if (present(entities.date)) rows.push({ label: 'Fecha', value: entities.date ?? null });
+  return rows;
+}
+
+function registerReceivablePaymentConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  const amount = moneyNumber(entities.amount);
+  if (amount !== null && amount <= 0) {
+    missing.push({ entity: 'amount', question: 'El monto del pago debe ser mayor que cero.' });
+  }
+  const outstanding = moneyNumber(entities.outstandingAmount ?? entities.outstandingBefore);
+  if (amount !== null && outstanding !== null && amount > outstanding) {
+    missing.push({
+      entity: 'amount',
+      question: `El monto supera el saldo pendiente (${formatMoneyPreview(outstanding, entities.currency)}). Indica un monto válido — no se ajusta automáticamente.`,
+    });
+  }
+  if (entities.destination === 'CRYPTO') {
+    missing.push({
+      entity: 'destination',
+      question: 'CRYPTO/USDT no es un destino de cobro soportado. Usa Efectivo, Bancos, César, o aplicar a una cuenta por pagar.',
+    });
+  }
+  if (entities.destination === 'APPLY_TO_PAYABLE') {
+    if (!present(entities.payableAccountId) && !present(entities.payableEntryId)) {
+      missing.push({
+        entity: 'payableAccountId',
+        question: '¿A qué cuenta por pagar se aplica este pago?',
+      });
+    }
+    const payableOutstanding = moneyNumber(
+      entities.payableOutstandingAmount ?? entities.payableOutstandingBefore,
+    );
+    if (amount !== null && payableOutstanding !== null && amount > payableOutstanding) {
+      missing.push({
+        entity: 'amount',
+        question: `El monto supera el saldo de la cuenta por pagar (${formatMoneyPreview(payableOutstanding, entities.currency)}). Indica un monto válido.`,
+      });
+    }
+  }
+  return missing;
+}
+
 export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
   define({ id: 'GET_LIQUIDITY', name: 'Get Liquidity', category: 'FINANCE', tier: 'NONE' }),
   define({ id: 'GET_MONTHLY_PROFIT', name: 'Get Monthly Profit', category: 'ANALYTICS', tier: 'NONE', required: ['year', 'month'] }),
@@ -185,28 +348,40 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     category: 'ACCOUNTS',
     tier: 'HIGH',
     required: ['accountId', 'amount', 'destination'],
-    optional: ['currency', 'date', 'outstandingAmount', 'payableAccountId'],
-    effects: [
-      { area: 'Accounts', description: 'Outstanding receivable is reduced.' },
-      {
-        area: 'Treasury',
-        description:
-          'CASH/BANK/CESAR: destination liquidity increases once. APPLY_TO_PAYABLE: liquidity unchanged; payable decreases.',
-      },
+    optional: [
+      'currency',
+      'date',
+      'notes',
+      'outstandingAmount',
+      'outstandingBefore',
+      'outstandingAfter',
+      'payableAccountId',
+      'payableEntryId',
+      'payableOutstandingAmount',
+      'payableOutstandingBefore',
+      'payableOutstandingAfter',
+      'customerId',
+      'customerName',
+      'receivableLabel',
+      'accountLabel',
+      'payableLabel',
+      'destinationLabel',
+      'uniqueReceivableSelected',
+      'uniquePayableSelected',
     ],
+    effectsBuilder: registerReceivablePaymentEffects,
+    previewFields: registerReceivablePaymentPreviewFields,
+    conditionalMissing: registerReceivablePaymentConditionalMissing,
     warnings: [
-      warning(
-        'AMOUNT_EXCEEDS_OUTSTANDING',
-        'Payment amount exceeds the outstanding balance.',
-        (e) =>
-          typeof e.amount === 'number' &&
-          typeof e.outstandingAmount === 'number' &&
-          e.amount > e.outstandingAmount,
-      ),
       warning(
         'UNSUPPORTED_DESTINATION',
         'CRYPTO is not a receivable-payment destination.',
         (e) => e.destination === 'CRYPTO',
+      ),
+      warning(
+        'UNIQUE_RECEIVABLE_SELECTED',
+        'Se usó la única cuenta por cobrar abierta de este cliente.',
+        (e) => e.uniqueReceivableSelected === true || e.uniqueReceivableSelected === 'true',
       ),
     ],
   }),

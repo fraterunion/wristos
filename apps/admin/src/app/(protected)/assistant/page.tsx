@@ -327,11 +327,14 @@ export default function AssistantPage() {
   const manualHrefFor = useCallback((item: AssistantHistoryItem) => (item.intent === 'UNKNOWN' ? undefined : writeCards.find((card) => card.id === item.intent)?.href), []);
 
   const confirmSale = useCallback(async (item: AssistantHistoryItem, args: { actionRunId: string; planFingerprint: string }) => {
-    if (pending || messagePending || confirmingSale || item.intent !== 'REGISTER_SALE') return;
+    const executableIntent =
+      item.intent === 'REGISTER_SALE' || item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
+    if (pending || messagePending || confirmingSale || !executableIntent) return;
+    const isPayment = item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
     setError(null);
     setMessageError(null);
     setConfirmingSale(true);
-    setMessagePendingLabel('Confirmar venta');
+    setMessagePendingLabel(isPayment ? 'Confirmar pago' : 'Confirmar venta');
     try {
       const result = await confirmAssistantActionRun(args);
       // In-flight: keep the original preview so the user retries the SAME actionRun.
@@ -349,8 +352,8 @@ export default function AssistantPage() {
       setHistory((current) => [
         {
           id,
-          label: 'Confirmar venta',
-          intent: 'REGISTER_SALE',
+          label: isPayment ? 'Confirmar pago' : 'Confirmar venta',
+          intent: item.intent,
           entities: item.entities,
           response,
         },
@@ -364,7 +367,11 @@ export default function AssistantPage() {
       if (error instanceof AssistantRequestError) {
         setMessageError(error.message);
       } else {
-        setMessageError('No pude confirmar la venta. Reintenta la misma confirmación.');
+        setMessageError(
+          isPayment
+            ? 'No pude confirmar el pago. Reintenta la misma confirmación.'
+            : 'No pude confirmar la venta. Reintenta la misma confirmación.',
+        );
       }
     } finally {
       setConfirmingSale(false);
@@ -384,7 +391,9 @@ export default function AssistantPage() {
   // True while either the structured or the natural-language flow has a
   // request in flight — both share one thread and must not overlap.
   const busy = !!pending || !!messagePending || confirmingSale;
-  const combinedPendingLabel = confirmingSale ? 'Confirmar venta' : (pendingLabel ?? messagePendingLabel);
+  const combinedPendingLabel = confirmingSale
+    ? (messagePendingLabel ?? 'Confirmando…')
+    : (pendingLabel ?? messagePendingLabel);
   const combinedError = error ?? messageError;
   const combinedOnRetry = retryAction
     ? () => void runAction(retryAction, 'Reintentando la última solicitud.')

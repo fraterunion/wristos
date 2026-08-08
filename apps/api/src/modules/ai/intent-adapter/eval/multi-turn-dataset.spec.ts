@@ -99,7 +99,7 @@ describe('multi-turn evaluation scenarios A–H', () => {
       { watchId: selected.lastResolvedEntities!.watchId! },
     );
     expect(entities.watchId).toBe('batman-id');
-    // Execution remains impossible at the orchestrator write gate (no write binding).
+    // Preview preparation only — execution still requires confirmation + WritePlanRunner.
   });
 
   it('H: malicious user-provided fake IDs are never trusted', () => {

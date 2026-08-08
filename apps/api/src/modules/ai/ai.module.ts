@@ -19,6 +19,8 @@ import { BusinessCapabilityCatalog } from './planner/capabilities/business-capab
 import { CapabilityBindingRegistry } from './bindings/capability-binding-registry';
 import { CapabilityBindingService } from './bindings/capability-binding.service';
 import { ReadPlanRunner } from './bindings/read-plan-runner';
+import { ReceivablePaymentEntityResolver } from './bindings/write/receivable-payment-entity-resolver.service';
+import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './bindings/write/register-sale.binding';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
 import { WritePlanRunner } from './bindings/write-plan-runner';
@@ -51,6 +53,8 @@ import { OperationalIntelligenceService } from './operational-intelligence/opera
     CapabilityBindingService,
     ReadPlanRunner,
     RegisterSaleWriteBinding,
+    RegisterReceivablePaymentWriteBinding,
+    ReceivablePaymentEntityResolver,
     WriteCapabilityBindingRegistry,
     WritePlanRunner,
     AIRequestService,
