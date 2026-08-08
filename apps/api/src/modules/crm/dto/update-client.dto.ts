@@ -1,11 +1,13 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsDateString,
   IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateClientDto {
@@ -15,10 +17,12 @@ export class UpdateClientDto {
   name?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsEmail()
   email?: string | null;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsString()
   @Matches(/^[0-9+()\-\s]{7,20}$/, {
     message: 'phone must be a valid phone-like string',
@@ -38,4 +42,9 @@ export class UpdateClientDto {
   @IsOptional()
   @IsString()
   budgetRange?: string | null;
+
+  /** Optional optimistic concurrency token (ISO Client.updatedAt). */
+  @IsOptional()
+  @IsDateString()
+  expectedUpdatedAt?: string;
 }

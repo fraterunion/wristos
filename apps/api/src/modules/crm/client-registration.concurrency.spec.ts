@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ClientRegistrationService } from './client-registration.service';
+import { ClientUpdateService } from './client-update.service';
 import {
   clientPhoneIdentityKey,
   normalizeClientEmail,
@@ -385,7 +386,11 @@ describe('Client identity concurrency — durable uniqueness (post-fix)', () => 
     };
     clients.set('a', { ...base, id: 'a', name: 'A' });
     clients.set('b', { ...base, id: 'b', name: 'B' });
-    const crm = new CrmService(prisma, new ClientRegistrationService(prisma));
+    const crm = new CrmService(
+      prisma,
+      new ClientRegistrationService(prisma),
+      new ClientUpdateService(prisma),
+    );
 
     let release!: () => void;
     const gate = new Promise<void>((r) => {
