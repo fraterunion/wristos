@@ -24,6 +24,15 @@ describe('Capability binding architecture', () => {
     expect(source).not.toMatch(/ClientRegistrationService|create-client\.binding/);
   });
 
+  it('does not import ClientUpdateService from planner or intent-adapter production source', () => {
+    const plannerRoot = join(__dirname, '..', '..', 'planner');
+    const intentRoot = join(__dirname, '..', '..', 'intent-adapter');
+    const plannerSource = files(plannerRoot).map((path) => readFileSync(path, 'utf8')).join('\n');
+    const intentSource = files(intentRoot).map((path) => readFileSync(path, 'utf8')).join('\n');
+    expect(plannerSource).not.toMatch(/ClientUpdateService|update-client\.binding/);
+    expect(intentSource).not.toMatch(/ClientUpdateService|update-client\.binding/);
+  });
+
   it('does not expose a capability execution controller', () => {
     const controller = readFileSync(join(__dirname, '..', '..', 'ai.controller.ts'), 'utf8');
     expect(controller).not.toMatch(/ReadPlanRunner|execute-capability|capabilities\/execute/);

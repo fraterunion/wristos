@@ -55,6 +55,7 @@ const MANUAL_CTA_LABEL: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_PURCHASE: 'Abrir Inventario',
   REGISTER_EXPENSE: 'Completar en Gastos',
   CREATE_CLIENT: 'Abrir CRM',
+  UPDATE_CLIENT: 'Abrir CRM',
   REGISTER_SETTLEMENT: 'Continuar en Cuentas',
   REGISTER_CRYPTO_POSITION: 'Abrir Crypto',
   REGISTER_CRYPTO_PRICE: 'Abrir Crypto',
@@ -69,6 +70,7 @@ export type PreviewCtaKind =
   | 'CONFIRM_PAYMENT'
   | 'CONFIRM_EXPENSE'
   | 'CONFIRM_CLIENT'
+  | 'CONFIRM_CLIENT_UPDATE'
   | 'CONFIRM_PURCHASE'
   | 'MANUAL_MODULE';
 
@@ -546,20 +548,24 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'REGISTER_PURCHASE' && response.payload.executable === true;
   const executableCreateClient =
     intent === 'CREATE_CLIENT' && response.payload.executable === true;
+  const executableUpdateClient =
+    intent === 'UPDATE_CLIENT' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
-  const intro = executableCreateClient
-    ? 'Voy a crear este cliente:'
-    : executablePurchase
-      ? 'Voy a registrar esta compra:'
-      : executableExpense
-        ? 'Voy a registrar este gasto:'
-        : executablePayment
-          ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
-              ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
-              : 'Voy a registrar este pago:')
-          : executableSale
-            ? 'Perfecto. Esto es lo que voy a registrar:'
-            : 'Perfecto. Esto es lo que voy a preparar:';
+  const intro = executableUpdateClient
+    ? 'Voy a actualizar este cliente:'
+    : executableCreateClient
+      ? 'Voy a crear este cliente:'
+      : executablePurchase
+        ? 'Voy a registrar esta compra:'
+        : executableExpense
+          ? 'Voy a registrar este gasto:'
+          : executablePayment
+            ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
+                ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
+                : 'Voy a registrar este pago:')
+            : executableSale
+              ? 'Perfecto. Esto es lo que voy a registrar:'
+              : 'Perfecto. Esto es lo que voy a preparar:';
   return [
     {
       kind: 'preview',
@@ -568,28 +574,32 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
       title,
       fields,
       effects,
-      ctaLabel: executableCreateClient
-        ? 'Crear cliente'
-        : executablePurchase
-          ? 'Confirmar compra'
-          : executableExpense
-            ? 'Confirmar gasto'
-            : executablePayment
-              ? 'Confirmar pago'
-              : executableSale
-                ? 'Confirmar venta'
-                : manualCtaLabel(intent),
-      ctaKind: executableCreateClient
-        ? 'CONFIRM_CLIENT'
-        : executablePurchase
-          ? 'CONFIRM_PURCHASE'
-          : executableExpense
-            ? 'CONFIRM_EXPENSE'
-            : executablePayment
-              ? 'CONFIRM_PAYMENT'
-              : executableSale
-                ? 'CONFIRM_SALE'
-                : 'MANUAL_MODULE',
+      ctaLabel: executableUpdateClient
+        ? 'Guardar cambios'
+        : executableCreateClient
+          ? 'Crear cliente'
+          : executablePurchase
+            ? 'Confirmar compra'
+            : executableExpense
+              ? 'Confirmar gasto'
+              : executablePayment
+                ? 'Confirmar pago'
+                : executableSale
+                  ? 'Confirmar venta'
+                  : manualCtaLabel(intent),
+      ctaKind: executableUpdateClient
+        ? 'CONFIRM_CLIENT_UPDATE'
+        : executableCreateClient
+          ? 'CONFIRM_CLIENT'
+          : executablePurchase
+            ? 'CONFIRM_PURCHASE'
+            : executableExpense
+              ? 'CONFIRM_EXPENSE'
+              : executablePayment
+                ? 'CONFIRM_PAYMENT'
+                : executableSale
+                  ? 'CONFIRM_SALE'
+                  : 'MANUAL_MODULE',
       planFingerprint,
       actionRunId: response.actionRunId,
     },
@@ -766,6 +776,36 @@ function createClientReceiptBlocks(response: StructuredAssistantResponse): Conve
   ];
 }
 
+function updateClientReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. El cliente quedó actualizado.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const name = asString(receipt.name);
+    if (name) lines.push(name);
+    const changed = Array.isArray(receipt.changedFields)
+      ? receipt.changedFields.map((f) => String(f)).join(', ')
+      : null;
+    if (changed) lines.push(`Cambios: ${changed}`);
+    const phoneMasked = asString(receipt.phoneMasked);
+    if (phoneMasked) lines.push(`Teléfono ${phoneMasked}`);
+    const emailMasked = asString(receipt.emailMasked);
+    if (emailMasked) lines.push(`Correo ${emailMasked}`);
+  }
+  const clientId = receipt && typeof receipt.clientId === 'string' ? receipt.clientId : null;
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: clientId ? `/crm/${clientId}` : '/crm',
+      correctHref: '/crm',
+    },
+  ];
+}
+
 function paymentReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
   const message =
     asString(response.payload.message) ?? 'Listo. El pago quedó registrado.';
@@ -881,6 +921,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'CREATE_CLIENT') {
         main = createClientReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'UPDATE_CLIENT') {
+        main = updateClientReceiptBlocks(response);
         break;
       }
       const summary = asString(response.payload.message) ?? asString(response.payload.summary);

@@ -5,12 +5,14 @@ import { RegisterExpenseWriteBinding } from './write/register-expense.binding';
 import { RegisterPurchaseWriteBinding } from './write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './write/register-sale.binding';
+import { UpdateClientWriteBinding } from './write/update-client.binding';
 import { WriteCapabilityBindingDefinition } from './write/write-capability-binding-definition';
 
 /**
  * Construction-time allowlist for WRITE capability bindings.
- * Commit 18B: exactly five bindings —
- * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE + REGISTER_PURCHASE + CREATE_CLIENT.
+ * Commit 19B: exactly six bindings —
+ * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE + REGISTER_PURCHASE
+ * + CREATE_CLIENT + UPDATE_CLIENT.
  * No dynamic registration API. No user-supplied binding names.
  */
 @Injectable()
@@ -23,6 +25,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
     private readonly registerExpense: RegisterExpenseWriteBinding,
     private readonly registerPurchase: RegisterPurchaseWriteBinding,
     private readonly createClient: CreateClientWriteBinding,
+    private readonly updateClient: UpdateClientWriteBinding,
   ) {}
 
   onModuleInit() {
@@ -32,6 +35,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.registerExpense,
       this.registerPurchase,
       this.createClient,
+      this.updateClient,
     ];
     if (new Set(bindings.map((b) => b.capability)).size !== bindings.length) {
       throw new Error('Duplicate write capability binding');
@@ -45,15 +49,16 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.bindings.set(binding.capability, binding);
     }
     if (
-      this.bindings.size !== 5 ||
+      this.bindings.size !== 6 ||
       !this.bindings.has('REGISTER_SALE') ||
       !this.bindings.has('REGISTER_RECEIVABLE_PAYMENT') ||
       !this.bindings.has('REGISTER_EXPENSE') ||
       !this.bindings.has('REGISTER_PURCHASE') ||
-      !this.bindings.has('CREATE_CLIENT')
+      !this.bindings.has('CREATE_CLIENT') ||
+      !this.bindings.has('UPDATE_CLIENT')
     ) {
       throw new Error(
-        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, and CREATE_CLIENT',
+        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, CREATE_CLIENT, and UPDATE_CLIENT',
       );
     }
   }

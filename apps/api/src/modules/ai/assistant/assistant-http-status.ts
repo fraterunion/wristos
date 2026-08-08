@@ -56,6 +56,8 @@ export function structuredAssistantHttpStatus(response: StructuredAssistantRespo
     case 'CLIENT_EXACT_DUPLICATE':
     case 'CLIENT_DELETED_MATCH':
     case 'CLIENT_IDENTITY_CONFLICT':
+    case 'CLIENT_STALE':
+    case 'AMBIGUOUS_RECOVERY':
       return HttpStatus.CONFLICT;
     case 'READ_EXECUTION_FAILED':
       return HttpStatus.INTERNAL_SERVER_ERROR;

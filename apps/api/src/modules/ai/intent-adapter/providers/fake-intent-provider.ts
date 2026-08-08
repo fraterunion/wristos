@@ -141,6 +141,70 @@ function classify(
     return { intent: 'SEARCH_CLIENT', entities: { query: name }, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
   }
 
+  // UPDATE_CLIENT — before CREATE_CLIENT / SEARCH to avoid "agrega nota" → create.
+  {
+    const updatePhone = t.match(
+      /(?:c[aá]mbiale|cambia|ponle|actual[ií]za)\s+(?:el\s+)?tel[eé]fono(?:\s+a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,60}))?\s*(?:al?|a|:)?\s*(\+?\d[\d\s()-]{6,18}\d)/i,
+    );
+    const updateEmail = t.match(
+      /(?:c[aá]mbiale|cambia|ponle|actual[ií]za)\s+(?:el\s+)?(?:correo|email|mail)(?:\s+a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,60}))?\s*(?:a|:)?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+    );
+    const updateName = t.match(
+      /(?:c[aá]mbiale|cambia)\s+(?:el\s+)?nombre(?:\s+a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,60}))?\s*(?:a|por|:)\s*([a-záéíóúñü][a-záéíóúñü\s.'-]{1,80})/i,
+    );
+    const appendNote = t.match(
+      /(?:agr[eé]gale|agrega|a[nñ]ade)\s+(?:una\s+)?nota(?:\s+a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,60}))?\s*(?:que|:)?\s*(.+)$/i,
+    );
+    const removeTag = t.match(
+      /(?:qu[ií]tale|quita|elimina)\s+(?:el\s+)?tag\s+([a-z0-9_-]{1,40})(?:\s+a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,60}))?/i,
+    );
+    const addTag = t.match(
+      /(?:agr[eé]gale|agrega|ponle)\s+(?:el\s+)?tag\s+([a-z0-9_-]{1,40})(?:\s+a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,60}))?/i,
+    );
+    const clearPhone = /(?:qu[ií]tale|quita)\s+(?:el\s+)?tel[eé]fono/.test(t);
+    const clearEmail = /(?:qu[ií]tale|quita|d[eé]jalo sin)\s+(?:el\s+)?(?:correo|email)/.test(t);
+    const deicticUpdate =
+      /^(?:c[aá]mbiale|ponle|agr[eé]gale|qu[ií]tale)\b/.test(t) &&
+      !/(?:crea|crear|busca|pag[oó]|vend[ií]|compr[eé])/.test(t);
+
+    if (updatePhone || updateEmail || updateName || appendNote || removeTag || addTag || clearPhone || clearEmail || deicticUpdate) {
+      const entities: Record<string, string | boolean> = {};
+      const clientFrom =
+        updatePhone?.[1] ||
+        updateEmail?.[1] ||
+        updateName?.[1] ||
+        appendNote?.[1] ||
+        removeTag?.[2] ||
+        addTag?.[2];
+      if (clientFrom) entities.clientQuery = clientFrom.trim().replace(/\s+/g, ' ');
+      if (updatePhone?.[2]) entities.setPhone = updatePhone[2].replace(/\s+/g, ' ').trim();
+      if (updateEmail?.[2]) entities.setEmail = updateEmail[2].trim();
+      if (updateName?.[2]) entities.setName = updateName[2].trim().replace(/\s+/g, ' ');
+      if (appendNote?.[2]) entities.appendNotes = appendNote[2].trim().replace(/[.,;:]+$/, '');
+      if (addTag?.[1]) entities.addTag = addTag[1].trim();
+      if (removeTag?.[1]) entities.removeTag = removeTag[1].trim();
+      if (clearPhone) entities.clearPhone = true;
+      if (clearEmail) entities.clearEmail = true;
+      // Deictic phone/email without explicit verbs above
+      if (!entities.setPhone && !entities.clearPhone) {
+        const phoneOnly = t.match(/tel[eé]fono.*(\+?\d[\d\s()-]{6,18}\d)/i);
+        if (phoneOnly) entities.setPhone = phoneOnly[1]!.replace(/\s+/g, ' ').trim();
+      }
+      if (!entities.setEmail && !entities.clearEmail) {
+        const emailOnly = t.match(/([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i);
+        if (emailOnly && /correo|email|mail|ponle/.test(t)) entities.setEmail = emailOnly[1]!;
+      }
+      return {
+        intent: 'UPDATE_CLIENT',
+        entities,
+        missingEntities: entities.clientQuery ? [] : ['clientQuery'],
+        ambiguities: [],
+        confidence: 'HIGH',
+        language: 'es',
+      };
+    }
+  }
+
   // CREATE_CLIENT — before SEARCH_CLIENT / payment / purchase to avoid collisions.
   if (
     context?.lastIntent === 'CREATE_CLIENT' &&

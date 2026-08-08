@@ -65,11 +65,12 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
 
 function capabilityLabel(
   capability: string,
-): 'venta' | 'pago' | 'gasto' | 'compra' | 'cliente' {
+): 'venta' | 'pago' | 'gasto' | 'compra' | 'cliente' | 'actualizacion' {
   if (capability === 'REGISTER_RECEIVABLE_PAYMENT') return 'pago';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
+  if (capability === 'UPDATE_CLIENT') return 'actualizacion';
   return 'venta';
 }
 
@@ -208,7 +209,7 @@ export class WritePlanRunner {
       const bindingLatencyMs = Date.now() - bindingStarted;
       const envelope = await this.finalizeSuccess(args, run, plan, primary, {
         replayed: this.isReplayedReceipt(primary),
-        recovered,
+        recovered: recovered || this.isRecoveredReceipt(primary),
         priorStatus: claim.kind === 'RECOVER' ? claim.priorStatus : undefined,
       });
       telem(this.telemetry, {
@@ -712,11 +713,24 @@ export class WritePlanRunner {
   }
 
   private isReplayedReceipt(primary: BusinessActionResult): boolean {
+    if (
+      !primary.receipt ||
+      typeof primary.receipt !== 'object' ||
+      Array.isArray(primary.receipt)
+    ) {
+      return false;
+    }
+    const receipt = primary.receipt as Record<string, unknown>;
+    // CREATE uses replayed; UPDATE_CLIENT may set recovered after intended-state match.
+    return receipt.replayed === true || receipt.recovered === true;
+  }
+
+  private isRecoveredReceipt(primary: BusinessActionResult): boolean {
     return Boolean(
       primary.receipt &&
         typeof primary.receipt === 'object' &&
         !Array.isArray(primary.receipt) &&
-        (primary.receipt as Record<string, unknown>).replayed === true,
+        (primary.receipt as Record<string, unknown>).recovered === true,
     );
   }
 
@@ -751,9 +765,13 @@ export class WritePlanRunner {
                 ? meta.recovered || meta.replayed
                   ? 'Listo. El cliente ya estaba creado.'
                   : 'Listo. El cliente quedó creado.'
-                : meta.recovered || meta.replayed
-                  ? 'Listo. La venta ya estaba registrada.'
-                  : 'Listo. La venta quedó registrada.',
+                : label === 'actualizacion'
+                  ? meta.recovered || meta.replayed
+                    ? 'Listo. El cliente ya estaba actualizado.'
+                    : 'Listo. El cliente quedó actualizado.'
+                  : meta.recovered || meta.replayed
+                    ? 'Listo. La venta ya estaba registrada.'
+                    : 'Listo. La venta quedó registrada.',
       receipt: result.receipt,
       planFingerprint: run.planFingerprint,
       executableWrite: true,
@@ -787,7 +805,9 @@ export class WritePlanRunner {
                 ? 'La compra ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
                 : label === 'cliente'
                   ? 'El cliente ya quedó creado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-                  : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
+                  : label === 'actualizacion'
+                    ? 'El cliente ya quedó actualizado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+                    : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
         receipt: null,
         planFingerprint: run.planFingerprint,
         executableWrite: true,
@@ -815,8 +835,30 @@ export class WritePlanRunner {
         responseType: 'ERROR_RECOVERY_CARD',
         message:
           failureType === 'CLIENT_DELETED_MATCH'
-            ? 'Existe un cliente eliminado con esos datos. No se creó un duplicado. Restáuralo desde CRM si corresponde.'
-            : 'Ya existe un cliente con esos datos de contacto. No se creó un duplicado.',
+            ? label === 'actualizacion'
+              ? 'Existe un cliente eliminado con esos datos de contacto. No se actualizó el cliente. Restáuralo desde CRM si corresponde.'
+              : 'Existe un cliente eliminado con esos datos. No se creó un duplicado. Restáuralo desde CRM si corresponde.'
+            : label === 'actualizacion'
+              ? 'Otro cliente activo ya usa esos datos de contacto. No se actualizó el cliente.'
+              : 'Ya existe un cliente con esos datos de contacto. No se creó un duplicado.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
+    if (failureType === 'CLIENT_STALE' || failureType === 'AMBIGUOUS_RECOVERY') {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'Este cliente cambió desde que preparé la actualización. Revisemos los datos actuales antes de continuar.',
         receipt: null,
         planFingerprint: run.planFingerprint,
         executableWrite: true,
@@ -849,13 +891,19 @@ export class WritePlanRunner {
                 : permission
                   ? 'Ya no tienes permiso para crear este cliente. No se realizó ningún cambio.'
                   : 'No pude crear el cliente. No se realizó ningún cambio.'
-              : stale
-                ? failureType === 'STALE_WATCH_SOLD'
-                  ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-                  : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-                : permission
-                  ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
-                  : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
+              : label === 'actualizacion'
+                ? stale
+                  ? 'Este cliente cambió desde que preparé la actualización. Revisemos los datos actuales antes de continuar.'
+                  : permission
+                    ? 'Ya no tienes permiso para actualizar este cliente. No se realizó ningún cambio.'
+                    : 'No pude actualizar el cliente. No se realizó ningún cambio.'
+                : stale
+                  ? failureType === 'STALE_WATCH_SOLD'
+                    ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+                    : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+                  : permission
+                    ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
+                    : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
     return {
       actionRun: run,
       executionState: 'FAILED',
@@ -881,7 +929,9 @@ export class WritePlanRunner {
           code === 'CLIENT_EXACT_DUPLICATE' ||
           code === 'CLIENT_DELETED_MATCH' ||
           code === 'CLIENT_IDENTITY_CONFLICT' ||
-          code === 'CLIENT_IDEMPOTENCY_PAYLOAD_CONFLICT'
+          code === 'CLIENT_IDEMPOTENCY_PAYLOAD_CONFLICT' ||
+          code === 'CLIENT_STALE' ||
+          code === 'AMBIGUOUS_RECOVERY'
         ) {
           return String(code);
         }

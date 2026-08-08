@@ -5,6 +5,7 @@ import { RegisterExpenseWriteBinding } from '../write/register-expense.binding';
 import { RegisterPurchaseWriteBinding } from '../write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
+import { UpdateClientWriteBinding } from '../write/update-client.binding';
 
 function buildRegistry() {
   const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
@@ -40,43 +41,54 @@ function buildRegistry() {
     mode: 'WRITE',
     bindingName: 'create_client_canonical@1.0.0',
   });
+  const updateClient = Object.assign(new UpdateClientWriteBinding({} as never, {} as never), {
+    capability: 'UPDATE_CLIENT',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'update_client_canonical@1.0.0',
+  });
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
     expense,
     purchase,
     createClient,
+    updateClient,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly five WRITE bindings including CREATE_CLIENT', () => {
+  it('contains exactly six WRITE bindings including UPDATE_CLIENT', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(5);
+    expect(bindings).toHaveLength(6);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
       'REGISTER_EXPENSE',
       'REGISTER_PURCHASE',
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_SALE',
+      'UPDATE_CLIENT',
     ]);
     expect(bindings.every((b) => b.mode === 'WRITE')).toBe(true);
     expect(registry).not.toHaveProperty('register');
   });
 
-  it.each(['REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE', 'UPDATE_CLIENT'])(
-    'keeps %s explicitly unbound for WRITE',
-    (capability) => {
-      const registry = buildRegistry();
-      expect(registry.hasBinding(capability)).toBe(false);
-      expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
-    },
-  );
+  it.each([
+    'REGISTER_SETTLEMENT',
+    'REGISTER_CRYPTO_POSITION',
+    'REGISTER_CRYPTO_PRICE',
+    'DELETE_CLIENT',
+    'MERGE_CLIENT',
+  ])('keeps %s explicitly unbound for WRITE', (capability) => {
+    const registry = buildRegistry();
+    expect(registry.hasBinding(capability)).toBe(false);
+    expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
+  });
 
-  it('rejects construction when CREATE_CLIENT is missing', () => {
+  it('rejects construction when UPDATE_CLIENT is missing', () => {
     const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
       capability: 'REGISTER_SALE',
       mode: 'WRITE',
@@ -96,16 +108,85 @@ describe('WriteCapabilityBindingRegistry', () => {
       capability: 'REGISTER_PURCHASE',
       mode: 'WRITE',
     });
+    const createClient = Object.assign(new CreateClientWriteBinding({} as never, {} as never), {
+      capability: 'CREATE_CLIENT',
+      mode: 'WRITE',
+    });
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
       mode: 'WRITE',
       bindingName: 'x',
     } as never;
-    const registry = new WriteCapabilityBindingRegistry(sale, payment, expense, purchase, wrong);
-    expect(() => registry.onModuleInit()).toThrow(
-      /exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, and CREATE_CLIENT/,
+    const registry = new WriteCapabilityBindingRegistry(
+      sale,
+      payment,
+      expense,
+      purchase,
+      createClient,
+      wrong,
     );
+    expect(() => registry.onModuleInit()).toThrow(
+      /CREATE_CLIENT, and UPDATE_CLIENT/,
+    );
+  });
+});
+
+describe('UpdateClientWriteBinding mapInput', () => {
+  const binding = new UpdateClientWriteBinding({} as never, {} as never);
+  const context = {
+    tenantId: 't1',
+    userId: 'u1',
+    permissions: [],
+    conversationId: 'c1',
+    workspaceId: null,
+    actionRunId: 'run-upd-1',
+    requestId: 'r1',
+    locale: 'es-MX',
+    timezone: 'UTC',
+    now: new Date('2026-08-08T00:00:00Z'),
+    planFingerprint: 'a'.repeat(64),
+  };
+
+  it('maps materialized final patch + expectedUpdatedAt', () => {
+    const input = binding.mapInput(
+      {
+        stepId: 's1',
+        capability: 'UPDATE_CLIENT',
+        arguments: {
+          clientId: 'client-1',
+          expectedUpdatedAt: '2026-08-08T12:00:00.000Z',
+          patchPhone: '+525512345678',
+          patchNotes: 'base\nprefiere AP',
+          operations: ['SET_PHONE', 'APPEND_NOTES'],
+          changedFields: ['phone', 'notes'],
+        },
+        dependsOn: [],
+        estimatedEffects: [],
+        reversibility: 'NONE',
+      },
+      context,
+    );
+    expect(input.clientId).toBe('client-1');
+    expect(input.expectedUpdatedAt).toBe('2026-08-08T12:00:00.000Z');
+    expect(input.patch.phone).toBe('+525512345678');
+    expect(input.patch.notes).toBe('base\nprefiere AP');
+  });
+
+  it('rejects missing expectedUpdatedAt', () => {
+    expect(() =>
+      binding.mapInput(
+        {
+          stepId: 's1',
+          capability: 'UPDATE_CLIENT',
+          arguments: { clientId: 'c1', patchPhone: '+525512345678' },
+          dependsOn: [],
+          estimatedEffects: [],
+          reversibility: 'NONE',
+        },
+        context,
+      ),
+    ).toThrow(/expectedUpdatedAt/);
   });
 });
 

@@ -29,6 +29,7 @@ export function ConversationPreview({
     | 'CONFIRM_EXPENSE'
     | 'CONFIRM_PURCHASE'
     | 'CONFIRM_CLIENT'
+    | 'CONFIRM_CLIENT_UPDATE'
     | 'MANUAL_MODULE';
   ctaHref?: string;
   onConfirm?: () => void;
@@ -43,6 +44,7 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_PAYMENT' ||
     ctaKind === 'CONFIRM_EXPENSE' ||
     ctaKind === 'CONFIRM_CLIENT' ||
+    ctaKind === 'CONFIRM_CLIENT_UPDATE' ||
     ctaKind === 'CONFIRM_PURCHASE';
   return (
     <AssistantMessage showAvatar={showAvatar} delayMs={delayMs}>
@@ -76,7 +78,13 @@ export function ConversationPreview({
               onClick={onConfirm}
               className="inline-flex min-h-9 items-center rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black disabled:opacity-50"
             >
-              {busy ? (ctaKind === 'CONFIRM_CLIENT' ? 'Creando…' : 'Registrando…') : ctaLabel}
+              {busy
+                ? ctaKind === 'CONFIRM_CLIENT'
+                  ? 'Creando…'
+                  : ctaKind === 'CONFIRM_CLIENT_UPDATE'
+                    ? 'Guardando…'
+                    : 'Registrando…'
+                : ctaLabel}
             </button>
           ) : ctaHref ? (
             <Link href={ctaHref} className="inline-flex min-h-9 items-center rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black">

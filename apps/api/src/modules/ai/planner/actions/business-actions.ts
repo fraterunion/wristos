@@ -906,6 +906,81 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     ],
     reversibility: 'NONE',
   }),
+  define({
+    id: 'UPDATE_CLIENT',
+    name: 'Update Client',
+    category: 'CRM',
+    tier: 'MEDIUM',
+    required: ['clientId', 'expectedUpdatedAt'],
+    optional: [
+      'clientLabel',
+      'selectedClientId',
+      'operations',
+      'changedFields',
+      'changePreview',
+      'preStateHashes',
+      'patchName',
+      'patchEmail',
+      'patchPhone',
+      'patchNotes',
+      'patchTags',
+      'patchBudgetRange',
+      'hasEmail',
+      'hasPhone',
+      'clientQuery',
+      'clientName',
+      'setName',
+      'setEmail',
+      'setPhone',
+      'setNotes',
+      'appendNotes',
+      'addTags',
+      'removeTags',
+      'replaceTags',
+      'budgetRange',
+      'email',
+      'phone',
+      'notes',
+      'tags',
+    ],
+    effects: [
+      { area: 'CRM', description: 'Actualización de contacto' },
+      { area: 'Finanzas', description: 'Sin cambios' },
+    ],
+    previewFields: (entities) => {
+      const rows: Array<{ label: string; value: JsonValue }> = [
+        { label: 'Cliente', value: entities.clientLabel ?? entities.clientName ?? '—' },
+      ];
+      const preview = entities.changePreview;
+      if (Array.isArray(preview)) {
+        for (const item of preview) {
+          if (!item || typeof item !== 'object') continue;
+          const row = item as Record<string, JsonValue>;
+          const field = String(row.field ?? '');
+          const label =
+            field === 'name'
+              ? 'Nombre'
+              : field === 'email'
+                ? 'Correo'
+                : field === 'phone'
+                  ? 'Teléfono'
+                  : field === 'notes'
+                    ? 'Notas'
+                    : field === 'tags'
+                      ? 'Etiquetas'
+                      : field === 'budgetRange'
+                        ? 'Presupuesto'
+                        : field || 'Campo';
+          rows.push({
+            label,
+            value: `${String(row.before ?? '—')} → ${String(row.after ?? '—')}`,
+          });
+        }
+      }
+      return rows;
+    },
+    reversibility: 'NONE',
+  }),
   define({ id: 'REGISTER_SETTLEMENT', name: 'Register Settlement', category: 'ACCOUNTS', tier: 'HIGH', required: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'], optional: ['date'], effects: [{ area: 'Accounts', description: 'The selected accounts are settled by the confirmed amount.' }] }),
   define({ id: 'REGISTER_CRYPTO_POSITION', name: 'Register Crypto Position', category: 'TREASURY', tier: 'HIGH', required: ['asset', 'quantity', 'cost', 'currency'], optional: ['date'], effects: [{ area: 'Crypto', description: 'The confirmed position is recorded.' }] }),
   define({ id: 'REGISTER_CRYPTO_PRICE', name: 'Register Crypto Price', category: 'TREASURY', tier: 'MEDIUM', required: ['asset', 'unitPrice', 'currency'], optional: ['date'], effects: [{ area: 'Crypto', description: 'The confirmed price snapshot is recorded.' }] }),

@@ -178,6 +178,31 @@ export function deriveWorkingContextAfterResponse(args: {
     }
   }
 
+  // After UPDATE_CLIENT: keep / refresh trusted selected Client (safe label only).
+  if (args.intent === 'UPDATE_CLIENT') {
+    if (args.responseType === 'SUCCESS_RECEIPT') {
+      const receipt =
+        args.payload.receipt && typeof args.payload.receipt === 'object'
+          ? (args.payload.receipt as Record<string, unknown>)
+          : null;
+      const updatedId = typeof receipt?.clientId === 'string' ? receipt.clientId : null;
+      const updatedName = typeof receipt?.name === 'string' ? receipt.name : 'Cliente';
+      if (updatedId) {
+        working = applySelectedEntity(working, { type: 'CLIENT', id: updatedId, label: updatedName }, now);
+      }
+    } else {
+      const selectedId =
+        (typeof args.entities.selectedClientId === 'string' && args.entities.selectedClientId) ||
+        (typeof args.entities.clientId === 'string' && args.entities.clientId) ||
+        null;
+      if (selectedId) {
+        const label =
+          (typeof args.entities.clientLabel === 'string' && args.entities.clientLabel) || 'Cliente';
+        working = applySelectedEntity(working, { type: 'CLIENT', id: selectedId, label }, now);
+      }
+    }
+  }
+
   const customerId = typeof args.entities.customerId === 'string' ? args.entities.customerId : null;
   if (customerId && args.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
     const label =

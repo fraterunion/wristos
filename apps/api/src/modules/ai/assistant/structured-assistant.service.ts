@@ -6,6 +6,7 @@ import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
 import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
 import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-payment-entity-resolver.service';
+import { UpdateClientEntityResolver } from '../bindings/write/update-client-entity-resolver.service';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
 import { BusinessExecutionPlan } from '../planner/planner.types';
@@ -22,6 +23,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
+  'UPDATE_CLIENT',
 ]);
 
 @Injectable()
@@ -34,6 +36,7 @@ export class StructuredAssistantService {
     private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
     private readonly purchaseEntityResolver: PurchaseEntityResolver,
     private readonly createClientEntityResolver: CreateClientEntityResolver,
+    private readonly updateClientEntityResolver: UpdateClientEntityResolver,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -206,6 +209,72 @@ export class StructuredAssistantService {
               { intent: input.intent, entities },
             );
           }
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            resolved.clarify.message,
+            resolved.clarify.items,
+            resolved.clarify.entityType,
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+      }
+      if (input.intent === 'UPDATE_CLIENT') {
+        const resolved = await this.updateClientEntityResolver.resolve(
+          actor.tenantId,
+          entities as Record<string, JsonValue>,
+        );
+        entities = resolved.entities as typeof entities;
+        if (resolved.kind === 'NOOP') {
+          const response = this.responseBase(
+            request.id,
+            request.traceId,
+            prepared,
+            '',
+            'COMPLETED',
+            'TEXT_ANSWER',
+            {
+              message: resolved.message,
+              unchanged: 'No se modificó ningún cliente.',
+              nextAction: 'Indica otro cambio si lo necesitas.',
+            },
+            this.planner.plan(
+              { intent: 'UPDATE_CLIENT', entities },
+              { workspaceVersion: prepared.workspaceVersion, entityVersions: {} },
+            ),
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.COMPLETED,
+            { intent: input.intent, entities },
+          );
+        }
+        if (resolved.kind === 'CLARIFY') {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: resolved.clarify.code ?? resolved.clarify.field,
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: (resolved.clarify.items?.length ?? 0) > 0,
+          });
           const response = this.accountDisambiguationResponse(
             request.id,
             request.traceId,
@@ -413,6 +482,7 @@ export class StructuredAssistantService {
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     const isCreateClient = plan.businessAction === 'CREATE_CLIENT';
+    const isUpdateClient = plan.businessAction === 'UPDATE_CLIENT';
     const correctionPolicy = !executable
       ? null
       : isPayment
@@ -421,8 +491,8 @@ export class StructuredAssistantService {
           ? 'Después de registrarlo, cualquier corrección se realiza desde Gastos.'
           : isPurchase
             ? 'Después de registrarla, cualquier corrección se realiza desde Inventario.'
-            : isCreateClient
-              ? 'Después de crearlo, cualquier corrección se realiza desde CRM.'
+            : isCreateClient || isUpdateClient
+              ? 'Después de guardarlo, cualquier corrección se realiza desde CRM.'
               : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
     const message = !executable
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
@@ -434,7 +504,9 @@ export class StructuredAssistantService {
             ? 'Revisa el resumen y confirma para registrar la compra.'
             : isCreateClient
               ? 'Voy a crear este cliente. Revisa el resumen y confirma.'
-              : 'Revisa el resumen y confirma para registrar la venta.';
+              : isUpdateClient
+                ? 'Voy a actualizar este cliente. Revisa el resumen y confirma.'
+                : 'Revisa el resumen y confirma para registrar la venta.';
     const nextAction = !executable
       ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
       : isPayment
@@ -445,7 +517,9 @@ export class StructuredAssistantService {
             ? 'Confirma la compra para ejecutar el registro canónico.'
             : isCreateClient
               ? 'Confirma para crear el cliente canónico.'
-              : 'Confirma la venta para ejecutar el registro canónico.';
+              : isUpdateClient
+                ? 'Confirma para guardar los cambios del cliente.'
+                : 'Confirma la venta para ejecutar el registro canónico.';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,
