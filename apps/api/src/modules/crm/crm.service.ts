@@ -1,30 +1,25 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Client, ClientInteraction, ClientPreference, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClientRegistrationService } from './client-registration.service';
+import { ClientUpdateService } from './client-update.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { CreateClientInteractionDto } from './dto/create-client-interaction.dto';
 import { ListClientInteractionsDto } from './dto/list-client-interactions.dto';
 import { ListClientsDto } from './dto/list-clients.dto';
 import { UpsertClientPreferenceDto } from './dto/upsert-client-preference.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
-import {
-  clientPhoneIdentityKey,
-  normalizeClientEmail,
-  normalizeClientName,
-  normalizeClientPhone,
-} from './client-identity.util';
 
 @Injectable()
 export class CrmService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly registration: ClientRegistrationService,
+    private readonly clientUpdate: ClientUpdateService,
   ) {}
 
   async createClient(tenantId: string, dto: CreateClientDto) {
@@ -91,151 +86,31 @@ export class CrmService {
     return this.serializeClient(client);
   }
 
+  /**
+   * Interactive CRM PATCH — always CAS on expectedUpdatedAt.
+   * Domain ClientUpdateService.update() still allows omitting the token for
+   * controlled server workflows (e.g. appendNotes helpers that supply it themselves).
+   */
   async updateClient(id: string, tenantId: string, dto: UpdateClientDto) {
-    const existing = await this.prisma.client.findFirst({
-      where: { id, tenantId, deletedAt: null },
-    });
-
-    if (!existing) {
-      throw new NotFoundException('Client not found');
+    if (!dto.expectedUpdatedAt) {
+      throw new BadRequestException(
+        'expectedUpdatedAt is required for client updates',
+      );
     }
-
-    const data: Prisma.ClientUpdateInput = {};
-
-    if (dto.name !== undefined) data.name = normalizeClientName(dto.name);
-    if (dto.email !== undefined) {
-      data.email =
-        dto.email === null || dto.email === ''
-          ? null
-          : normalizeClientEmail(dto.email);
-    }
-    if (dto.phone !== undefined) {
-      if (dto.phone === null || dto.phone === '') {
-        data.phone = null;
-      } else {
-        const phone = normalizeClientPhone(dto.phone);
-        if (!phone) {
-          throw new BadRequestException('phone must be a valid phone-like string');
-        }
-        data.phone = phone;
-      }
-    }
-    if (dto.notes !== undefined) data.notes = dto.notes;
-    if (dto.tags !== undefined) data.tags = dto.tags;
-    if (dto.budgetRange !== undefined) data.budgetRange = dto.budgetRange;
-
-    if (Object.keys(data).length === 0) {
-      return this.serializeClient(existing);
-    }
-
-    // Exact contact uniqueness on update (exclude self) — DB unique is the race boundary
-    const nextEmail =
-      data.email !== undefined
-        ? ((data.email as string | null) ?? null)
-        : existing.email;
-    const nextPhone =
-      data.phone !== undefined
-        ? ((data.phone as string | null) ?? null)
-        : existing.phone;
-    if (nextEmail && nextEmail !== existing.email) {
-      const clash = await this.prisma.client.findFirst({
-        where: {
-          tenantId,
-          deletedAt: null,
-          id: { not: id },
-          email: { equals: nextEmail, mode: 'insensitive' },
-        },
-        select: { id: true, name: true },
-      });
-      if (clash) {
-        throw new ConflictException({
-          code: 'CLIENT_EXACT_DUPLICATE',
-          message: 'Otro cliente activo ya usa ese correo.',
-          matchField: 'email',
-          existingClientId: clash.id,
-          existingClientName: clash.name,
-        });
-      }
-      const deleted = await this.prisma.client.findFirst({
-        where: {
-          tenantId,
-          deletedAt: { not: null },
-          id: { not: id },
-          email: { equals: nextEmail, mode: 'insensitive' },
-        },
-        select: { id: true, name: true },
-      });
-      if (deleted) {
-        throw new ConflictException({
-          code: 'CLIENT_DELETED_MATCH',
-          message:
-            'Existe un cliente eliminado con ese correo. Restáuralo desde CRM; no se reasigna automáticamente.',
-          matchField: 'email',
-          existingClientId: deleted.id,
-          existingClientName: deleted.name,
-        });
-      }
-    }
-    if (nextPhone && nextPhone !== existing.phone) {
-      const key = clientPhoneIdentityKey(nextPhone);
-      if (key) {
-        const others = await this.prisma.client.findMany({
-          where: { tenantId, id: { not: id }, phone: { not: null } },
-          select: { id: true, name: true, phone: true, deletedAt: true },
-        });
-        const activeClash = others.find(
-          (c) => !c.deletedAt && clientPhoneIdentityKey(c.phone) === key,
-        );
-        if (activeClash) {
-          throw new ConflictException({
-            code: 'CLIENT_EXACT_DUPLICATE',
-            message: 'Otro cliente activo ya usa ese teléfono.',
-            matchField: 'phone',
-            existingClientId: activeClash.id,
-            existingClientName: activeClash.name,
-          });
-        }
-        const deletedClash = others.find(
-          (c) => c.deletedAt && clientPhoneIdentityKey(c.phone) === key,
-        );
-        if (deletedClash) {
-          throw new ConflictException({
-            code: 'CLIENT_DELETED_MATCH',
-            message:
-              'Existe un cliente eliminado con ese teléfono. Restáuralo desde CRM; no se reasigna automáticamente.',
-            matchField: 'phone',
-            existingClientId: deletedClash.id,
-            existingClientName: deletedClash.name,
-          });
-        }
-      }
-    }
-
-    try {
-      const client = await this.prisma.client.update({
-        where: { id },
-        data,
-      });
-      return this.serializeClient(client);
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const target = error.meta?.target;
-        const blob = Array.isArray(target)
-          ? target.map(String).join(',')
-          : String(target ?? error.message ?? '');
-        const field =
-          blob.includes('phone') || blob.includes('phone_identity') ? 'phone' : 'email';
-        throw new ConflictException({
-          code: 'CLIENT_EXACT_DUPLICATE',
-          message:
-            field === 'phone'
-              ? 'Otro cliente activo ya usa ese teléfono.'
-              : 'Otro cliente activo ya usa ese correo.',
-          matchField: field,
-        });
-      }
-      throw error;
-    }
+    const result = await this.clientUpdate.update(
+      tenantId,
+      id,
+      {
+        name: dto.name,
+        email: dto.email,
+        phone: dto.phone,
+        notes: dto.notes,
+        tags: dto.tags,
+        budgetRange: dto.budgetRange,
+      },
+      { expectedUpdatedAt: dto.expectedUpdatedAt },
+    );
+    return this.serializeClient(result.client);
   }
 
   async deleteClient(id: string, tenantId: string) {

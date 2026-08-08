@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ClientRegistrationService } from './client-registration.service';
+import { ClientUpdateService } from './client-update.service';
 import {
   clientPhoneIdentityKey,
   normalizeClientEmail,
@@ -160,6 +161,35 @@ function buildPrisma(opts: BuildOpts = {}) {
         assertActiveIdentityUnique(next, c.id);
         clients.set(c.id, next);
         return next;
+      }),
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const c = clients.get(where.id);
+        if (!c) return { count: 0 };
+        if (where.tenantId && c.tenantId !== where.tenantId) return { count: 0 };
+        if (where.deletedAt === null && c.deletedAt) return { count: 0 };
+        if (
+          where.updatedAt &&
+          where.updatedAt.getTime() !== c.updatedAt.getTime()
+        ) {
+          return { count: 0 };
+        }
+        const next = {
+          ...c,
+          ...data,
+          email: data.email !== undefined ? data.email : c.email,
+          phone: data.phone !== undefined ? data.phone : c.phone,
+          name: data.name !== undefined ? data.name : c.name,
+          updatedAt: new Date(),
+        };
+        if (raceWindowMs > 0) await sleep(raceWindowMs);
+        assertActiveIdentityUnique(next, c.id);
+        clients.set(c.id, next);
+        return { count: 1 };
+      }),
+      findFirstOrThrow: jest.fn(async ({ where }: any) => {
+        const c = clients.get(where.id);
+        if (!c) throw new Error('missing');
+        return { ...c };
       }),
     },
   };
@@ -385,21 +415,34 @@ describe('Client identity concurrency — durable uniqueness (post-fix)', () => 
     };
     clients.set('a', { ...base, id: 'a', name: 'A' });
     clients.set('b', { ...base, id: 'b', name: 'B' });
-    const crm = new CrmService(prisma, new ClientRegistrationService(prisma));
+    const crm = new CrmService(
+      prisma,
+      new ClientRegistrationService(prisma),
+      new ClientUpdateService(prisma),
+    );
 
     let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const originalUpdate = prisma.client.update.getMockImplementation()!;
-    prisma.client.update = jest.fn(async (args: any) => {
+    // Interactive path uses updateMany CAS when expectedUpdatedAt is set.
+    const originalUpdateMany = prisma.client.updateMany.getMockImplementation()!;
+    prisma.client.updateMany = jest.fn(async (args: any) => {
       await gate;
-      return originalUpdate(args);
+      return originalUpdateMany(args);
     });
 
+    const tA = clients.get('a')!.updatedAt.toISOString();
+    const tB = clients.get('b')!.updatedAt.toISOString();
     const pending = Promise.allSettled([
-      crm.updateClient('a', 't1', { phone: '5512345678' }),
-      crm.updateClient('b', 't1', { phone: '+525512345678' }),
+      crm.updateClient('a', 't1', {
+        phone: '5512345678',
+        expectedUpdatedAt: tA,
+      }),
+      crm.updateClient('b', 't1', {
+        phone: '+525512345678',
+        expectedUpdatedAt: tB,
+      }),
     ]);
     await sleep(20);
     release();
@@ -413,6 +456,10 @@ describe('Client identity concurrency — durable uniqueness (post-fix)', () => 
     expect(settled.filter((s) => s.status === 'rejected')).toHaveLength(1);
     const rejected = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult;
     expect(rejected.reason).toBeInstanceOf(ConflictException);
+    // Loser may be identity collision (P2002/pre-check) or CLIENT_STALE if CAS races;
+    // either way exactly one owner is required.
+    const code = (rejected.reason as ConflictException).getResponse() as { code?: string };
+    expect(['CLIENT_EXACT_DUPLICATE', 'CLIENT_STALE']).toContain(code.code);
   });
 
   it('storefront reservation key still replays', async () => {
