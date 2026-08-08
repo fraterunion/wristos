@@ -191,7 +191,8 @@ export class StructuredAssistantPersistence {
         structuredPayload: response as unknown as Prisma.InputJsonObject,
         metadata: { traceId: response.traceId, aiRequestId: requestId, ...(response.actionRunId ? { actionRunId: response.actionRunId } : {}) },
       } });
-      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: AIAuditEventType.MESSAGE_APPENDED, payload: { messageId: assistantMessage.id, role: assistantMessage.role } } });
+      const auditActionRunId = response.actionRunId ? response.actionRunId : null;
+      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: auditActionRunId, type: AIAuditEventType.MESSAGE_APPENDED, payload: { messageId: assistantMessage.id, role: assistantMessage.role } } });
 
       const currentWorkspace = await tx.aIWorkspace.findFirst({
         where: { id: response.workspaceId, tenantId: actor.tenantId, userId: actor.userId, deletedAt: null },
@@ -218,7 +219,7 @@ export class StructuredAssistantPersistence {
         version: { increment: 1 }, lastActivityAt: new Date(),
       } });
       if (changed.count !== 1) throw new ConflictException('AI workspace version is stale');
-      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: AIAuditEventType.WORKSPACE_UPDATED, payload: {
+      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: auditActionRunId, type: AIAuditEventType.WORKSPACE_UPDATED, payload: {
         previousVersion: workspaceVersion,
         version: workspaceVersion + 1,
         ...(resolvedContextUpdate ? { contextSchemaVersion: '1.1', resolutionResult: 'WRITTEN' } : {}),
@@ -227,8 +228,8 @@ export class StructuredAssistantPersistence {
         ? { status: terminalStatus, responsePayload: response as unknown as Prisma.InputJsonObject, responseHash, failedAt: new Date(), errorType: String(response.payload.code ?? 'ORCHESTRATION_FAILED'), failureSummary: 'Structured assistant request failed safely' }
         : { status: terminalStatus, responsePayload: response as unknown as Prisma.InputJsonObject, responseHash, completedAt: new Date() };
       await tx.aIRequest.update({ where: { id: requestId }, data: terminalData });
-      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: eventType, payload: {
-        aiRequestId: requestId, requestFingerprint: request.requestFingerprint, responseHash, status: terminalStatus, intent: request.requestPayload && typeof request.requestPayload === 'object' && !Array.isArray(request.requestPayload) ? String((request.requestPayload as Record<string, unknown>).intent ?? '') : '', traceId: response.traceId, conversationId: response.conversationId, workspaceId: response.workspaceId, ...(response.actionRunId ? { actionRunId: response.actionRunId } : {}), durationMs: Math.max(0, Date.now() - request.receivedAt.getTime()),
+      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: auditActionRunId, type: eventType, payload: {
+        aiRequestId: requestId, requestFingerprint: request.requestFingerprint, responseHash, status: terminalStatus, intent: request.requestPayload && typeof request.requestPayload === 'object' && !Array.isArray(request.requestPayload) ? String((request.requestPayload as Record<string, unknown>).intent ?? '') : '', traceId: response.traceId, conversationId: response.conversationId, workspaceId: response.workspaceId, ...(auditActionRunId ? { actionRunId: auditActionRunId } : {}), durationMs: Math.max(0, Date.now() - request.receivedAt.getTime()),
         responseType: response.responseType,
         interactionState: response.interactionState,
       } } });
