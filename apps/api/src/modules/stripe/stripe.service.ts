@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   OnModuleInit,
@@ -13,6 +14,7 @@ import {
 } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ClientRegistrationService } from '../crm/client-registration.service';
 
 const DEFAULT_SUCCESS_URL = 'https://wristcaviar.fraterunion.com/storefront/success';
 const DEFAULT_CANCEL_URL = 'https://wristcaviar.fraterunion.com/storefront/cancel';
@@ -38,6 +40,7 @@ export class StripeService implements OnModuleInit {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly clientRegistration: ClientRegistrationService,
   ) {}
 
   onModuleInit() {
@@ -265,25 +268,40 @@ export class StripeService implements OnModuleInit {
   }
 
   private async findOrCreateClient(reservation: StorefrontReservation): Promise<Client> {
-    const email = reservation.customerEmail.trim().toLowerCase();
-
-    const existing = await this.prisma.client.findFirst({
-      where: {
-        tenantId: reservation.tenantId,
-        deletedAt: null,
-        email: { equals: email, mode: 'insensitive' },
-      },
-    });
-    if (existing) return existing;
-
-    return this.prisma.client.create({
-      data: {
-        tenant: { connect: { id: reservation.tenantId } },
+    try {
+      const result = await this.clientRegistration.register(reservation.tenantId, {
         name: reservation.customerName,
         email: reservation.customerEmail,
         phone: reservation.customerPhone,
-      },
-    });
+        registerIdempotencyKey: `storefront-reservation:${reservation.id}`,
+        allowProbableDuplicate: true,
+      });
+      return result.client;
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        const body = error.getResponse() as {
+          code?: string;
+          existingClientId?: string;
+        };
+        if (
+          (body?.code === 'CLIENT_EXACT_DUPLICATE' || body?.code === 'CLIENT_DELETED_MATCH') &&
+          body.existingClientId
+        ) {
+          if (body.code === 'CLIENT_DELETED_MATCH') {
+            throw error;
+          }
+          const existing = await this.prisma.client.findFirst({
+            where: {
+              id: body.existingClientId,
+              tenantId: reservation.tenantId,
+              deletedAt: null,
+            },
+          });
+          if (existing) return existing;
+        }
+      }
+      throw error;
+    }
   }
 
   private ensureStripeConfigured(): void {
