@@ -170,7 +170,9 @@ export function ConversationBlocks({
                 ctaKind={block.ctaKind}
                 ctaHref={block.ctaKind === 'MANUAL_MODULE' ? manualHref : undefined}
                 onConfirm={
-                  (block.ctaKind === 'CONFIRM_SALE' || block.ctaKind === 'CONFIRM_PAYMENT') &&
+                  (block.ctaKind === 'CONFIRM_SALE' ||
+                    block.ctaKind === 'CONFIRM_PAYMENT' ||
+                    block.ctaKind === 'CONFIRM_EXPENSE') &&
                   block.actionRunId &&
                   block.planFingerprint &&
                   onConfirmSale

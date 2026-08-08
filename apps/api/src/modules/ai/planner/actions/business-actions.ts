@@ -14,7 +14,11 @@ const questions: Record<string, string> = {
   watchId: 'Which watch should be used?', customerId: 'Who is the customer?', price: 'What is the price?', currency: 'What currency applies?',
   date: 'What date applies?', accountId: 'Which account should be used?', amount: 'What amount should be applied?', destination: 'Where should the payment be received?',
   payableAccountId: 'Which payable account should receive the settlement?',
-  watch: 'Which watch is being purchased?', cost: 'What is the purchase cost?', concept: 'What is the expense for?', sourceAccountId: 'Which account is funding the settlement?',
+  watch: 'Which watch is being purchased?', cost: 'What is the purchase cost?',
+  concept: 'What is the expense for?',
+  category: '¿Cuál es la categoría del gasto?',
+  source: '¿Desde dónde lo pagaste?',
+  sourceAccountId: 'Which account is funding the settlement?',
   destinationAccountId: 'Which account receives the settlement?', asset: 'Which crypto asset?', quantity: 'What quantity applies?', unitPrice: 'What is the crypto unit price?',
   year: 'Which year?', month: 'Which month?', query: 'What should be searched?', clientId: 'Which client?',
 };
@@ -315,6 +319,128 @@ function registerReceivablePaymentConditionalMissing(
   return missing;
 }
 
+const expenseSourceLabel: Record<string, string> = {
+  CASH: 'Efectivo',
+  BANK: 'Bancos',
+  CESAR: 'Cuenta César',
+};
+
+const expenseCategoryLabel: Record<string, string> = {
+  GASOLINE: 'Gasolina',
+  TOLLS: 'Casetas',
+  WATCHMAKER: 'Relojero',
+  PARKING: 'Estacionamiento',
+  MEALS: 'Comidas',
+  FLIGHTS: 'Vuelos',
+  TRAVEL: 'Viáticos',
+  MARKETING: 'Marketing',
+  COMMISSIONS: 'Comisiones',
+  OTHER: 'Otro',
+};
+
+function formatExpenseDatePreview(value: JsonValue | undefined): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!m) return value;
+  const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  return `${Number(m[3])} ${months[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+function registerExpenseEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
+  const amountLabel = formatMoneyPreview(entities.amount, entities.currency ?? 'MXN');
+  const source = typeof entities.source === 'string' ? entities.source : null;
+  const sourceLabel =
+    (typeof entities.sourceLabel === 'string' && entities.sourceLabel) ||
+    (source ? expenseSourceLabel[source] ?? source : null);
+  return [
+    { area: 'Gastos', description: `Gastos del mes: +${amountLabel}` },
+    {
+      area: 'Treasury',
+      description: sourceLabel
+        ? `${sourceLabel}: -${amountLabel}`
+        : `Fuente de liquidez: -${amountLabel}`,
+    },
+    { area: 'Utilidad neta', description: `Utilidad neta del mes: disminuye ${amountLabel}` },
+    {
+      area: 'Capital',
+      description: 'Capital: Sin cambio bajo la metodología histórica actual (utilidad bruta de trading).',
+    },
+    { area: 'Correction', description: 'Después de registrarlo, cualquier corrección se realiza desde Gastos.' },
+  ];
+}
+
+function registerExpensePreviewFields(entities: StructuredEntities): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  const category = typeof entities.category === 'string' ? entities.category : null;
+  const categoryLabel =
+    (typeof entities.categoryLabel === 'string' && entities.categoryLabel) ||
+    (category ? expenseCategoryLabel[category] ?? category : null);
+  const concept = entities.concept ?? entities.notes;
+  if (present(concept)) rows.push({ label: 'Concepto', value: concept ?? null });
+  if (categoryLabel) rows.push({ label: 'Categoría', value: categoryLabel });
+  if (present(entities.amount)) {
+    rows.push({ label: 'Monto', value: formatMoneyPreview(entities.amount, entities.currency ?? 'MXN') });
+  }
+  const source = typeof entities.source === 'string' ? entities.source : null;
+  const sourceLabel =
+    (typeof entities.sourceLabel === 'string' && entities.sourceLabel) ||
+    (source ? expenseSourceLabel[source] ?? source : null);
+  if (sourceLabel) rows.push({ label: 'Pagado desde', value: sourceLabel });
+  const dateRaw = entities.dateLabel ?? entities.date ?? entities.expenseDate ?? entities.effectiveDate;
+  const dateLabel =
+    (typeof entities.dateLabel === 'string' && entities.dateLabel) ||
+    formatExpenseDatePreview(dateRaw as JsonValue);
+  if (dateLabel) rows.push({ label: 'Fecha', value: dateLabel });
+  return rows;
+}
+
+function registerExpenseConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  if (present(entities.expenseUnsupportedReason)) {
+    missing.push({
+      entity: 'category',
+      question: String(entities.expenseUnsupportedReason),
+    });
+    return missing;
+  }
+  const currency = typeof entities.currency === 'string' ? entities.currency.toUpperCase() : null;
+  if (currency && currency !== 'MXN') {
+    missing.push({
+      entity: 'currency',
+      question:
+        'V1 solo registra gastos en MXN. No convierto dólares ni crypto — indica el monto en pesos o regístralo manualmente.',
+    });
+  }
+  if (entities.sourceUnsupported === 'CRYPTO') {
+    missing.push({
+      entity: 'source',
+      question:
+        'No registro gastos pagados con crypto en V1. Usa Efectivo, Bancos o Cuenta César.',
+    });
+  }
+  if (!present(entities.source)) {
+    missing.push({
+      entity: 'source',
+      question: '¿Desde dónde lo pagaste? (Efectivo, Bancos o Cuenta César)',
+    });
+  }
+  if (!present(entities.category)) {
+    missing.push({
+      entity: 'category',
+      question:
+        (typeof entities.categoryClarifyReason === 'string' && entities.categoryClarifyReason) ||
+        '¿Cuál es la categoría del gasto? (Gasolina, Casetas, Marketing, Otro, …)',
+    });
+  }
+  const amount = moneyNumber(entities.amount);
+  if (amount !== null && amount <= 0) {
+    missing.push({ entity: 'amount', question: 'El monto del gasto debe ser mayor que cero.' });
+  }
+  return missing;
+}
+
 export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
   define({ id: 'GET_LIQUIDITY', name: 'Get Liquidity', category: 'FINANCE', tier: 'NONE' }),
   define({ id: 'GET_MONTHLY_PROFIT', name: 'Get Monthly Profit', category: 'ANALYTICS', tier: 'NONE', required: ['year', 'month'] }),
@@ -386,7 +512,32 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     ],
   }),
   define({ id: 'REGISTER_PURCHASE', name: 'Register Purchase', category: 'INVENTORY', tier: 'HIGH', required: ['watch', 'cost', 'currency'], optional: ['date', 'serial', 'duplicateSerial'], effects: [{ area: 'Inventory', description: 'A purchased watch is added to inventory.' }, { area: 'Treasury', description: 'Purchase funding is recorded.' }], warnings: [warning('DUPLICATE_SERIAL', 'The supplied serial already exists.', (e) => e.duplicateSerial === true)] }),
-  define({ id: 'REGISTER_EXPENSE', name: 'Register Expense', category: 'EXPENSES', tier: 'MEDIUM', required: ['concept', 'amount', 'currency'], optional: ['date', 'sourceAccountId'], effects: [{ area: 'Expenses', description: 'Operating expense is recorded.' }, { area: 'Treasury', description: 'Source balance is reduced.' }] }),
+  define({
+    id: 'REGISTER_EXPENSE',
+    name: 'Register Expense',
+    category: 'EXPENSES',
+    tier: 'MEDIUM',
+    required: ['amount', 'currency', 'category', 'source'],
+    optional: [
+      'concept',
+      'notes',
+      'date',
+      'expenseDate',
+      'dateLabel',
+      'categoryLabel',
+      'sourceLabel',
+      'effectiveDate',
+      'sourceAccount',
+      'sourceAccountId',
+      'expenseUnsupportedReason',
+      'categoryClarifyReason',
+      'sourceUnsupported',
+    ],
+    effectsBuilder: registerExpenseEffects,
+    previewFields: registerExpensePreviewFields,
+    conditionalMissing: registerExpenseConditionalMissing,
+    reversibility: 'NONE',
+  }),
   define({ id: 'REGISTER_SETTLEMENT', name: 'Register Settlement', category: 'ACCOUNTS', tier: 'HIGH', required: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'], optional: ['date'], effects: [{ area: 'Accounts', description: 'The selected accounts are settled by the confirmed amount.' }] }),
   define({ id: 'REGISTER_CRYPTO_POSITION', name: 'Register Crypto Position', category: 'TREASURY', tier: 'HIGH', required: ['asset', 'quantity', 'cost', 'currency'], optional: ['date'], effects: [{ area: 'Crypto', description: 'The confirmed position is recorded.' }] }),
   define({ id: 'REGISTER_CRYPTO_PRICE', name: 'Register Crypto Price', category: 'TREASURY', tier: 'MEDIUM', required: ['asset', 'unitPrice', 'currency'], optional: ['date'], effects: [{ area: 'Crypto', description: 'The confirmed price snapshot is recorded.' }] }),

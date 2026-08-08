@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
+import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-payment-entity-resolver.service';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
@@ -10,7 +11,7 @@ import { PreparedAssistantRequest, StructuredAssistantPersistence } from './stru
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
 
 const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS', 'GET_INVENTORY_AGING', 'GET_TOP_INVENTORY_CAPITAL', 'GET_TOP_DEBTORS', 'GET_RECEIVABLE_SUMMARY', 'GET_SALES_MARGIN_SUMMARY', 'GET_PROFIT_BY_BRAND', 'GET_TOP_SALES', 'GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY']);
-const EXECUTABLE_WRITES = new Set(['REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT']);
+const EXECUTABLE_WRITES = new Set(['REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_EXPENSE']);
 
 @Injectable()
 export class StructuredAssistantService {
@@ -70,6 +71,9 @@ export class StructuredAssistantService {
           );
         }
       }
+      if (input.intent === 'REGISTER_EXPENSE') {
+        entities = enrichExpenseEntities(entities, request.receivedAt) as typeof entities;
+      }
 
       const plannedInput = { ...input, entities };
       const plan = this.planner.plan(
@@ -121,26 +125,36 @@ export class StructuredAssistantService {
   private writePreviewResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, plan: BusinessExecutionPlan): StructuredAssistantResponse {
     const executable = EXECUTABLE_WRITES.has(plan.businessAction);
     const isPayment = plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT';
+    const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
+    const correctionPolicy = !executable
+      ? null
+      : isPayment
+        ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
+        : isExpense
+          ? 'Después de registrarlo, cualquier corrección se realiza desde Gastos.'
+          : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
+    const message = !executable
+      ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
+      : isPayment
+        ? 'Revisa el resumen y confirma para registrar el pago.'
+        : isExpense
+          ? 'Revisa el resumen y confirma para registrar el gasto.'
+          : 'Revisa el resumen y confirma para registrar la venta.';
+    const nextAction = !executable
+      ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
+      : isPayment
+        ? 'Confirma el pago para ejecutar el registro canónico.'
+        : isExpense
+          ? 'Confirma el gasto para ejecutar el registro canónico.'
+          : 'Confirma la venta para ejecutar el registro canónico.';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,
       executable,
-      correctionPolicy: executable
-        ? isPayment
-          ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
-          : 'Después de registrarla, cualquier corrección se realiza desde Ventas.'
-        : null,
-      message: executable
-        ? isPayment
-          ? 'Revisa el resumen y confirma para registrar el pago.'
-          : 'Revisa el resumen y confirma para registrar la venta.'
-        : 'Esta acción todavía no está habilitada para ejecución desde el asistente.',
+      correctionPolicy,
+      message,
       unchanged: 'No se ejecutó ni modificó ningún dato de negocio.',
-      nextAction: executable
-        ? isPayment
-          ? 'Confirma el pago para ejecutar el registro canónico.'
-          : 'Confirma la venta para ejecutar el registro canónico.'
-        : 'Usa el flujo canónico de la aplicación para completar esta acción.',
+      nextAction,
     }, plan);
   }
 

@@ -181,16 +181,41 @@ describe('responseToConversationBlocks', () => {
     assert.equal(preview.intro, 'Voy a registrar este pago:');
   });
 
+  it('maps executable REGISTER_EXPENSE preview to Confirmar gasto CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      planFingerprint: 'c'.repeat(64),
+      preview: {
+        title: 'Register Expense',
+        fields: [
+          { label: 'Concepto', value: 'Gasolina' },
+          { label: 'Categoría', value: 'Gasolina' },
+          { label: 'Monto', value: '$2,500 MXN' },
+          { label: 'Pagado desde', value: 'Efectivo' },
+        ],
+        warnings: [],
+        estimatedEffects: [{ area: 'Gastos', description: 'Gastos del mes: +$2,500 MXN' }],
+      },
+    });
+    (candidate as { actionRunId?: string }).actionRunId = 'run-exp';
+    const blocks = responseToConversationBlocks('REGISTER_EXPENSE', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
+    assert.equal(preview.ctaLabel, 'Confirmar gasto');
+    assert.equal(preview.ctaKind, 'CONFIRM_EXPENSE');
+    assert.equal(preview.intro, 'Voy a registrar este gasto:');
+  });
+
   it('every unbound write intent has a truthful non-"Confirmar" CTA label', () => {
     const intents = [
       'REGISTER_PURCHASE',
-      'REGISTER_EXPENSE', 'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
+      'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
     ] as const;
     for (const intent of intents) {
       const label = manualCtaLabel(intent);
       assert.notEqual(label, 'Confirmar');
       assert.notEqual(label, 'Confirmar venta');
       assert.notEqual(label, 'Confirmar pago');
+      assert.notEqual(label, 'Confirmar gasto');
       assert.ok(label.length > 0);
     }
   });

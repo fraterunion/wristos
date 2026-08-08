@@ -96,13 +96,35 @@ function isCanonicalReceivablePaymentSuccess(
   return true;
 }
 
+function isCanonicalExpenseSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'REGISTER_EXPENSE') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.expenseId !== 'string' || !receipt.expenseId) return false;
+  if (typeof receipt.category !== 'string' || !receipt.category) return false;
+  if (typeof receipt.sourceAccount !== 'string' || !receipt.sourceAccount) return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (payload.executableWrite !== true && payload.capability !== 'REGISTER_EXPENSE') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
 function isCanonicalExecutableWriteSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
 ): boolean {
   return (
     isCanonicalRegisterSaleSuccess(intent, response) ||
-    isCanonicalReceivablePaymentSuccess(intent, response)
+    isCanonicalReceivablePaymentSuccess(intent, response) ||
+    isCanonicalExpenseSuccess(intent, response)
   );
 }
 
@@ -138,7 +160,9 @@ export function validateAssistantResponse(
         reason: 'WRITE_RESPONSE_BLOCKED',
         title: 'Esta operación no se ejecutó.',
         message:
-          intent === 'REGISTER_SALE' || intent === 'REGISTER_RECEIVABLE_PAYMENT'
+          intent === 'REGISTER_SALE' ||
+          intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+          intent === 'REGISTER_EXPENSE'
             ? 'No se pudo confirmar el resultado de forma segura.'
             : 'La ejecución conversacional de esta acción todavía no está habilitada.',
         manualHref: manualRoutes[intent],
