@@ -53,6 +53,9 @@ export function structuredAssistantHttpStatus(response: StructuredAssistantRespo
     case 'PERMISSION_DENIED':
       return HttpStatus.FORBIDDEN;
     case 'CONFLICT':
+    case 'CLIENT_EXACT_DUPLICATE':
+    case 'CLIENT_DELETED_MATCH':
+    case 'CLIENT_IDENTITY_CONFLICT':
       return HttpStatus.CONFLICT;
     case 'READ_EXECUTION_FAILED':
       return HttpStatus.INTERNAL_SERVER_ERROR;

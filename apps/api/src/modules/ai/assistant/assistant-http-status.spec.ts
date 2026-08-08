@@ -13,6 +13,9 @@ describe('structuredAssistantHttpStatus', () => {
     ['NOT_FOUND', HttpStatus.NOT_FOUND],
     ['PERMISSION_DENIED', HttpStatus.FORBIDDEN],
     ['CONFLICT', HttpStatus.CONFLICT],
+    ['CLIENT_EXACT_DUPLICATE', HttpStatus.CONFLICT],
+    ['CLIENT_DELETED_MATCH', HttpStatus.CONFLICT],
+    ['CLIENT_IDENTITY_CONFLICT', HttpStatus.CONFLICT],
     ['READ_EXECUTION_FAILED', HttpStatus.INTERNAL_SERVER_ERROR],
   ])('maps trusted failure type %s to HTTP %s', (failureType, status) => {
     expect(structuredAssistantHttpStatus(response('FAILED', failureType))).toBe(status);
