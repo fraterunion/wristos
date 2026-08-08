@@ -418,6 +418,7 @@ export class AnalyticsService {
       this.prisma.operatingExpense.aggregate({
         where: {
           tenantId,
+          deletedAt: null,
           expenseDate: { gte: monthStart, lt: nextMonthStart },
         },
         _sum: { amount: true },
@@ -572,7 +573,7 @@ export class AnalyticsService {
       this.prisma.deal.aggregate({ where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON, AND: [range] }, _sum: { agreedPrice: true }, _count: { _all: true } }),
       this.prisma.deal.findMany({ where: { tenantId, deletedAt: null, stage: DealStage.CLOSED_WON, AND: [range] }, select: { historicalCost: true, watch: { select: { cost: true, expenses: { select: { amount: true } } } } } }),
       this.prisma.treasuryEntry.aggregate({ where: { tenantId, account: 'BANK', deletedAt: null, commission: { gt: 0 }, transactionDate: { gte: start, lt: end } }, _sum: { commission: true } }),
-      this.prisma.operatingExpense.aggregate({ where: { tenantId, expenseDate: { gte: start, lt: end } }, _sum: { amount: true } }),
+      this.prisma.operatingExpense.aggregate({ where: { tenantId, deletedAt: null, expenseDate: { gte: start, lt: end } }, _sum: { amount: true } }),
     ]);
     const sales = saleAgg._sum.agreedPrice ?? new Prisma.Decimal(0);
     const cogs = deals.reduce((sum, deal) => {

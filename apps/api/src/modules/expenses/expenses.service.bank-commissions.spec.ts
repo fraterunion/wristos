@@ -19,7 +19,7 @@ describe('ExpensesService.summary — Treasury bank commissions', () => {
         count: jest.fn(async () => 323),
       },
     };
-    const service = new ExpensesService(prisma as never);
+    const service = new ExpensesService(prisma as never, {} as never);
     const summary = await service.summary('tenant-wc', {});
 
     expect(summary.totalOperatingExpenses).toBe('2227167.74');
@@ -56,7 +56,7 @@ describe('ExpensesService.summary — Treasury bank commissions', () => {
         count: jest.fn(async () => 323),
       },
     };
-    const service = new ExpensesService(prisma as never);
+    const service = new ExpensesService(prisma as never, {} as never);
     const summary = await service.summary('tenant-wc', {});
 
     // BANK_FEES OpEx rolls into operativos
@@ -75,7 +75,7 @@ describe('ExpensesService.summary — Treasury bank commissions', () => {
         count: jest.fn(async () => 24),
       },
     };
-    const service = new ExpensesService(prisma as never);
+    const service = new ExpensesService(prisma as never, {} as never);
     await service.summary('tenant-wc', { year: '2026', month: '7' });
     const where = (prisma.treasuryEntry.aggregate.mock.calls[0] as unknown as [
       { where: { transactionDate: { gte: Date; lte: Date } } },

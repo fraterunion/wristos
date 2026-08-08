@@ -50,6 +50,7 @@ export class HistoryService {
       this.prisma.operatingExpense.aggregate({
         where: {
           tenantId,
+          deletedAt: null,
           category: OperatingExpenseCategory.BANK_FEES,
           dealId: { not: null },
         },

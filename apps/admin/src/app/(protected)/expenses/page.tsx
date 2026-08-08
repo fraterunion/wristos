@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api-client';
 import {
   ExpenseCategorySummary,
+  ExpenseMoneySource,
   ExpensesSummary,
   OperatingExpense,
   OperatingExpenseCategory,
@@ -61,9 +62,16 @@ const EMPTY_FILTERS: Filters = {
   endDate: '',
 };
 
+const SOURCE_LABELS: Record<ExpenseMoneySource, string> = {
+  CASH: 'Efectivo',
+  BANK: 'Bancos',
+  CESAR: 'César',
+};
+
 type ExpenseForm = {
   category: OperatingExpenseCategory | '';
   amount: string;
+  source: ExpenseMoneySource | '';
   notes: string;
   expenseDate: string;
 };
@@ -71,15 +79,16 @@ type ExpenseForm = {
 const EMPTY_FORM: ExpenseForm = {
   category: '',
   amount: '',
+  source: '',
   notes: '',
   expenseDate: new Date().toISOString().split('T')[0],
 };
 
 function formatCurrency(value: string | number) {
   const n = Number(value);
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('es-MX', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'MXN',
     minimumFractionDigits: 2,
   }).format(Number.isFinite(n) ? n : 0);
 }
@@ -240,6 +249,7 @@ export default function ExpensesPage() {
     setForm({
       category: expense.category,
       amount: expense.amount,
+      source: expense.sourceAccount ?? '',
       notes: expense.notes ?? '',
       expenseDate: expense.expenseDate,
     });
@@ -251,26 +261,38 @@ export default function ExpensesPage() {
 
   async function submitForm() {
     if (!form.category) { setFormError('La categoría es obligatoria.'); return; }
-    if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) < 0) {
-      setFormError('Ingresa un monto válido.');
+    if (!form.amount || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
+      setFormError('Ingresa un monto válido mayor a cero.');
       return;
     }
     if (!form.expenseDate) { setFormError('La fecha es obligatoria.'); return; }
+    if (modalMode === 'add' && !form.source) {
+      setFormError('Selecciona de dónde se pagó (Efectivo, Bancos o César).');
+      return;
+    }
 
     setFormLoading(true);
     setFormError(null);
     try {
-      const body = {
-        category: form.category,
-        amount: Number(form.amount),
-        notes: form.notes || undefined,
-        expenseDate: form.expenseDate,
-      };
-
       if (modalMode === 'add') {
-        await apiPost<OperatingExpense>('/expenses', body, { authenticated: true });
+        await apiPost<OperatingExpense>(
+          '/expenses',
+          {
+            category: form.category,
+            amount: Number(form.amount),
+            source: form.source,
+            notes: form.notes || undefined,
+            expenseDate: form.expenseDate,
+          },
+          { authenticated: true },
+        );
       } else if (editingId) {
-        await apiPatch<OperatingExpense>(`/expenses/${editingId}`, body, { authenticated: true });
+        // Cash-linked expenses: notes-only edit (amount/source/date locked server-side).
+        await apiPatch<OperatingExpense>(
+          `/expenses/${editingId}`,
+          { notes: form.notes || undefined },
+          { authenticated: true },
+        );
       }
 
       setModalOpen(false);
@@ -574,6 +596,7 @@ export default function ExpensesPage() {
                     <tr className="border-b border-white/10 text-xs uppercase tracking-wide text-muted">
                       <th className="pb-2 text-left font-medium">Fecha</th>
                       <th className="pb-2 text-left font-medium">Categoría</th>
+                      <th className="pb-2 text-left font-medium">Pagado desde</th>
                       <th className="pb-2 text-right font-medium">Monto</th>
                       <th className="pb-2 text-left font-medium pl-4">Notas</th>
                       <th className="pb-2 text-right font-medium">Acciones</th>
@@ -598,6 +621,11 @@ export default function ExpensesPage() {
                               comisión
                             </span>
                           )}
+                        </td>
+                        <td className="py-3 text-muted">
+                          {exp.sourceAccount
+                            ? SOURCE_LABELS[exp.sourceAccount]
+                            : <span className="text-white/20">—</span>}
                         </td>
                         <td className="py-3 text-right font-semibold">
                           {formatCurrency(exp.amount)}
@@ -648,6 +676,7 @@ export default function ExpensesPage() {
                 <select
                   className="ui-select w-full"
                   value={form.category}
+                  disabled={modalMode === 'edit'}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, category: e.target.value as OperatingExpenseCategory }))
                   }
@@ -663,16 +692,37 @@ export default function ExpensesPage() {
               </div>
 
               <div>
-                <label className="block text-xs text-muted mb-1.5">Monto (USD)</label>
+                <label className="block text-xs text-muted mb-1.5">Monto (MXN)</label>
                 <input
                   type="number"
-                  min={0}
+                  min={0.01}
                   step={0.01}
                   placeholder="0.00"
                   className="ui-input w-full"
                   value={form.amount}
+                  disabled={modalMode === 'edit'}
                   onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs text-muted mb-1.5">Pagado desde</label>
+                <select
+                  className="ui-select w-full"
+                  value={form.source}
+                  disabled={modalMode === 'edit'}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      source: e.target.value as ExpenseMoneySource | '',
+                    }))
+                  }
+                >
+                  <option value="">Selecciona la cuenta…</option>
+                  {(Object.keys(SOURCE_LABELS) as ExpenseMoneySource[]).map((s) => (
+                    <option key={s} value={s}>{SOURCE_LABELS[s]}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -681,6 +731,7 @@ export default function ExpensesPage() {
                   type="date"
                   className="ui-input w-full"
                   value={form.expenseDate}
+                  disabled={modalMode === 'edit'}
                   onChange={(e) => setForm((f) => ({ ...f, expenseDate: e.target.value }))}
                 />
               </div>
