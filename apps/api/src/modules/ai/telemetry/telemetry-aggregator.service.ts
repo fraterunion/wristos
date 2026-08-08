@@ -1,12 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { DurableTelemetrySource, DurableHealthReport, HealthWindow } from './durable-telemetry.source';
 import { TelemetryEmitter } from './telemetry-emitter.service';
 import {
-  ClarificationType,
   ConversationOutcome,
-  FailureTaxonomy,
   TelemetryEvent,
   TelemetryEventName,
 } from './telemetry.types';
+import { mapClarificationType, mapFailureTaxonomy } from './telemetry-mappers';
+
+export { mapClarificationType, mapFailureTaxonomy };
+export type { DurableHealthReport, HealthWindow };
 
 const DANGEROUS_WRITES = new Set([
   'REGISTER_SALE',
@@ -92,8 +95,30 @@ function topN(map: Record<string, number>, n: number) {
 
 @Injectable()
 export class TelemetryAggregator {
-  constructor(private readonly emitter: TelemetryEmitter) {}
+  constructor(
+    private readonly emitter: TelemetryEmitter,
+    @Optional() private readonly durable?: DurableTelemetrySource,
+  ) {}
 
+  /**
+   * Production Assistant Health — durable shared AI tables.
+   * Survives restart/deploy/multi-replica.
+   */
+  aggregateDurable(options: {
+    window: HealthWindow;
+    tenantId?: string;
+    now?: Date;
+  }): Promise<DurableHealthReport> {
+    if (!this.durable) {
+      throw new Error('DurableTelemetrySource is not configured');
+    }
+    return this.durable.aggregate(options);
+  }
+
+  /**
+   * Ephemeral event aggregation for unit tests / offline eval only.
+   * NOT the production source of truth.
+   */
   aggregate(events?: TelemetryEvent[]): AssistantHealthReport {
     const rows = events ?? this.emitter.list();
     const outcomes: Record<ConversationOutcome, number> = {
@@ -281,39 +306,6 @@ export class TelemetryAggregator {
       failures,
     };
   }
-}
-
-export function mapFailureTaxonomy(raw: string | undefined | null): FailureTaxonomy {
-  const s = String(raw ?? '').toUpperCase();
-  if (s.includes('UNKNOWN')) return 'UNKNOWN_INTENT';
-  if (s.includes('LOW_CONFIDENCE') || s.includes('CONFIDENCE')) return 'LOW_CONFIDENCE';
-  if (s.includes('NOT_FOUND') || s.includes('ENTITY_NOT_FOUND')) return 'ENTITY_NOT_FOUND';
-  if (s.includes('AMBIGUOUS')) return 'ENTITY_AMBIGUOUS';
-  if (s.includes('SCHEMA') || s.includes('INVALID_OUTPUT')) return 'SCHEMA_INVALID';
-  if (s.includes('STALE')) return 'STALE_PLAN';
-  if (s.includes('FINGERPRINT')) return 'FINGERPRINT_CHANGED';
-  if (s.includes('TIMEOUT')) return 'PROVIDER_TIMEOUT';
-  if (s.includes('UNAVAILABLE') || s.includes('PROVIDER')) return 'PROVIDER_UNAVAILABLE';
-  if (s.includes('RECOVERY')) return 'RECOVERY_FAILURE';
-  if (s.includes('INVARIANT') || s.includes('CANONICAL_')) return 'INVARIANT_FAILURE';
-  if (s.includes('DOMAIN') || s.includes('CONFLICT') || s.includes('FORBIDDEN')) return 'DOMAIN_FAILURE';
-  return 'OTHER';
-}
-
-export function mapClarificationType(entityOrReason: string | undefined | null): ClarificationType {
-  const s = String(entityOrReason ?? '').toLowerCase();
-  if (s.includes('amount') || s.includes('price') || s.includes('cost')) return 'MISSING_AMOUNT';
-  if (s.includes('customer') || s.includes('client')) return 'MISSING_CUSTOMER';
-  if (s.includes('destination')) return 'MISSING_DESTINATION';
-  if (s.includes('source')) return 'MISSING_SOURCE';
-  if (s.includes('category') || s.includes('concept')) return 'MISSING_CATEGORY';
-  if (s.includes('ambiguous') || s.includes('picker')) return 'ENTITY_AMBIGUITY';
-  if (s.includes('reference')) return 'UNKNOWN_REFERENCE';
-  if (s.includes('no_context') || s.includes('no context')) return 'NO_CONTEXT';
-  if (s.includes('expired') || s.includes('ttl')) return 'EXPIRED_CONTEXT';
-  if (s.includes('unsupported')) return 'UNSUPPORTED';
-  if (s) return 'MISSING_FIELD';
-  return 'OTHER';
 }
 
 export type { TelemetryEventName };

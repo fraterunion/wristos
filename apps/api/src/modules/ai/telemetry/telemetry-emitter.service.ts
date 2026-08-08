@@ -14,20 +14,24 @@ export class TelemetryEmitter {
   private readonly logger = new Logger(TelemetryEmitter.name);
   private readonly store: TelemetryStore;
   private enabled: boolean;
+  private privacyRejections = 0;
 
   constructor(@Optional() store?: TelemetryStore) {
     this.store = store ?? createTelemetryStore();
     this.enabled = process.env.ASSISTANT_TELEMETRY_DISABLED !== 'true';
   }
 
-  /** Primary API — safe emit. */
+  /** Primary API — safe emit. Ephemeral sink only (tests/dev). Production SoT is durable AI tables. */
   emit(input: TelemetryEmitInput): void {
     if (!this.enabled) return;
     try {
       const event = toTelemetryEvent(input);
       const violations = assertPrivacySafe(event);
       if (violations.length) {
-        this.logger.warn(`telemetry privacy drop: ${violations.join(',')}`);
+        this.privacyRejections += 1;
+        this.logger.warn(
+          `telemetry privacy drop count=${this.privacyRejections} reasons=${violations.join(',')}`,
+        );
         return;
       }
       this.store.append(event);
@@ -36,6 +40,10 @@ export class TelemetryEmitter {
         `telemetry emit swallowed: ${error instanceof Error ? error.message : 'unknown'}`,
       );
     }
+  }
+
+  privacyRejectionCount(): number {
+    return this.privacyRejections;
   }
 
   /** Test / dashboard access to underlying store. */

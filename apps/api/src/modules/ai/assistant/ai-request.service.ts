@@ -166,6 +166,58 @@ export class AIRequestService {
     });
   }
 
+  /**
+   * Passive-and-forget durable provider metrics on AIRequest.requestPayload.
+   * Never throws into the Assistant path. Tokens are null when unavailable (never 0-for-unknown).
+   * Does not touch requestFingerprint.
+   */
+  async recordProviderMetrics(
+    requestId: string,
+    metrics: {
+      provider: string;
+      model: string;
+      latencyMs: number;
+      tokenInput?: number | null;
+      tokenOutput?: number | null;
+      schemaValidationFailure?: boolean;
+      timeout?: boolean;
+      failureType?: string;
+    },
+  ): Promise<void> {
+    try {
+      const current = await this.prisma.aIRequest.findUnique({ where: { id: requestId }, select: { requestPayload: true } });
+      if (!current) return;
+      const existingPayload =
+        current.requestPayload && typeof current.requestPayload === 'object' && !Array.isArray(current.requestPayload)
+          ? (current.requestPayload as Record<string, JsonValue>)
+          : {};
+      const tokenInput =
+        typeof metrics.tokenInput === 'number' && Number.isFinite(metrics.tokenInput) ? metrics.tokenInput : null;
+      const tokenOutput =
+        typeof metrics.tokenOutput === 'number' && Number.isFinite(metrics.tokenOutput) ? metrics.tokenOutput : null;
+      await this.prisma.aIRequest.update({
+        where: { id: requestId },
+        data: {
+          requestPayload: {
+            ...existingPayload,
+            providerMetrics: {
+              provider: String(metrics.provider).slice(0, 64),
+              model: String(metrics.model).slice(0, 64),
+              latencyMs: Math.max(0, Math.round(metrics.latencyMs)),
+              tokenInput,
+              tokenOutput,
+              ...(metrics.schemaValidationFailure ? { schemaValidationFailure: true } : {}),
+              ...(metrics.timeout ? { timeout: true } : {}),
+              ...(metrics.failureType ? { failureType: String(metrics.failureType).slice(0, 64) } : {}),
+            },
+          } as Prisma.InputJsonObject,
+        },
+      });
+    } catch {
+      // Observability must never affect Assistant behavior.
+    }
+  }
+
   /** Reads back a prior recordInterpretation() call from a (possibly replayed) request's payload. */
   readInterpretation(request: AIRequest): { intent: string | null; entities: Record<string, JsonValue> } {
     const payload = request.requestPayload;

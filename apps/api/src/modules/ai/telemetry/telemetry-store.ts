@@ -83,7 +83,12 @@ export class JsonlTelemetryStore implements TelemetryStore {
 }
 
 export function createTelemetryStore(): TelemetryStore {
+  // JSONL is NEVER a production durable store. Opt-in for local debug only.
   const path = process.env.ASSISTANT_TELEMETRY_PATH?.trim();
-  if (path) return new JsonlTelemetryStore(path);
+  const allowJsonl =
+    process.env.ASSISTANT_TELEMETRY_JSONL === 'true' &&
+    process.env.NODE_ENV !== 'production' &&
+    Boolean(path);
+  if (allowJsonl && path) return new JsonlTelemetryStore(path);
   return new MemoryTelemetryStore();
 }

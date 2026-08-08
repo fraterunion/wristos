@@ -2,16 +2,18 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../../common/types/current-user.type';
 import { JwtAuthGuard } from '../../core/auth/guards/jwt-auth.guard';
-import { TelemetryAggregator } from './telemetry-aggregator.service';
+import { PlatformAdminGuard } from '../../platform-migrations/guards/platform-admin.guard';
+import { TelemetryAggregator, HealthWindow } from './telemetry-aggregator.service';
 import { TelemetryEmitter } from './telemetry-emitter.service';
 import { hashId } from './telemetry-privacy';
 
 /**
- * Internal Assistant Health telemetry API.
+ * Internal Assistant Health telemetry API (PLATFORM_ADMIN only).
  * Read-only. Never influences Assistant execution.
+ * Source of truth: durable AIRequest / AIActionRun / AIAuditEvent (shared DB).
  */
 @Controller('ai/telemetry')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PlatformAdminGuard)
 export class TelemetryController {
   constructor(
     private readonly aggregator: TelemetryAggregator,
@@ -19,28 +21,41 @@ export class TelemetryController {
   ) {}
 
   @Get('health')
-  health(@CurrentUser() user: CurrentUserType, @Query('limit') limit?: string) {
-    const n = Math.min(10_000, Math.max(1, Number(limit) || 5_000));
-    const th = hashId(user.tenantId);
-    const events = this.emitter.list(n).filter((e) => !e.tenantHash || e.tenantHash === th);
-    const report = this.aggregator.aggregate(events);
+  async health(
+    @CurrentUser() user: CurrentUserType,
+    @Query('window') window?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    const w = normalizeWindow(window);
+    // Global by default for platform admins. Optional tenant filter is hashed in response.
+    const report = await this.aggregator.aggregateDurable({
+      window: w,
+      tenantId: tenantId?.trim() || undefined,
+    });
     return {
       ...report,
-      tenantHash: th,
-      passive: true,
-      note: 'Telemetry is best-effort per API replica. It never changes Assistant behavior.',
+      access: 'PLATFORM_ADMIN',
+      requestedByUserHash: hashId(user.userId),
+      privacyRejectionsThisProcess: this.emitter.privacyRejectionCount(),
+      note:
+        'Durable shared DB aggregation. In-memory/JSONL are NOT production source of truth. Never changes Assistant behavior.',
     };
   }
 
+  /** Ephemeral debug listing — platform admin only; not authoritative. */
   @Get('events')
-  events(@CurrentUser() user: CurrentUserType, @Query('limit') limit?: string) {
+  events(@Query('limit') limit?: string) {
     const n = Math.min(500, Math.max(1, Number(limit) || 100));
-    const th = hashId(user.tenantId);
     return {
-      events: this.emitter
-        .list(n * 4)
-        .filter((e) => !e.tenantHash || e.tenantHash === th)
-        .slice(-n),
+      authoritative: false,
+      note: 'Process-local ephemeral buffer for debug only.',
+      events: this.emitter.list(n),
+      privacyRejectionsThisProcess: this.emitter.privacyRejectionCount(),
     };
   }
+}
+
+function normalizeWindow(raw: string | undefined): HealthWindow {
+  if (raw === 'today' || raw === '7d' || raw === '30d') return raw;
+  return '7d';
 }

@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { TELEMETRY_CHANNEL, TelemetryEmitInput, TelemetryEvent } from './telemetry.types';
 
-const FORBIDDEN_KEY = /secret|password|token|jwt|authorization|api[_-]?key|database_url|connection_string|prompt|reasoning|payload|sql|Bearer/i;
+const FORBIDDEN_KEY = /secret|password|token|jwt|authorization|api[_-]?key|database_url|connection_string|prompt|reasoning|payload|sql|Bearer|userText|userMessage|rawMessage|messageContent|email|phone|serial/i;
 
 export function hashId(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
@@ -63,8 +63,12 @@ export function assertPrivacySafe(event: TelemetryEvent): string[] {
   if (/sk-ant-|BEGIN PRIVATE KEY|postgres(ql)?:\/\//i.test(blob)) {
     violations.push('secret_like_content');
   }
-  if (/"systemPrompt"|"promptText"|"claudeReasoning"/i.test(blob)) {
+  if (/"systemPrompt"|"promptText"|"claudeReasoning"|"userText"|"userMessage"/i.test(blob)) {
     violations.push('prompt_or_reasoning');
+  }
+  if (/@[a-z0-9.-]+\.[a-z]{2,}/i.test(blob) && /email|@/.test(blob)) {
+    // Soft check: email-shaped strings in telemetry are not allowed.
+    if (/"[^"]*@[^"]+\.[^"]+"/.test(blob)) violations.push('email_like_content');
   }
   for (const key of Object.keys(event.meta ?? {})) {
     if (FORBIDDEN_KEY.test(key)) violations.push(`forbidden_meta_key:${key}`);

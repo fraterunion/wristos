@@ -4,11 +4,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { apiGet } from '@/lib/api-client';
 
+type HealthWindow = 'today' | '7d' | '30d';
+
 type AssistantHealthReport = {
   generatedAt: string;
-  eventCount: number;
-  passive?: boolean;
-  note?: string;
+  sourceOfTruth: string;
+  window: HealthWindow;
+  windowStart: string;
+  windowEnd: string;
+  scope: string;
+  requestCount: number;
+  actionRunCount: number;
   kpis: {
     successRate: number;
     failureRate: number;
@@ -18,9 +24,16 @@ type AssistantHealthReport = {
     recoveryRate: number;
     replayRate: number;
     unknownIntentRate: number;
+    inferredAbandonmentRate: number;
     avgProviderLatencyMs: number | null;
     avgPlannerLatencyMs: number | null;
+    avgRequestLatencyMs: number | null;
     avgExecutionLatencyMs: number | null;
+  };
+  denominators: {
+    requests: number;
+    actionRuns: number;
+    clarificationsAwaiting: number;
   };
   topFailedIntents: Array<{ intent: string; count: number }>;
   topClarifications: Array<{ type: string; count: number }>;
@@ -32,12 +45,14 @@ type AssistantHealthReport = {
     violations: Array<{ capability?: string; detail: string }>;
   };
   latencyBreakdown: {
-    provider: { avg: number | null; p95: number | null; count: number };
-    planner: { avg: number | null; p95: number | null; count: number };
-    domain: { avg: number | null; p95: number | null; count: number };
-    total: { avg: number | null; p95: number | null; count: number };
+    provider: { avg: number | null; p95: number | null; count: number; note: string };
+    planner: { avg: number | null; p95: number | null; count: number; note: string };
+    domain: { avg: number | null; p95: number | null; count: number; note: string };
+    total: { avg: number | null; p95: number | null; count: number; note: string };
+    sql: { avg: number | null; p95: number | null; count: number; note: string };
   };
-  outcomes: Record<string, number>;
+  retentionNote: string;
+  note?: string;
 };
 
 function pct(n: number) {
@@ -86,6 +101,7 @@ function RankList({
 }
 
 export default function AssistantHealthPage() {
+  const [window, setWindow] = useState<HealthWindow>('7d');
   const [report, setReport] = useState<AssistantHealthReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,15 +112,20 @@ export default function AssistantHealthPage() {
     try {
       const data = await apiGet<AssistantHealthReport>('/ai/telemetry/health', {
         authenticated: true,
+        query: { window },
       });
       setReport(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo cargar la telemetría');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo cargar la telemetría (requiere PLATFORM_ADMIN)',
+      );
       setReport(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [window]);
 
   useEffect(() => {
     void load();
@@ -120,16 +141,32 @@ export default function AssistantHealthPage() {
           </div>
           <h1 className="text-3xl font-semibold tracking-tight text-white">Assistant Health</h1>
           <p className="mt-2 max-w-xl text-sm text-white/55">
-            Telemetría pasiva del Asistente. No altera el comportamiento de producción.
+            Telemetría durable compartida (AIRequest / AIActionRun / AIAuditEvent). Solo PLATFORM_ADMIN.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/80 hover:bg-white/5"
-        >
-          Actualizar
-        </button>
+        <div className="flex items-center gap-2">
+          {(['today', '7d', '30d'] as HealthWindow[]).map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={() => setWindow(w)}
+              className={`rounded-lg border px-3 py-1.5 text-sm ${
+                window === w
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'border-white/15 text-white/70 hover:bg-white/5'
+              }`}
+            >
+              {w === 'today' ? 'Hoy' : w}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/80 hover:bg-white/5"
+          >
+            Actualizar
+          </button>
+        </div>
       </header>
 
       {loading && <p className="text-sm text-white/50">Cargando…</p>}
@@ -137,7 +174,12 @@ export default function AssistantHealthPage() {
 
       {report && (
         <div className="space-y-10">
+          <p className="text-xs text-white/40">
+            SoT: {report.sourceOfTruth} · scope {report.scope} · {report.windowStart} → {report.windowEnd}
+          </p>
           <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+            <Kpi label="Requests" value={String(report.requestCount)} />
+            <Kpi label="Action runs" value={String(report.actionRunCount)} />
             <Kpi label="Success rate" value={pct(report.kpis.successRate)} />
             <Kpi label="Failure rate" value={pct(report.kpis.failureRate)} />
             <Kpi label="Clarification rate" value={pct(report.kpis.clarificationRate)} />
@@ -146,21 +188,23 @@ export default function AssistantHealthPage() {
             <Kpi label="Recovery rate" value={pct(report.kpis.recoveryRate)} />
             <Kpi label="Replay rate" value={pct(report.kpis.replayRate)} />
             <Kpi label="Unknown intent %" value={pct(report.kpis.unknownIntentRate)} />
+            <Kpi label="Inferred abandon %" value={pct(report.kpis.inferredAbandonmentRate)} />
             <Kpi label="Avg provider latency" value={ms(report.kpis.avgProviderLatencyMs)} />
             <Kpi label="Avg planner latency" value={ms(report.kpis.avgPlannerLatencyMs)} />
+            <Kpi label="Avg request latency" value={ms(report.kpis.avgRequestLatencyMs)} />
             <Kpi label="Avg execution latency" value={ms(report.kpis.avgExecutionLatencyMs)} />
-            <Kpi label="Events (replica)" value={String(report.eventCount)} />
           </div>
 
           <section className="space-y-3 border-t border-white/10 pt-6">
             <h2 className="text-sm font-medium text-white/70">Latency breakdown</h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
               {(
                 [
                   ['Provider', report.latencyBreakdown.provider],
                   ['Planner', report.latencyBreakdown.planner],
                   ['Domain', report.latencyBreakdown.domain],
                   ['Total', report.latencyBreakdown.total],
+                  ['SQL', report.latencyBreakdown.sql],
                 ] as const
               ).map(([label, slice]) => (
                 <div key={label} className="space-y-1">
@@ -168,6 +212,7 @@ export default function AssistantHealthPage() {
                   <div className="text-white">
                     avg {ms(slice.avg)} · p95 {ms(slice.p95)} · n={slice.count}
                   </div>
+                  <div className="text-xs text-white/35">{slice.note}</div>
                 </div>
               ))}
             </div>
@@ -208,8 +253,7 @@ export default function AssistantHealthPage() {
           </section>
 
           <p className="text-xs text-white/35">
-            Generated {report.generatedAt}
-            {report.passive ? ' · passive' : ''}
+            Generated {report.generatedAt} · {report.retentionNote}
           </p>
         </div>
       )}

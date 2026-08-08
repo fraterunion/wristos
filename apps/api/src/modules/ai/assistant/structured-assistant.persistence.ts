@@ -74,7 +74,14 @@ export class StructuredAssistantPersistence {
     });
   }
 
-  checkpointPlan(requestId: string, actor: AssistantActorContext, input: StructuredAssistantRequest, prepared: PreparedAssistantRequest, plan: BusinessExecutionPlan) {
+  checkpointPlan(
+    requestId: string,
+    actor: AssistantActorContext,
+    input: StructuredAssistantRequest,
+    prepared: PreparedAssistantRequest,
+    plan: BusinessExecutionPlan,
+    telemetry?: { plannerLatencyMs?: number },
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const request = await tx.aIRequest.findUniqueOrThrow({ where: { id: requestId } });
       if (request.status !== AIRequestStatus.PLANNING) throw new ConflictException('AI request is not planning');
@@ -91,12 +98,48 @@ export class StructuredAssistantPersistence {
         warnings: plan.warnings as unknown as Prisma.InputJsonArray,
         requiresConfirmation: plan.confirmationTier !== 'NONE',
       } });
-      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: prepared.conversationId, workspaceId: prepared.workspaceId, actionRunId: run.id, type: AIAuditEventType.PLAN_CREATED, payload: { planFingerprint: plan.fingerprint } } });
+      await tx.aIAuditEvent.create({
+        data: {
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          conversationId: prepared.conversationId,
+          workspaceId: prepared.workspaceId,
+          actionRunId: run.id,
+          type: AIAuditEventType.PLAN_CREATED,
+          payload: {
+            planFingerprint: plan.fingerprint,
+            ...(typeof telemetry?.plannerLatencyMs === 'number'
+              ? { plannerLatencyMs: Math.max(0, Math.round(telemetry.plannerLatencyMs)) }
+              : {}),
+          },
+        },
+      });
 
       const clarification = plan.state === 'NEEDS_CLARIFICATION';
       const runStatus = clarification ? AIActionRunStatus.NEEDS_CLARIFICATION : AIActionRunStatus.READY_FOR_CONFIRMATION;
       await tx.aIActionRun.update({ where: { id: run.id }, data: { status: runStatus } });
-      await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: prepared.conversationId, workspaceId: prepared.workspaceId, actionRunId: run.id, type: clarification ? AIAuditEventType.PLAN_NEEDS_CLARIFICATION : AIAuditEventType.PLAN_READY_FOR_CONFIRMATION, payload: { planFingerprint: plan.fingerprint } } });
+      await tx.aIAuditEvent.create({
+        data: {
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          conversationId: prepared.conversationId,
+          workspaceId: prepared.workspaceId,
+          actionRunId: run.id,
+          type: clarification ? AIAuditEventType.PLAN_NEEDS_CLARIFICATION : AIAuditEventType.PLAN_READY_FOR_CONFIRMATION,
+          payload: {
+            planFingerprint: plan.fingerprint,
+            ...(clarification
+              ? {
+                  clarificationCount: plan.missingEntities.length,
+                  clarificationReasons: plan.missingEntities
+                    .map((m) => m.entity)
+                    .filter((x): x is string => typeof x === 'string')
+                    .slice(0, 12),
+                }
+              : { responseType: 'ACTION_PREVIEW_CARD' }),
+          },
+        },
+      });
 
       const currentWorkspace = await tx.aIWorkspace.findFirst({
         where: { id: prepared.workspaceId, tenantId: actor.tenantId, userId: actor.userId, deletedAt: null },
@@ -186,6 +229,8 @@ export class StructuredAssistantPersistence {
       await tx.aIRequest.update({ where: { id: requestId }, data: terminalData });
       await tx.aIAuditEvent.create({ data: { tenantId: actor.tenantId, actorUserId: actor.userId, conversationId: response.conversationId, workspaceId: response.workspaceId, actionRunId: response.actionRunId, type: eventType, payload: {
         aiRequestId: requestId, requestFingerprint: request.requestFingerprint, responseHash, status: terminalStatus, intent: request.requestPayload && typeof request.requestPayload === 'object' && !Array.isArray(request.requestPayload) ? String((request.requestPayload as Record<string, unknown>).intent ?? '') : '', traceId: response.traceId, conversationId: response.conversationId, workspaceId: response.workspaceId, ...(response.actionRunId ? { actionRunId: response.actionRunId } : {}), durationMs: Math.max(0, Date.now() - request.receivedAt.getTime()),
+        responseType: response.responseType,
+        interactionState: response.interactionState,
       } } });
       return response;
     });

@@ -133,7 +133,14 @@ export class StructuredAssistantService {
         plannerLatencyMs,
         funnelStage: 'intent',
       });
-      const checkpoint = await this.persistence.checkpointPlan(request.id, actor, plannedInput, prepared, plan);
+      const checkpoint = await this.persistence.checkpointPlan(
+        request.id,
+        actor,
+        plannedInput,
+        prepared,
+        plan,
+        { plannerLatencyMs },
+      );
 
       if (plan.state === 'NEEDS_CLARIFICATION') {
         for (const missing of plan.missingEntities) {

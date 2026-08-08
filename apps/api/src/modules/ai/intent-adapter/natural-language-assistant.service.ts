@@ -236,6 +236,18 @@ export class NaturalLanguageAssistantService {
       conversationContext: providerContext,
     });
 
+    // Durable provider metrics (best-effort). Never awaited for correctness.
+    void this.aiRequests.recordProviderMetrics(request.id, {
+      provider: outcome.provider,
+      model: outcome.model,
+      latencyMs: outcome.latencyMs,
+      tokenInput: outcome.tokenUsage?.inputTokens ?? null,
+      tokenOutput: outcome.tokenUsage?.outputTokens ?? null,
+      schemaValidationFailure: outcome.kind === 'INVALID_OUTPUT',
+      timeout: outcome.kind === 'PROVIDER_FAILURE' && outcome.failureType === 'TIMEOUT',
+      failureType: outcome.kind === 'PROVIDER_FAILURE' ? outcome.failureType : outcome.kind === 'INVALID_OUTPUT' ? outcome.reason : undefined,
+    });
+
     if (outcome.kind !== 'CANDIDATE') {
       const response = buildProviderFailureResponse(outcome, responseCtx);
       telem(this.telemetry, {

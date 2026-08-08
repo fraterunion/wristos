@@ -13,6 +13,7 @@ function buildService(overrides: {
   const aiRequests = {
     claimText: overrides.claimText ?? jest.fn().mockResolvedValue({ kind: 'OWNED', request }),
     recordInterpretation: jest.fn().mockResolvedValue(undefined),
+    recordProviderMetrics: jest.fn().mockResolvedValue(undefined),
     readInterpretation: jest.fn().mockReturnValue({ intent: null, entities: {} }),
     auditReplay: jest.fn().mockResolvedValue(undefined),
     failUnattached: jest.fn().mockImplementation((_request, _actor, _intent, response) => response),

@@ -1,6 +1,13 @@
 /**
  * Assistant telemetry event model (Commit 16).
- * Append-only. Never mutated. Never contains secrets or business payloads.
+ * Append-only ephemeral taxonomy for tests/dev sinks.
+ *
+ * Production source of truth is durable AIRequest / AIActionRun / AIAuditEvent.
+ * Many of these names are DERIVED at query time — do not duplicate-append them
+ * into a second shadow store.
+ *
+ * Outcomes apply to AIRequest / AIActionRun / capability attempts —
+ * NOT to resumable conversations.
  */
 
 export const TELEMETRY_CHANNEL = 'assistant.telemetry.v1' as const;
@@ -32,6 +39,8 @@ export type ConversationOutcome =
   | 'CANCELLED'
   | 'RECOVERED'
   | 'REPLAYED';
+
+/** @deprecated Name kept for ephemeral tests — prefer request/action-run outcomes in durable reports. */
 
 export type FailureTaxonomy =
   | 'UNKNOWN_INTENT'
