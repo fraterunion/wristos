@@ -520,7 +520,20 @@ export class StructuredAssistantService {
   }
 
   private responseBase(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, interactionState: StructuredAssistantResponse['interactionState'], responseType: StructuredAssistantResponse['responseType'], payload: Record<string, JsonValue>, plan: BusinessExecutionPlan): StructuredAssistantResponse {
-    return { requestId, conversationId: prepared.conversationId, workspaceId: prepared.workspaceId, actionRunId, interactionState, responseType, payload, warnings: plan.warnings, suggestedActions: [], traceId, createdAt: new Date().toISOString() };
+    // Omit empty actionRunId — '' is not a valid FK and breaks AIAuditEvent persistence.
+    return {
+      requestId,
+      conversationId: prepared.conversationId,
+      workspaceId: prepared.workspaceId,
+      ...(actionRunId ? { actionRunId } : {}),
+      interactionState,
+      responseType,
+      payload,
+      warnings: plan.warnings,
+      suggestedActions: [],
+      traceId,
+      createdAt: new Date().toISOString(),
+    };
   }
 
   private failureType(error: unknown): string {
