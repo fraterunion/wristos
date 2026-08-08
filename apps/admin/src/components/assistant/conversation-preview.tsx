@@ -23,7 +23,13 @@ export function ConversationPreview({
   fields: Array<{ label: string; value: string }>;
   effects: string[];
   ctaLabel: string;
-  ctaKind: 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'CONFIRM_EXPENSE' | 'CONFIRM_PURCHASE' | 'MANUAL_MODULE';
+  ctaKind:
+    | 'CONFIRM_SALE'
+    | 'CONFIRM_PAYMENT'
+    | 'CONFIRM_EXPENSE'
+    | 'CONFIRM_PURCHASE'
+    | 'CONFIRM_CLIENT'
+    | 'MANUAL_MODULE';
   ctaHref?: string;
   onConfirm?: () => void;
   onEdit?: () => void;
@@ -36,6 +42,7 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_SALE' ||
     ctaKind === 'CONFIRM_PAYMENT' ||
     ctaKind === 'CONFIRM_EXPENSE' ||
+    ctaKind === 'CONFIRM_CLIENT' ||
     ctaKind === 'CONFIRM_PURCHASE';
   return (
     <AssistantMessage showAvatar={showAvatar} delayMs={delayMs}>
@@ -69,7 +76,7 @@ export function ConversationPreview({
               onClick={onConfirm}
               className="inline-flex min-h-9 items-center rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black disabled:opacity-50"
             >
-              {busy ? 'Registrando…' : ctaLabel}
+              {busy ? (ctaKind === 'CONFIRM_CLIENT' ? 'Creando…' : 'Registrando…') : ctaLabel}
             </button>
           ) : ctaHref ? (
             <Link href={ctaHref} className="inline-flex min-h-9 items-center rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black">

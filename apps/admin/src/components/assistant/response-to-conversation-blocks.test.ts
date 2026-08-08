@@ -227,6 +227,32 @@ describe('responseToConversationBlocks', () => {
     assert.equal(preview.intro, 'Voy a registrar esta compra:');
   });
 
+  it('maps executable CREATE_CLIENT preview to Crear cliente CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      planFingerprint: 'e'.repeat(64),
+      preview: {
+        title: 'Create Client',
+        fields: [
+          { label: 'Nombre', value: 'José Hernández' },
+          { label: 'Correo', value: '—' },
+          { label: 'Teléfono', value: '—' },
+        ],
+        warnings: [],
+        estimatedEffects: [
+          { area: 'CRM', description: '+1 cliente' },
+          { area: 'Finanzas', description: 'Sin movimientos financieros' },
+        ],
+      },
+    });
+    (candidate as { actionRunId?: string }).actionRunId = 'run-client';
+    const blocks = responseToConversationBlocks('CREATE_CLIENT', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
+    assert.equal(preview.ctaLabel, 'Crear cliente');
+    assert.equal(preview.ctaKind, 'CONFIRM_CLIENT');
+    assert.equal(preview.intro, 'Voy a crear este cliente:');
+  });
+
   it('every unbound write intent has a truthful non-"Confirmar" CTA label', () => {
     const intents = [
       'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
@@ -238,6 +264,7 @@ describe('responseToConversationBlocks', () => {
       assert.notEqual(label, 'Confirmar pago');
       assert.notEqual(label, 'Confirmar gasto');
       assert.notEqual(label, 'Confirmar compra');
+      assert.notEqual(label, 'Crear cliente');
       assert.ok(label.length > 0);
     }
   });

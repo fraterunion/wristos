@@ -144,6 +144,54 @@ describe('assistant response safety validation', () => {
     );
   });
 
+  it('accepts canonical CREATE_CLIENT SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. El cliente quedó creado.',
+      executableWrite: true,
+      capability: 'CREATE_CLIENT',
+      receipt: {
+        clientId: 'client-1',
+        name: 'José Hernández',
+        hasEmail: false,
+        hasPhone: false,
+      },
+    });
+    const result = validateAssistantResponse('CREATE_CLIENT', candidate);
+    assert.equal(result.kind, 'VALID');
+  });
+
+  it('rejects malformed CREATE_CLIENT SUCCESS_RECEIPT', () => {
+    assert.equal(
+      validateAssistantResponse(
+        'CREATE_CLIENT',
+        response('COMPLETED', 'SUCCESS_RECEIPT', {
+          executableWrite: true,
+          capability: 'CREATE_CLIENT',
+          receipt: { name: 'José' },
+        }),
+      ).kind,
+      'FAIL_CLOSED',
+    );
+  });
+
+  it('still blocks COMPLETED for unbound write intents (settlement/crypto)', () => {
+    for (const intent of [
+      'REGISTER_SETTLEMENT',
+      'REGISTER_CRYPTO_POSITION',
+      'REGISTER_CRYPTO_PRICE',
+    ] as const) {
+      const result = validateAssistantResponse(
+        intent,
+        response('COMPLETED', 'SUCCESS_RECEIPT', {
+          message: 'Listo',
+          executableWrite: true,
+          receipt: { id: 'x' },
+        }),
+      );
+      assert.equal(result.kind, 'FAIL_CLOSED');
+    }
+  });
+
   it('rejects malformed REGISTER_EXPENSE SUCCESS_RECEIPT', () => {
     const result = validateAssistantResponse(
       'REGISTER_EXPENSE',
@@ -156,7 +204,7 @@ describe('assistant response safety validation', () => {
     assert.equal(result.kind, 'FAIL_CLOSED');
   });
 
-  it('still blocks COMPLETED for unbound write intents', () => {
+  it('rejects REGISTER_PURCHASE SUCCESS_RECEIPT shaped like a sale receipt', () => {
     const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
       message: 'Listo',
       receipt: { dealId: 'x', paymentMode: 'PAID', amount: '1' },

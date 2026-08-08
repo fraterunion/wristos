@@ -16,7 +16,11 @@ function match(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function classify(text: string, currentDate: string): FakeOutput {
+function classify(
+  text: string,
+  currentDate: string,
+  context?: { lastIntent?: string },
+): FakeOutput {
   const t = text.trim().toLowerCase().replace(/[.?!¿¡]+$/g, '').trim();
 
   // --- Adversarial / injection attempts -> UNKNOWN, regardless of content ---
@@ -135,6 +139,47 @@ function classify(text: string, currentDate: string): FakeOutput {
       return { intent: 'GET_CLIENT_ACCOUNTS', entities: { clientQuery: name }, missingEntities: ['clientId'], ambiguities: [], confidence: 'HIGH', language: 'es' };
     }
     return { intent: 'SEARCH_CLIENT', entities: { query: name }, missingEntities: [], ambiguities: [], confidence: 'HIGH', language: 'es' };
+  }
+
+  // CREATE_CLIENT — before SEARCH_CLIENT / payment / purchase to avoid collisions.
+  if (
+    context?.lastIntent === 'CREATE_CLIENT' &&
+    /^(crear (cliente )?nuevo|crear de todos modos|crea uno nuevo|sí,? crea(r)?)\.?$/.test(t)
+  ) {
+    return {
+      intent: 'CREATE_CLIENT',
+      entities: { allowProbableDuplicate: true },
+      missingEntities: [],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
+  }
+  const createClientMatch = t.match(
+    /(?:crea|crear|registra|registrar|agrega|agregar|alta de)\s+(?:a\s+|este\s+cliente:?\s*)?([a-záéíóúñü][a-záéíóúñü\s.'-]{1,80})/i,
+  );
+  if (
+    createClientMatch &&
+    !/busca|pag[oó]|vend[ií]|compr[eé]|gast[eé]|transfer|utilidad|reloj|cat[aá]logo|usdt|bitcoin|inventario/.test(
+      t,
+    )
+  ) {
+    const name = createClientMatch[1]!.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '');
+    const emailMatch = t.match(/([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i);
+    const phoneMatch = t.match(
+      /(?:tel[eé]fono|cel(?:ular)?|whats?app)?\s*(?:es|:)?\s*(\+?\d[\d\s()-]{6,18}\d)/i,
+    );
+    const entities: Record<string, string | boolean> = { name };
+    if (emailMatch) entities.email = emailMatch[1]!;
+    if (phoneMatch) entities.phone = phoneMatch[1]!.replace(/\s+/g, ' ').trim();
+    return {
+      intent: 'CREATE_CLIENT',
+      entities,
+      missingEntities: [],
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
   }
 
   // --- Write detection only ---
@@ -471,7 +516,7 @@ export class FakeIntentProvider implements IntentAdapterProvider {
 
   async interpret(input: IntentInterpretationInput): Promise<IntentInterpretationRawResult> {
     const startedAt = Date.now();
-    const output = classify(input.userText, input.currentDate);
+    const output = classify(input.userText, input.currentDate, input.conversationContext);
     return {
       output,
       provider: this.providerName,

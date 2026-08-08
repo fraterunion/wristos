@@ -16,6 +16,7 @@ const DANGEROUS_WRITES = new Set([
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
+  'CREATE_CLIENT',
 ]);
 
 export type AssistantHealthReport = {

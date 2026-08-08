@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, PayloadTooLargeException } from '@nestjs/common';
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
+import { CreateClientEntityResolver } from '../bindings/write/create-client-entity-resolver.service';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
 import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
@@ -20,6 +21,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
+  'CREATE_CLIENT',
 ]);
 
 @Injectable()
@@ -31,6 +33,7 @@ export class StructuredAssistantService {
     private readonly readRunner: ReadPlanRunner,
     private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
     private readonly purchaseEntityResolver: PurchaseEntityResolver,
+    private readonly createClientEntityResolver: CreateClientEntityResolver,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -116,6 +119,111 @@ export class StructuredAssistantService {
       }
       if (input.intent === 'REGISTER_EXPENSE') {
         entities = enrichExpenseEntities(entities, request.receivedAt) as typeof entities;
+      }
+      if (input.intent === 'CREATE_CLIENT') {
+        const resolved = await this.createClientEntityResolver.resolve(
+          actor.tenantId,
+          entities as Record<string, JsonValue>,
+        );
+        entities = resolved.entities as typeof entities;
+        if (resolved.kind === 'USE_EXISTING') {
+          const response = this.responseBase(
+            request.id,
+            request.traceId,
+            prepared,
+            '',
+            'COMPLETED',
+            'ENTITY_LIST',
+            {
+              message: `Usaré el cliente existente «${resolved.clientName}». No se creó un cliente nuevo.`,
+              data: {
+                items: [{ id: resolved.clientId, label: resolved.clientName, name: resolved.clientName }],
+              },
+              entityType: 'CLIENT',
+              summary: `Cliente existente: ${resolved.clientName}`,
+              unchanged: 'No se creó ningún cliente nuevo.',
+              nextAction: 'Puedes continuar con una venta, compra o pago usando este cliente.',
+            },
+            this.planner.plan(
+              { intent: 'SEARCH_CLIENT', entities: { query: resolved.clientName } },
+              { workspaceVersion: prepared.workspaceVersion, entityVersions: {} },
+            ),
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.COMPLETED,
+            { intent: input.intent, entities },
+          );
+        }
+        if (resolved.kind === 'CLARIFY') {
+          const block = resolved.clarify.blockCreate === true;
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: resolved.clarify.code ?? resolved.clarify.field,
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: !block && (resolved.clarify.items?.length ?? 0) > 0,
+          });
+          if (block) {
+            const response = this.responseBase(
+              request.id,
+              request.traceId,
+              prepared,
+              '',
+              'FAILED',
+              'ERROR_RECOVERY_CARD',
+              {
+                code: resolved.clarify.code ?? 'CLIENT_IDENTITY_CONFLICT',
+                message: resolved.clarify.message,
+                matchField: resolved.clarify.matchField ?? null,
+                unchanged: 'No se creó ningún cliente.',
+                nextAction:
+                  resolved.clarify.code === 'CLIENT_DELETED_MATCH'
+                    ? 'Abre CRM para restaurar el cliente eliminado si corresponde.'
+                    : 'Usa el cliente existente desde CRM, o corrige los datos de contacto.',
+              },
+              this.planner.plan(
+                { intent: 'CREATE_CLIENT', entities },
+                { workspaceVersion: prepared.workspaceVersion, entityVersions: {} },
+              ),
+            );
+            return this.persistence.complete(
+              request.id,
+              actor,
+              response,
+              prepared.workspaceVersion,
+              AIAuditEventType.ASSISTANT_REQUEST_FAILED,
+              AIRequestStatus.FAILED,
+              { intent: input.intent, entities },
+            );
+          }
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            resolved.clarify.message,
+            resolved.clarify.items,
+            resolved.clarify.entityType,
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
       }
       if (input.intent === 'REGISTER_PURCHASE') {
         entities = enrichPurchaseEntities(entities as Record<string, unknown>, request.receivedAt) as typeof entities;
@@ -304,6 +412,7 @@ export class StructuredAssistantService {
     const isPayment = plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT';
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
+    const isCreateClient = plan.businessAction === 'CREATE_CLIENT';
     const correctionPolicy = !executable
       ? null
       : isPayment
@@ -312,7 +421,9 @@ export class StructuredAssistantService {
           ? 'Después de registrarlo, cualquier corrección se realiza desde Gastos.'
           : isPurchase
             ? 'Después de registrarla, cualquier corrección se realiza desde Inventario.'
-            : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
+            : isCreateClient
+              ? 'Después de crearlo, cualquier corrección se realiza desde CRM.'
+              : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
     const message = !executable
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
       : isPayment
@@ -321,7 +432,9 @@ export class StructuredAssistantService {
           ? 'Revisa el resumen y confirma para registrar el gasto.'
           : isPurchase
             ? 'Revisa el resumen y confirma para registrar la compra.'
-            : 'Revisa el resumen y confirma para registrar la venta.';
+            : isCreateClient
+              ? 'Voy a crear este cliente. Revisa el resumen y confirma.'
+              : 'Revisa el resumen y confirma para registrar la venta.';
     const nextAction = !executable
       ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
       : isPayment
@@ -330,7 +443,9 @@ export class StructuredAssistantService {
           ? 'Confirma el gasto para ejecutar el registro canónico.'
           : isPurchase
             ? 'Confirma la compra para ejecutar el registro canónico.'
-            : 'Confirma la venta para ejecutar el registro canónico.';
+            : isCreateClient
+              ? 'Confirma para crear el cliente canónico.'
+              : 'Confirma la venta para ejecutar el registro canónico.';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,

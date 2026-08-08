@@ -22,6 +22,12 @@ describe('StructuredAssistantService', () => {
       clarify: null,
     })),
   };
+  const createClientEntityResolver = {
+    resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
+      kind: 'READY' as const,
+      entities,
+    })),
+  };
   const service = new StructuredAssistantService(
     requests as never,
     persistence as never,
@@ -29,6 +35,7 @@ describe('StructuredAssistantService', () => {
     readRunner as never,
     receivablePaymentResolver as never,
     purchaseEntityResolver as never,
+    createClientEntityResolver as never,
   );
   const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] };
   const prepared = { conversationId: 'c1', workspaceId: 'w1', workspaceVersion: 1 };

@@ -30,6 +30,7 @@ export const WRITE_INTENTS = [
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
+  'CREATE_CLIENT',
   'REGISTER_SETTLEMENT',
   'REGISTER_CRYPTO_POSITION',
   'REGISTER_CRYPTO_PRICE',
@@ -281,6 +282,22 @@ export const entitySchemas = {
       source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
       sourceAccount: z.string().trim().min(1).max(64).optional(),
       effectiveDate: isoDate.optional(),
+    })
+    .strip(),
+
+  CREATE_CLIENT: z
+    .object({
+      name: z.string().trim().min(1).max(160).optional(),
+      clientName: z.string().trim().min(1).max(160).optional(),
+      customerName: z.string().trim().min(1).max(160).optional(),
+      email: z.string().trim().min(3).max(160).optional(),
+      correo: z.string().trim().min(3).max(160).optional(),
+      phone: z.string().trim().min(7).max(40).optional(),
+      telefono: z.string().trim().min(7).max(40).optional(),
+      notes: z.string().trim().min(1).max(2000).optional(),
+      budgetRange: z.string().trim().min(1).max(80).optional(),
+      allowProbableDuplicate: z.boolean().optional(),
+      // Trusted client ids are merged server-side after picker/deictic resolve — never from LLM.
     })
     .strip(),
 

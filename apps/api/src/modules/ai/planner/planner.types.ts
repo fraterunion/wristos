@@ -19,9 +19,10 @@ export type BusinessActionId =
   | 'REGISTER_RECEIVABLE_PAYMENT'
   | 'REGISTER_PURCHASE'
   | 'REGISTER_EXPENSE'
+  | 'CREATE_CLIENT'
   | 'REGISTER_SETTLEMENT'
   | 'REGISTER_CRYPTO_POSITION'
-  | 'REGISTER_CRYPTO_PRICE';
+  | 'REGISTER_CRYPTO_PRICE'
 
 export type BusinessCapability = BusinessActionId;
 
