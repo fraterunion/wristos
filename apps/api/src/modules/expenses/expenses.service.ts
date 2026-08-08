@@ -1,26 +1,40 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { OperatingExpense, OperatingExpenseCategory, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { structuredBankCommissionWhere } from '../treasury/migration-bank-commission';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { ListExpensesDto } from './dto/list-expenses.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
+import { ExpenseRegistrationService } from './expense-registration.service';
 
 @Injectable()
 export class ExpensesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly expenseRegistration: ExpenseRegistrationService,
+  ) {}
 
+  /**
+   * Manual Gastos create → canonical ExpenseRegistrationService.register().
+   * Always writes OperatingExpense + Treasury OUTFLOW (paid expense semantics).
+   */
   async create(tenantId: string, dto: CreateExpenseDto) {
-    const expense = await this.prisma.operatingExpense.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        category: dto.category,
-        amount: new Prisma.Decimal(dto.amount),
-        notes: dto.notes ?? null,
-        expenseDate: new Date(dto.expenseDate),
-      },
+    if (dto.source !== 'CASH' && dto.source !== 'BANK' && dto.source !== 'CESAR') {
+      throw new BadRequestException('source must be CASH, BANK, or CESAR');
+    }
+    const result = await this.expenseRegistration.register(tenantId, {
+      amount: dto.amount,
+      category: dto.category,
+      source: dto.source,
+      expenseDate: dto.expenseDate,
+      notes: dto.notes ?? null,
+      registerIdempotencyKey: dto.registerIdempotencyKey ?? null,
     });
-    return this.serialize(expense);
+    return this.serialize(result.expense);
   }
 
   async list(tenantId: string, query: ListExpensesDto) {
@@ -34,23 +48,50 @@ export class ExpensesService {
 
   async findOne(id: string, tenantId: string) {
     const expense = await this.prisma.operatingExpense.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, deletedAt: null },
     });
     if (!expense) throw new NotFoundException('Expense not found');
     return this.serialize(expense);
   }
 
+  /**
+   * Soft metadata edit only. Amount / source / date / category changes that
+   * would desync Treasury are rejected — reverse and re-register instead.
+   */
   async update(id: string, tenantId: string, dto: UpdateExpenseDto) {
     const existing = await this.prisma.operatingExpense.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, deletedAt: null },
     });
     if (!existing) throw new NotFoundException('Expense not found');
 
+    if (dto.amount !== undefined) {
+      const next = new Prisma.Decimal(dto.amount);
+      if (!next.equals(existing.amount)) {
+        throw new BadRequestException(
+          'Cannot change expense amount in place. Delete (reverse) and register a new expense.',
+        );
+      }
+    }
+    if (dto.expenseDate !== undefined) {
+      const nextDate = new Date(dto.expenseDate).toISOString().slice(0, 10);
+      const prevDate = existing.expenseDate.toISOString().slice(0, 10);
+      if (nextDate !== prevDate) {
+        throw new BadRequestException(
+          'Cannot change expense date in place. Delete (reverse) and register a new expense.',
+        );
+      }
+    }
+    if (dto.category !== undefined && dto.category !== existing.category) {
+      if (existing.sourceAccount) {
+        throw new BadRequestException(
+          'Cannot change category for a cash-linked expense. Delete (reverse) and register a new expense.',
+        );
+      }
+    }
+
     const data: Prisma.OperatingExpenseUpdateInput = {};
     if (dto.category !== undefined) data.category = dto.category;
-    if (dto.amount !== undefined) data.amount = new Prisma.Decimal(dto.amount);
     if (dto.notes !== undefined) data.notes = dto.notes;
-    if (dto.expenseDate !== undefined) data.expenseDate = new Date(dto.expenseDate);
 
     if (Object.keys(data).length === 0) return this.serialize(existing);
 
@@ -61,12 +102,9 @@ export class ExpensesService {
     return this.serialize(updated);
   }
 
+  /** Soft-delete expense and reverse Treasury OUTFLOW atomically. */
   async remove(id: string, tenantId: string) {
-    const existing = await this.prisma.operatingExpense.findFirst({
-      where: { id, tenantId },
-    });
-    if (!existing) throw new NotFoundException('Expense not found');
-    await this.prisma.operatingExpense.delete({ where: { id } });
+    await this.expenseRegistration.reverse(tenantId, id);
   }
 
   async summary(tenantId: string, query: ListExpensesDto) {
@@ -204,7 +242,10 @@ export class ExpensesService {
   }
 
   private buildWhere(tenantId: string, query: ListExpensesDto): Prisma.OperatingExpenseWhereInput {
-    const where: Prisma.OperatingExpenseWhereInput = { tenantId };
+    const where: Prisma.OperatingExpenseWhereInput = {
+      tenantId,
+      deletedAt: null,
+    };
 
     if (query.category) {
       where.category = query.category;
@@ -255,8 +296,11 @@ export class ExpensesService {
       tenantId: expense.tenantId,
       category: expense.category,
       amount: expense.amount.toString(),
+      currency: expense.currency,
+      sourceAccount: expense.sourceAccount,
       notes: expense.notes,
       expenseDate: expense.expenseDate.toISOString().split('T')[0],
+      registerIdempotencyKey: expense.registerIdempotencyKey,
       createdAt: expense.createdAt.toISOString(),
       updatedAt: expense.updatedAt.toISOString(),
     };

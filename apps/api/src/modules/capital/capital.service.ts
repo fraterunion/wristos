@@ -109,6 +109,14 @@ export class CapitalService {
       return sum.plus(d.watch.cost ?? 0).plus(expSum);
     }, new Prisma.Decimal(0));
     const totalBankFees = bankCommissionAgg._sum.commission ?? new Prisma.Decimal(0);
+    // BUSINESS PROFIT (Capital module — Commit 15A financial gate):
+    //   revenue − COGS − Treasury bank commissions
+    // Intentionally DOES NOT subtract OperatingExpense (Gastos).
+    // Analytics monthly net profit DOES subtract OpEx.
+    // Correcting Capital to include OpEx would retroactively change partner
+    // entitlement vs already-paid distributions (Wrist Caviar ~MXN 3.08M OpEx).
+    // Do not change this formula without an explicit Capital reconciliation decision.
+    // See docs/ai/REGISTER_EXPENSE_BINDING.md § Capital / OpEx gate.
     const totalBusinessProfit = totalRevenue.minus(totalCostOfSold).minus(totalBankFees);
 
     let totalOpeningCapital = new Prisma.Decimal(0);
@@ -300,6 +308,7 @@ export class CapitalService {
 
     const months = buckets.map((bucket, idx) => {
       const businessProfit = bucket.revenue.minus(bucket.costOfSold).minus(bucket.bankFees);
+      // Annual month buckets use the same Capital definition (no OperatingExpense).
       let totalPendingToPartners = new Prisma.Decimal(0);
 
       const investorRows = investors.map((investor) => {
@@ -579,6 +588,7 @@ export class CapitalService {
       return sum.plus(d.watch.cost ?? 0).plus(expSum);
     }, new Prisma.Decimal(0));
     const totalBankFees = bankCommissionAgg._sum.commission ?? new Prisma.Decimal(0);
+    // Same Capital business-profit definition as getSummary (excludes OperatingExpense).
     return totalRevenue.minus(totalCostOfSold).minus(totalBankFees);
   }
 

@@ -120,10 +120,12 @@ describe('AnalyticsService — monthly profit deducts OpEx', () => {
 
     const opexWhere = operatingExpense.aggregate.mock.calls[0][0].where as {
       tenantId: string;
+      deletedAt: null;
       expenseDate: { gte: Date; lt: Date };
       category?: unknown;
     };
     expect(opexWhere.tenantId).toBe(TENANT);
+    expect(opexWhere.deletedAt).toBeNull();
     expect(opexWhere.expenseDate.gte.toISOString()).toBe('2026-07-01T00:00:00.000Z');
     expect(opexWhere.expenseDate.lt.toISOString()).toBe('2026-08-01T00:00:00.000Z');
     // All categories — no category filter (includes OpEx COMMISSIONS, not bank fees)

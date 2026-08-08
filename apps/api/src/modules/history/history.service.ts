@@ -50,6 +50,7 @@ export class HistoryService {
       this.prisma.operatingExpense.aggregate({
         where: {
           tenantId,
+          deletedAt: null,
           category: OperatingExpenseCategory.BANK_FEES,
           dealId: { not: null },
         },
@@ -98,7 +99,9 @@ export class HistoryService {
         watch: { include: { expenses: { orderBy: { createdAt: 'asc' } } } },
         client: true,
         payments: { where: { deletedAt: null }, orderBy: { paidAt: 'desc' } },
-        operatingExpenses: { where: { category: OperatingExpenseCategory.BANK_FEES } },
+        operatingExpenses: {
+          where: { category: OperatingExpenseCategory.BANK_FEES, deletedAt: null },
+        },
       },
       orderBy: [{ soldAt: 'desc' }, { updatedAt: 'desc' }],
     });

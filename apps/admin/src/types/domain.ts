@@ -366,13 +366,18 @@ export type AddPaymentResponse = {
   computedStatus: 'PAGADO' | 'PARCIAL' | 'PENDIENTE';
 };
 
+export type ExpenseMoneySource = 'CASH' | 'BANK' | 'CESAR';
+
 export type OperatingExpense = {
   id: string;
   tenantId: string;
   category: OperatingExpenseCategory;
   amount: string;
+  currency?: 'MXN' | 'USD';
+  sourceAccount?: ExpenseMoneySource | null;
   notes: string | null;
   expenseDate: string;
+  registerIdempotencyKey?: string | null;
   createdAt: string;
   updatedAt: string;
 };

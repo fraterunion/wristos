@@ -67,6 +67,23 @@ export function dealPaymentBankFeeProvenanceKey(dealPaymentId: string): string {
   return `deal-payment:${dealPaymentId}:bank-fee`;
 }
 
+/** Provenance for paid operating-expense Treasury OUTFLOW (Commit 15A). */
+export function operatingExpenseOutflowProvenanceKey(operatingExpenseId: string): string {
+  return `operating-expense:${operatingExpenseId}:outflow`;
+}
+
+export type CreateFromOperatingExpenseArgs = {
+  tenantId: string;
+  operatingExpenseId: string;
+  account: TreasuryAccount;
+  amount: CoercibleDecimal;
+  currency: Currency;
+  exchangeRateUsed?: CoercibleDecimal | null;
+  transactionDate: Date;
+  description?: string | null;
+  tx?: Prisma.TransactionClient;
+};
+
 
 export type UpdateFromAccountPaymentArgs = {
   tenantId: string;
@@ -297,6 +314,86 @@ export class TreasuryService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Canonical Treasury OUTFLOW for a paid OperatingExpense.
+   * - Liquidity: amountMxn OUTFLOW on CASH | BANK | CESAR
+   * - commission stays null (ordinary expense ≠ bank commission P&L)
+   * - Idempotent on provenanceKey `operating-expense:<id>:outflow`
+   * - No operatingExpenseId FK — provenance is the durable link
+   */
+  async createFromOperatingExpense(args: CreateFromOperatingExpenseArgs) {
+    const db: DbClient = args.tx ?? this.prisma;
+    const provenanceKey = operatingExpenseOutflowProvenanceKey(args.operatingExpenseId);
+
+    const existing = await db.treasuryEntry.findFirst({
+      where: { tenantId: args.tenantId, provenanceKey },
+    });
+    if (existing && existing.deletedAt === null) {
+      return existing;
+    }
+
+    const { amount, amountMxn, exchangeRate } = this.resolveAmounts(
+      args.amount,
+      args.currency,
+      args.exchangeRateUsed,
+    );
+
+    const data = {
+      tenantId: args.tenantId,
+      account: args.account,
+      direction: TreasuryDirection.OUTFLOW,
+      amount,
+      currency: args.currency,
+      amountMxn,
+      exchangeRate,
+      commission: null as Prisma.Decimal | null,
+      transactionDate: args.transactionDate,
+      description: args.description ?? null,
+      provenanceKey,
+      deletedAt: null,
+    };
+
+    if (existing) {
+      return db.treasuryEntry.update({
+        where: { id: existing.id },
+        data,
+      });
+    }
+
+    try {
+      return await db.treasuryEntry.create({ data });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await db.treasuryEntry.findFirst({
+          where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
+        });
+        if (raced) return raced;
+      }
+      throw error;
+    }
+  }
+
+  /** Soft-delete the OUTFLOW for an operating expense (correction / reverse). */
+  async softDeleteOperatingExpenseOutflow(args: {
+    tenantId: string;
+    operatingExpenseId: string;
+    tx?: Prisma.TransactionClient;
+  }) {
+    const db: DbClient = args.tx ?? this.prisma;
+    const provenanceKey = operatingExpenseOutflowProvenanceKey(args.operatingExpenseId);
+    const existing = await db.treasuryEntry.findFirst({
+      where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
+    });
+    if (!existing) return null;
+    return db.treasuryEntry.update({
+      where: { id: existing.id },
+      data: { deletedAt: new Date() },
+    });
   }
 
   /** Maps deal PaymentMethod → TreasuryAccount. BANCOS → BANK. */

@@ -1131,8 +1131,18 @@ model OperatingExpense {
   dealId      String?
   category    OperatingExpenseCategory
   amount      Decimal                  @db.Decimal(12, 2)
+  /// Canonical amount currency. V1 cash-linked registration is MXN-only.
+  /// Historical / imported rows default to MXN (no FX backfill).
+  currency    Currency                 @default(MXN)
+  /// Paid-from treasury source for cash-linked expenses. Null = legacy / import
+  /// rows that never wrote a Treasury OUTFLOW (read-only compatibility).
+  sourceAccount TreasuryAccount?
   notes       String?
   expenseDate DateTime                 @db.Date
+  /// Durable registration idempotency (manual + future AI ActionRun marker).
+  /// Example future AI key: `ai-action-run:<actionRunId>`. Nullable; no backfill.
+  registerIdempotencyKey String?
+  deletedAt   DateTime?
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
 
@@ -1140,9 +1150,11 @@ model OperatingExpense {
   deal           Deal?          @relation(fields: [dealId], references: [id], onDelete: SetNull)
   accountEntries AccountEntry[]
 
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, category])
   @@index([tenantId, expenseDate])
+  @@index([tenantId, deletedAt])
   @@index([dealId])
   @@map("operating_expenses")
 }

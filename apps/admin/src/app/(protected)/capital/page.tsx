@@ -178,7 +178,11 @@ function CapitalHero({
 }) {
   const cells = [
     { label: 'Capital invertido', value: fmtMxn(totalCapitalContributed), tone: 'default' as const },
-    { label: 'Utilidad acumulada', value: fmtMxn(totalBusinessProfit), tone: 'positive' as const },
+    {
+      label: 'Utilidad bruta acumulada',
+      value: fmtMxn(totalBusinessProfit),
+      tone: 'positive' as const,
+    },
     { label: 'Distribuciones', value: fmtMxn(totalDistributionsPaid), tone: 'default' as const },
     {
       label: 'Por pagar a socios',
@@ -222,7 +226,12 @@ function CapitalHero({
       </div>
       <div className="flex flex-col gap-1 border-t border-white/[0.06] bg-black/20 px-5 py-3 md:px-6">
         <p className="text-[10px] text-white/20">
-          Capital neto = capital invertido + utilidad acumulada − distribuciones
+          Capital refleja utilidad bruta de trading histórica (ventas − costo − comisiones
+          bancarias; sin Gastos). La utilidad neta operativa del Dashboard también descuenta
+          Gastos.
+        </p>
+        <p className="text-[10px] text-white/20">
+          Capital neto = capital invertido + utilidad bruta acumulada − distribuciones
         </p>
         <p className="text-[10px] text-white/20">
           Por pagar a socios = utilidad asignada − distribuciones (no incluye capital)
@@ -309,7 +318,7 @@ function FinancialInsightStrip({
 
   const metrics = [
     {
-      label: 'Utilidad acumulada',
+      label: 'Utilidad bruta acumulada',
       value: fmtMxn(totalBusinessProfit),
       tone: profit > 0 ? ('positive' as const) : ('neutral' as const),
     },

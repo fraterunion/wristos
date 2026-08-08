@@ -1605,7 +1605,7 @@ export class CuentasService {
 
   private async ensureExpenseInTenant(expenseId: string, tenantId: string) {
     const expense = await this.prisma.operatingExpense.findFirst({
-      where: { id: expenseId, tenantId },
+      where: { id: expenseId, tenantId, deletedAt: null },
       select: { id: true },
     });
     if (!expense) throw new BadRequestException('Expense is invalid for this tenant');
