@@ -62,7 +62,7 @@ describe('OperationalIntelligenceService', () => {
     expect(result.ageSource).toBe('Watch.acquiredAt|createdAt');
     expect(result.ageMetric).toBe('inventory_acquisition_age');
     expect(result.ageSourceNote).toMatch(/Prefer Watch\.acquiredAt/i);
-    expect(result.ageSourceNote).toMatch(/Fallback Watch\.createdAt/i);
+    expect(result.ageSourceNote).toMatch(/días en WristOS|Fallback Watch\.createdAt/i);
     expect(result.items[0].watchId).toBe('w-tie'); // same age, higher cost
     expect(result.items[1].watchId).toBe('w-old');
     expect(result.items.map((i) => i.watchId)).not.toContain('sold');

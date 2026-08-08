@@ -70,9 +70,30 @@ export type RegisterPurchaseResult = {
   replayed: boolean;
 };
 
+export type ReversePurchaseResult = {
+  watch: Watch;
+  treasuryEntry: TreasuryEntry | null;
+  payableEntry: AccountEntry | null;
+  alreadyReversed: boolean;
+};
+
+/** Canonical purchase = has purchase Treasury provenance and/or PURCHASE_AUTO payable. */
+export type CanonicalPurchaseMarkers = {
+  isCanonical: boolean;
+  treasuryEntry: TreasuryEntry | null;
+  payableEntry: AccountEntry | null;
+};
+
 const ALLOWED_SOURCES: PurchaseMoneySource[] = ['CASH', 'BANK', 'CESAR'];
 
 function normalizeIdempotencyKey(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Trim; blank → null. Does not change case (serial uniqueness is case-sensitive). */
+function normalizeSerial(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = String(raw).trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -250,7 +271,7 @@ export class PurchaseRegistrationService {
       throw new BadRequestException('priceMin and priceMax must be >= 0');
     }
 
-    const serial = watchInput.serialNumber?.trim() || null;
+    const serial = normalizeSerial(watchInput.serialNumber);
     if (serial) {
       const dup = await this.prisma.watch.findFirst({
         where: {
@@ -375,32 +396,208 @@ export class PurchaseRegistrationService {
         replayed: false,
       };
     } catch (error: unknown) {
-      if (
-        idempotencyKey &&
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        const raced = await this.prisma.watch.findFirst({
-          where: { tenantId, registerIdempotencyKey: idempotencyKey, deletedAt: null },
-        });
-        if (raced) {
-          await this.assertCompatibleReplay(raced, {
-            brand: watchInput.brand.trim(),
-            model: watchInput.model.trim(),
-            serial,
-            canonicalCost,
-            currency,
-            acquisitionDate,
-            paymentMode,
-            amountPaidMxn,
-            outstandingMxn,
-            sellerClientId,
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const target = error.meta?.target;
+        const fields = Array.isArray(target) ? target.map(String) : [String(target ?? '')];
+        const fieldBlob = fields.join(',');
+        if (
+          fieldBlob.includes('serialNumber') ||
+          fieldBlob.includes('watches_tenantId_serialNumber_active_key')
+        ) {
+          throw new ConflictException(
+            serial
+              ? `A watch with serial "${serial}" already exists in inventory`
+              : 'A watch with this serial already exists in inventory',
+          );
+        }
+        if (idempotencyKey) {
+          const raced = await this.prisma.watch.findFirst({
+            where: { tenantId, registerIdempotencyKey: idempotencyKey, deletedAt: null },
           });
-          return this.loadResult(raced, paymentMode, /* replayed */ true);
+          if (raced) {
+            await this.assertCompatibleReplay(raced, {
+              brand: watchInput.brand.trim(),
+              model: watchInput.model.trim(),
+              serial,
+              canonicalCost,
+              currency,
+              acquisitionDate,
+              paymentMode,
+              amountPaidMxn,
+              outstandingMxn,
+              sellerClientId,
+            });
+            return this.loadResult(raced, paymentMode, /* replayed */ true);
+          }
         }
       }
       throw error;
     }
+  }
+
+  /**
+   * True when Watch was created by canonical purchase (Treasury and/or PURCHASE_AUTO CXP).
+   * Legacy inventory-only watches return false — never invent financial reversal.
+   */
+  async getCanonicalPurchaseMarkers(
+    tenantId: string,
+    watchId: string,
+  ): Promise<CanonicalPurchaseMarkers> {
+    const treasuryEntry = await this.prisma.treasuryEntry.findFirst({
+      where: {
+        tenantId,
+        provenanceKey: inventoryPurchaseOutflowProvenanceKey(watchId),
+      },
+    });
+    const payableEntry = await this.prisma.accountEntry.findFirst({
+      where: {
+        tenantId,
+        watchId,
+        type: AccountEntryType.PAYABLE,
+        source: AccountEntrySource.PURCHASE_AUTO,
+      },
+    });
+    const activeTreasury =
+      treasuryEntry && treasuryEntry.deletedAt === null ? treasuryEntry : null;
+    const activePayable =
+      payableEntry && payableEntry.deletedAt === null ? payableEntry : null;
+    return {
+      isCanonical: Boolean(treasuryEntry || payableEntry),
+      treasuryEntry: activeTreasury,
+      payableEntry: activePayable,
+    };
+  }
+
+  /**
+   * Conservative V1 reverse for canonical purchases only.
+   * Soft-deletes Watch + purchase Treasury OUTFLOW + PURCHASE_AUTO payable atomically.
+   * Blocks: SOLD, linked Deal, payable payments, missing provenance, legacy watches.
+   * Idempotent: second call → alreadyReversed.
+   */
+  async reverse(tenantId: string, watchId: string): Promise<ReversePurchaseResult> {
+    const watch = await this.prisma.watch.findFirst({
+      where: { id: watchId, tenantId },
+    });
+    if (!watch) throw new NotFoundException('Watch not found');
+
+    const markers = await this.getCanonicalPurchaseMarkers(tenantId, watchId);
+    if (!markers.isCanonical) {
+      throw new BadRequestException(
+        'Watch is not a canonical purchase record. Use inventory soft-delete for legacy items — financial reversal is not fabricated.',
+      );
+    }
+
+    if (watch.deletedAt) {
+      return {
+        watch,
+        treasuryEntry: await this.prisma.treasuryEntry.findFirst({
+          where: {
+            tenantId,
+            provenanceKey: inventoryPurchaseOutflowProvenanceKey(watchId),
+          },
+        }),
+        payableEntry: await this.prisma.accountEntry.findFirst({
+          where: {
+            tenantId,
+            watchId,
+            type: AccountEntryType.PAYABLE,
+            source: AccountEntrySource.PURCHASE_AUTO,
+          },
+        }),
+        alreadyReversed: true,
+      };
+    }
+
+    if (watch.status === WatchStatus.SOLD) {
+      throw new ConflictException(
+        'Cannot reverse purchase: watch is SOLD. Manual financial correction required.',
+      );
+    }
+
+    const deal = await this.prisma.deal.findFirst({
+      where: { tenantId, watchId, deletedAt: null },
+      select: { id: true, stage: true },
+    });
+    if (deal) {
+      throw new ConflictException(
+        `Cannot reverse purchase: watch is linked to deal ${deal.id}. Manual financial correction required.`,
+      );
+    }
+
+    const payableAny = await this.prisma.accountEntry.findFirst({
+      where: {
+        tenantId,
+        watchId,
+        type: AccountEntryType.PAYABLE,
+        source: AccountEntrySource.PURCHASE_AUTO,
+      },
+    });
+    if (payableAny && !payableAny.deletedAt) {
+      const payment = await this.prisma.accountPayment.findFirst({
+        where: { tenantId, entryId: payableAny.id, deletedAt: null },
+        select: { id: true },
+      });
+      if (payment) {
+        throw new ConflictException(
+          'Cannot reverse purchase: PURCHASE_AUTO payable has later payments. Manual financial correction required.',
+        );
+      }
+      const settlement = await this.prisma.accountSettlement.findFirst({
+        where: {
+          tenantId,
+          payableEntryId: payableAny.id,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (settlement) {
+        throw new ConflictException(
+          'Cannot reverse purchase: PURCHASE_AUTO payable is linked to a settlement. Manual financial correction required.',
+        );
+      }
+    }
+
+    // Ensure expected economic legs exist for an active canonical purchase
+    const hasActiveTreasury = Boolean(markers.treasuryEntry);
+    const hasActivePayable = Boolean(markers.payableEntry);
+    if (!hasActiveTreasury && !hasActivePayable) {
+      throw new ConflictException(
+        'Canonical purchase economic legs are missing or already reversed inconsistently. Manual correction required.',
+      );
+    }
+
+    const now = new Date();
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.watch.update({
+        where: { id: watchId },
+        data: { deletedAt: now },
+      });
+
+      const treasury = await this.treasuryService.softDeleteInventoryPurchaseOutflow({
+        tenantId,
+        watchId,
+        tx,
+      });
+
+      let payable: AccountEntry | null = null;
+      if (payableAny && !payableAny.deletedAt) {
+        payable = await tx.accountEntry.update({
+          where: { id: payableAny.id },
+          data: { deletedAt: now },
+        });
+      } else if (payableAny) {
+        payable = payableAny;
+      }
+
+      return { watch: updated, treasury, payable };
+    });
+
+    return {
+      watch: result.watch,
+      treasuryEntry: result.treasury,
+      payableEntry: result.payable,
+      alreadyReversed: false,
+    };
   }
 
   private async resolveCost(
@@ -525,6 +722,8 @@ export class PurchaseRegistrationService {
       },
     });
 
+    this.assertCompletePurchaseState(paymentMode, treasuryEntry, payableEntry);
+
     const purchaseAmountMxn = (watch.cost ?? new Prisma.Decimal(0)).toFixed(2);
     const amountPaidMxn = treasuryEntry
       ? treasuryEntry.amountMxn.toFixed(2)
@@ -532,6 +731,16 @@ export class PurchaseRegistrationService {
     const outstandingMxn = payableEntry
       ? payableEntry.totalAmount.toFixed(2)
       : '0.00';
+
+    // Decimal-safe identity: paid + outstanding === cost
+    const paidDec = new Prisma.Decimal(amountPaidMxn);
+    const outDec = new Prisma.Decimal(outstandingMxn);
+    const costDec = new Prisma.Decimal(purchaseAmountMxn);
+    if (!paidDec.plus(outDec).equals(costDec)) {
+      throw new ConflictException(
+        'Purchase recovery invariant failed: paid + outstanding ≠ cost',
+      );
+    }
 
     return {
       watch,
@@ -543,5 +752,46 @@ export class PurchaseRegistrationService {
       outstandingMxn,
       replayed,
     };
+  }
+
+  private assertCompletePurchaseState(
+    paymentMode: PurchasePaymentMode,
+    treasuryEntry: TreasuryEntry | null,
+    payableEntry: AccountEntry | null,
+  ) {
+    if (paymentMode === 'PAID') {
+      if (!treasuryEntry) {
+        throw new ConflictException(
+          'Purchase recovery invariant failed: PAID purchase missing Treasury OUTFLOW',
+        );
+      }
+      if (payableEntry) {
+        throw new ConflictException(
+          'Purchase recovery invariant failed: PAID purchase must not have PURCHASE_AUTO payable',
+        );
+      }
+    } else if (paymentMode === 'CREDIT') {
+      if (treasuryEntry) {
+        throw new ConflictException(
+          'Purchase recovery invariant failed: CREDIT purchase must not have Treasury OUTFLOW',
+        );
+      }
+      if (!payableEntry) {
+        throw new ConflictException(
+          'Purchase recovery invariant failed: CREDIT purchase missing PURCHASE_AUTO payable',
+        );
+      }
+    } else if (paymentMode === 'PARTIAL') {
+      if (!treasuryEntry) {
+        throw new ConflictException(
+          'Purchase recovery invariant failed: PARTIAL purchase missing Treasury OUTFLOW',
+        );
+      }
+      if (!payableEntry) {
+        throw new ConflictException(
+          'Purchase recovery invariant failed: PARTIAL purchase missing PURCHASE_AUTO payable',
+        );
+      }
+    }
   }
 }

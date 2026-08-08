@@ -42,6 +42,13 @@ export function createClient(payload: {
   return apiPost<Client>('/crm/clients', payload, AUTH);
 }
 
+/**
+ * Ventas quick-watch: inventory-only stub to attach cost identity before a sale
+ * when the piece is missing from active inventory.
+ *
+ * Intentionally NOT POST /inventory/purchases — this is not a treasury/CXP
+ * acquisition. Real purchases use Inventario → Registrar compra.
+ */
 export function createQuickWatch(payload: {
   brand: string;
   model: string;

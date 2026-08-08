@@ -175,6 +175,8 @@ export type Watch = {
   publicDescription?: string | null;
   publicPrice?: string | null;
   reservationAmount?: string | null;
+  acquiredAt?: string | null;
+  sellerClientId?: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;

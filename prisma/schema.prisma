@@ -856,6 +856,9 @@ model Watch {
   @@index([tenantId, deletedAt])
   @@index([tenantId, acquiredAt])
   @@index([tenantId, sellerClientId])
+  /// Active non-null serial uniqueness is enforced by partial unique index
+  /// `watches_tenantId_serialNumber_active_key` in migration SQL
+  /// (WHERE serialNumber IS NOT NULL AND deletedAt IS NULL).
   @@map("watches")
 }
 

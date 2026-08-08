@@ -474,6 +474,24 @@ export class TreasuryService {
     }
   }
 
+  /** Soft-delete initial inventory-purchase OUTFLOW (correction / reverse). */
+  async softDeleteInventoryPurchaseOutflow(args: {
+    tenantId: string;
+    watchId: string;
+    tx?: Prisma.TransactionClient;
+  }) {
+    const db: DbClient = args.tx ?? this.prisma;
+    const provenanceKey = inventoryPurchaseOutflowProvenanceKey(args.watchId);
+    const existing = await db.treasuryEntry.findFirst({
+      where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
+    });
+    if (!existing) return null;
+    return db.treasuryEntry.update({
+      where: { id: existing.id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   /** Maps deal PaymentMethod → TreasuryAccount. BANCOS → BANK. */
   static treasuryAccountForPaymentMethod(
     method: 'CASH' | 'BANCOS' | 'CESAR' | string,

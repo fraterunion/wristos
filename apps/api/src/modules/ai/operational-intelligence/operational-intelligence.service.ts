@@ -210,7 +210,7 @@ export class OperationalIntelligenceService {
       ageSource: 'Watch.acquiredAt|createdAt' as const,
       ageMetric: 'inventory_acquisition_age' as const,
       ageSourceNote:
-        'Prefer Watch.acquiredAt (canonical purchase date). Fallback Watch.createdAt for legacy inventory-only rows.',
+        'Prefer Watch.acquiredAt (canonical purchase date). Fallback Watch.createdAt = días en WristOS / inventory record age for legacy inventory-only rows.',
       minAgeDays,
       items: sliced.map((row) => { const { _cost, ...rest } = row; void _cost; return rest; }),
       totalCapitalAtRisk: money(totalCapitalAtRisk),

@@ -294,7 +294,7 @@ export default function InventoryPage() {
             onClick={openCreate}
             className="ui-btn-primary px-5 py-2.5"
           >
-            Agregar reloj
+            Agregar compra
           </button>
         </div>
       </header>
@@ -422,7 +422,7 @@ export default function InventoryPage() {
             onClick={openCreate}
             className="ui-btn-primary mt-6 px-5 py-2.5"
           >
-            Agregar tu primer reloj
+            Registrar tu primera compra
           </button>
         </div>
       ) : null}
@@ -549,7 +549,7 @@ export default function InventoryPage() {
         title="¿Quitar reloj del inventario?"
         description={
           deleteTarget
-            ? `Esto archivará "${deleteTarget.brand} ${deleteTarget.model}" y lo quitará de los listados activos.`
+            ? `Se archivará "${deleteTarget.brand} ${deleteTarget.model}". Si fue una compra canónica (con tesorería/CXP), esos efectos económicos también se revierten cuando es seguro; si ya se vendió o hay pagos de CXP, la operación se rechazará.`
             : ''
         }
         loading={deleteLoading}

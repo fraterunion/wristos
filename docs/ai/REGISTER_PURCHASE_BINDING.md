@@ -170,16 +170,35 @@ Same key + same payload → replay. Same key + different → Conflict.
 
 ---
 
-## 19. Correction / reversal
+## 19. Correction / reversal (final gate)
 
-Today:
+### Root cause (pre-fix)
+`InventoryService.remove` soft-deleted Watch only. Treasury OUTFLOW and PURCHASE_AUTO CXP remained live → accounting divergence.
 
-- Watch can be edited / soft-deleted
-- Soft-delete does **not** reverse Treasury or CXP
-- Sold watches block inventory delete semantics via status
-- Cost edits after sale affect historical COGS (dangerous)
+### Detection
+Canonical purchase iff Treasury `inventory-purchase:<watchId>:outflow` **or** `AccountEntry` PAYABLE `source=PURCHASE_AUTO` exists (including soft-deleted markers for already-reversed recovery).
 
-17A does not implement conversational reversal. Document limitation: economic unwind is not atomic with Watch soft-delete. Future correction UX: Inventario / Cuentas / Treasury separately until a dedicated reverse command exists.
+Legacy inventory-only Watch: neither marker → soft-delete Watch only; **never** invent Treasury/CXP reversal.
+
+### V1 safe automatic reverse (`PurchaseRegistrationService.reverse`)
+Allowed only when:
+- tenant-scoped Watch exists
+- canonical markers present
+- Watch not SOLD
+- no live Deal on watchId
+- no AccountPayment on PURCHASE_AUTO payable
+- no AccountSettlement on that payable
+- at least one active economic leg present
+
+Then atomic soft-delete: Watch + purchase Treasury OUTFLOW + PURCHASE_AUTO payable.
+
+Idempotent: second reverse → `alreadyReversed: true`.
+
+Blocked (manual correction required): SOLD, deal-linked, payable payments/settlements, incomplete legs.
+
+`DELETE /inventory/:id` delegates to `reverse()` when canonical; legacy path unchanged.
+
+Conversational AI reversal is **not** implemented.
 
 ---
 
@@ -190,25 +209,33 @@ Today:
 
 ---
 
-## 21. Manual frontend compatibility
+## 21. Manual UI convergence (final gate)
 
-- Economic purchase → `POST /inventory/purchases` (backend owns transaction)
-- Inventory-only create → `POST /inventory` (unchanged)
-- Do not orchestrate Watch + Treasury + CXP from the browser
+| Caller | Classification | Endpoint |
+|---|---|---|
+| Inventario `WatchFormModal` create (“Registrar compra”) | **A. PURCHASE** | `POST /inventory/purchases` |
+| Inventario edit | inventory update | `PATCH /inventory/:id` |
+| Ventas `createQuickWatch` | **C. QUICK TEMPORARY** inventory-only stub before sale | `POST /inventory` |
+| Data onboarding / imports | **B. MIGRATION / ADMIN** | importer paths (not this modal) |
+
+Product rule: real acquisition uses canonical purchase. Quick-watch stays inventory-only (not a treasury purchase). Frontend never calls Treasury/Cuentas separately for purchase.
+
+Delete dialog warns that canonical purchases reverse economics when safe.
 
 ---
 
-## 22. Future AI intent / preview (design only)
+## 22. Serial integrity (final gate)
 
-Intent remains planner HIGH-tier placeholder. Entities to freeze in 17B (align planner vs intent schema):
+Production read-only audit (2026-08-08):
+- wrist-caviar: 40 active, 2 with serial, **0 duplicates** (incl. soft-deleted)
+- wristos-demo: 60 active, 60 with serial, **0 duplicates**
 
-- watch identity (brand/model/reference/serial)
-- purchaseAmount, currency
-- acquisitionDate
-- paymentMode, sourceAccount, initialPaymentAmount
-- sellerClientId / seller resolution
-
-Preview examples: see product Part 32. Must not claim executable until write-bound.
+Policy:
+- Unique **per tenant** on non-null serial for **active** watches
+- NULL/blank allowed (normalized blank → null)
+- Case-sensitive after trim (no historical case folding)
+- Partial unique index: `watches_tenantId_serialNumber_active_key` WHERE serial NOT NULL AND deletedAt IS NULL
+- Idempotency ≠ serial integrity
 
 ---
 
@@ -217,28 +244,49 @@ Preview examples: see product Part 32. Must not claim executable until write-bou
 Migration: `prisma/migrations/20260809120000_watch_purchase_registration`
 
 - `AccountEntrySource.PURCHASE_AUTO`
-- `Watch.acquiredAt`
-- `Watch.sellerClientId` → Client
-- `Watch.registerIdempotencyKey` + unique `(tenantId, registerIdempotencyKey)`
+- `Watch.acquiredAt`, `sellerClientId`, `registerIdempotencyKey`
+- Partial unique active serial index
 
 **Do not migrate production until approved.**
 
 ---
 
-## 24. Blockers before Commit 17B
+## 24. Acquisition age truthfulness
 
-1. Production `prisma migrate deploy` for 17A migration
-2. Wire Inventory UI (or Ventas) to `POST /inventory/purchases` when payment terms known
-3. Align AI intent entity names with canonical input
-4. Implement `RegisterPurchaseWriteBinding` + ActionRun idempotency key
-5. Confirmation / preview surface
-6. Optionally tighten inventory create permissions if product requires OWNER/ADMIN only
+- New canonical purchase: `acquiredAt` required
+- Legacy: `acquiredAt` stays null
+- OI: prefer `acquiredAt`; fallback `createdAt` = **días en WristOS** / inventory record age
 
 ---
 
-## 25. Regression invariants
+## 25. Recovery invariant
 
-- REGISTER_PURCHASE remains unbound in WriteCapabilityBindingRegistry (3 writes: SALE, RECEIVABLE_PAYMENT, EXPENSE)
+Replay via `Watch.registerIdempotencyKey` succeeds only when complete:
+
+| Mode | Required |
+|---|---|
+| PAID | Watch + Treasury; no CXP; paid + outstanding = cost |
+| CREDIT | Watch + CXP; no Treasury |
+| PARTIAL | Watch + Treasury + CXP; paid + outstanding = cost |
+
+Missing leg → Conflict (not successful replay).
+
+---
+
+## 26. Blockers before Commit 17B
+
+1. Production `prisma migrate deploy` for 17A migration
+2. Align AI intent entity names with canonical input
+3. Implement `RegisterPurchaseWriteBinding` + ActionRun idempotency key
+4. Confirmation / preview surface
+5. Optional: seller Client picker (today free-text counterparty for CXP)
+6. Optionally tighten inventory create permissions
+
+---
+
+## 27. Regression invariants
+
+- REGISTER_PURCHASE remains unbound (3 executable writes: SALE, RECEIVABLE_PAYMENT, EXPENSE)
 - Purchase does not reduce monthly profit
 - Inventory capital increases by Watch.cost
 - Sale COGS uses Watch.cost

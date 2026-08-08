@@ -89,6 +89,20 @@ describe('PurchaseRegistrationService — canonical purchase', () => {
           watches.set(id, row);
           return row;
         }),
+        update: jest.fn(async ({ where, data }: any) => {
+          const row = watches.get(where.id);
+          Object.assign(row, data);
+          return row;
+        }),
+      },
+      deal: {
+        findFirst: jest.fn(async () => null),
+      },
+      accountPayment: {
+        findFirst: jest.fn(async () => null),
+      },
+      accountSettlement: {
+        findFirst: jest.fn(async () => null),
       },
       treasuryEntry: {
         findFirst: jest.fn(async ({ where }: any) => {
@@ -114,6 +128,11 @@ describe('PurchaseRegistrationService — canonical purchase', () => {
             return p;
           }
           return null;
+        }),
+        update: jest.fn(async ({ where, data }: any) => {
+          const row = payables.get(where.id);
+          Object.assign(row, data);
+          return row;
         }),
       },
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
@@ -145,6 +164,16 @@ describe('PurchaseRegistrationService — canonical purchase', () => {
         };
         treasury.set(id, row);
         return row;
+      }),
+      softDeleteInventoryPurchaseOutflow: jest.fn(async (args: any) => {
+        const key = inventoryPurchaseOutflowProvenanceKey(args.watchId);
+        for (const t of treasury.values()) {
+          if (t.provenanceKey === key && !t.deletedAt) {
+            t.deletedAt = new Date();
+            return t;
+          }
+        }
+        return null;
       }),
     };
 
@@ -423,5 +452,124 @@ describe('PurchaseRegistrationService — canonical purchase', () => {
         sourceAccount: 'CASH',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('PAID reverse soft-deletes Watch + Treasury; second reverse is alreadyReversed', async () => {
+    const { service, treasury } = build();
+    const created = await service.register('t1', {
+      watch: baseWatch,
+      purchaseAmount: 1000,
+      acquisitionDate: '2026-08-08',
+      paymentMode: 'PAID',
+      sourceAccount: 'BANK',
+    });
+    const first = await service.reverse('t1', created.watch.id);
+    expect(first.alreadyReversed).toBe(false);
+    expect(first.watch.deletedAt).toBeTruthy();
+    expect([...treasury.values()].every((t) => t.deletedAt)).toBe(true);
+
+    const second = await service.reverse('t1', created.watch.id);
+    expect(second.alreadyReversed).toBe(true);
+  });
+
+  it('CREDIT reverse soft-deletes Watch + CXP', async () => {
+    const { service, payables } = build();
+    const created = await service.register('t1', {
+      watch: baseWatch,
+      purchaseAmount: 2000,
+      acquisitionDate: '2026-08-08',
+      paymentMode: 'CREDIT',
+      sellerCounterpartyName: 'José',
+    });
+    const reversed = await service.reverse('t1', created.watch.id);
+    expect(reversed.alreadyReversed).toBe(false);
+    expect(reversed.watch.deletedAt).toBeTruthy();
+    expect([...payables.values()][0].deletedAt).toBeTruthy();
+  });
+
+  it('PARTIAL reverse soft-deletes Watch + Treasury + CXP', async () => {
+    const { service, treasury, payables } = build();
+    const created = await service.register('t1', {
+      watch: baseWatch,
+      purchaseAmount: 3000,
+      acquisitionDate: '2026-08-08',
+      paymentMode: 'PARTIAL',
+      initialPaymentAmount: 1000,
+      sourceAccount: 'CASH',
+      sellerCounterpartyName: 'José',
+    });
+    const reversed = await service.reverse('t1', created.watch.id);
+    expect(reversed.alreadyReversed).toBe(false);
+    expect([...treasury.values()][0].deletedAt).toBeTruthy();
+    expect([...payables.values()][0].deletedAt).toBeTruthy();
+  });
+
+  it('rejects reverse when Watch is SOLD', async () => {
+    const { service, watches } = build();
+    const created = await service.register('t1', {
+      watch: baseWatch,
+      purchaseAmount: 100,
+      acquisitionDate: '2026-08-08',
+      paymentMode: 'PAID',
+      sourceAccount: 'BANK',
+    });
+    watches.get(created.watch.id).status = WatchStatus.SOLD;
+    await expect(service.reverse('t1', created.watch.id)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('rejects reverse when payable has later payment', async () => {
+    const { service, prisma } = build();
+    const created = await service.register('t1', {
+      watch: baseWatch,
+      purchaseAmount: 100,
+      acquisitionDate: '2026-08-08',
+      paymentMode: 'CREDIT',
+      sellerCounterpartyName: 'José',
+    });
+    prisma.accountPayment.findFirst.mockResolvedValueOnce({ id: 'pay-later' });
+    await expect(service.reverse('t1', created.watch.id)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('rejects reverse for legacy inventory-only Watch', async () => {
+    const { service, watches } = build();
+    watches.set('legacy', {
+      id: 'legacy',
+      tenantId: 't1',
+      brand: 'Rolex',
+      model: 'Sub',
+      status: WatchStatus.AVAILABLE,
+      deletedAt: null,
+    });
+    await expect(service.reverse('t1', 'legacy')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('recovery fails when PAID missing Treasury leg', async () => {
+    const { service, treasury } = build();
+    const created = await service.register('t1', {
+      watch: baseWatch,
+      purchaseAmount: 100,
+      acquisitionDate: '2026-08-08',
+      paymentMode: 'PAID',
+      sourceAccount: 'BANK',
+      registerIdempotencyKey: 'recover-1',
+    });
+    for (const t of treasury.values()) t.deletedAt = new Date();
+    await expect(
+      service.register('t1', {
+        watch: baseWatch,
+        purchaseAmount: 100,
+        acquisitionDate: '2026-08-08',
+        paymentMode: 'PAID',
+        sourceAccount: 'BANK',
+        registerIdempotencyKey: 'recover-1',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(created.watch.id).toBeTruthy();
   });
 });

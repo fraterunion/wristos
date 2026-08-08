@@ -23,6 +23,10 @@ describe('InventoryService.getSummary', () => {
       prisma as never,
       { get: jest.fn() } as never,
       { getUsdMxn: jest.fn() } as never,
+      {
+        getCanonicalPurchaseMarkers: jest.fn(),
+        reverse: jest.fn(),
+      } as never,
     );
     return { service, prisma };
   }

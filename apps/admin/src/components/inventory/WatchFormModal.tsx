@@ -10,11 +10,13 @@ import type { Watch, WatchExpense, WatchExpenseCategory } from '@/types/domain';
 import { ImageUploader } from './ImageUploader';
 import { WatchImageGallery } from './WatchImageGallery';
 import {
-  buildCreateWatchBody,
+  buildRegisterPurchaseBody,
   buildUpdateWatchBody,
   defaultWatchFormValues,
   WATCH_OWNERSHIP_VALUES,
   WATCH_STATUS_VALUES,
+  PURCHASE_PAYMENT_MODE_VALUES,
+  PURCHASE_SOURCE_VALUES,
   watchFormSchema,
   type CostCurrency,
   type WatchFormValues,
@@ -83,6 +85,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
   const costValue = watchForm('cost');
   const watchStatus = watchForm('status');
   const isPublished = watchForm('isPublished');
+  const paymentMode = watchForm('paymentMode');
   const canPublish = watchStatus === 'AVAILABLE';
 
   // Determine if this is a legacy watch (costCurrency not set on existing record)
@@ -136,9 +139,12 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
     setSubmitError(null);
     try {
       if (mode === 'create') {
-        const newWatch = await apiPost<Watch>('/inventory', buildCreateWatchBody(values), {
-          authenticated: true,
-        });
+        const purchase = await apiPost<{ watch: Watch }>(
+          '/inventory/purchases',
+          buildRegisterPurchaseBody(values),
+          { authenticated: true },
+        );
+        const newWatch = purchase.watch;
         for (const expense of expenses) {
           await apiPost<WatchExpense>(
             `/inventory/${newWatch.id}/expenses`,
@@ -233,7 +239,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
 
   if (!open) return null;
 
-  const title = mode === 'create' ? 'Agregar reloj al inventario' : 'Editar reloj';
+  const title = mode === 'create' ? 'Registrar compra' : 'Editar reloj';
   const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
   // FX preview values
@@ -256,7 +262,7 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
             <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
             <p className="mt-0.5 text-sm text-muted">
               {mode === 'create'
-                ? 'Captura los detalles del listado. Puedes refinar después.'
+                ? 'Compra canónica: inventario + tesorería/CXP según forma de pago.'
                 : 'Actualiza los detalles del listado para esta pieza.'}
             </p>
           </div>
@@ -464,6 +470,94 @@ export function WatchFormModal({ mode, watch, open, onClose, onSaved }: Props) {
               ) : null}
             </label>
           </div>
+
+          {mode === 'create' ? (
+            <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-3 sm:p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                Condiciones de compra
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+                    Fecha de compra
+                  </span>
+                  <input type="date" {...register('acquisitionDate')} className="ui-input" />
+                  {formState.errors.acquisitionDate ? (
+                    <p className="ui-error">{formState.errors.acquisitionDate.message}</p>
+                  ) : null}
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+                    Forma de pago
+                  </span>
+                  <select {...register('paymentMode')} className="ui-input">
+                    {PURCHASE_PAYMENT_MODE_VALUES.map((m) => (
+                      <option key={m} value={m}>
+                        {m === 'PAID' ? 'Pagado' : m === 'CREDIT' ? 'A crédito' : 'Pago parcial'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {paymentMode === 'PAID' || paymentMode === 'PARTIAL' ? (
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+                    Pagado desde
+                  </span>
+                  <select {...register('sourceAccount')} className="ui-input">
+                    {PURCHASE_SOURCE_VALUES.map((s) => (
+                      <option key={s} value={s}>
+                        {s === 'CASH' ? 'Efectivo' : s === 'BANK' ? 'Bancos' : 'César'}
+                      </option>
+                    ))}
+                  </select>
+                  {formState.errors.sourceAccount ? (
+                    <p className="ui-error">{formState.errors.sourceAccount.message}</p>
+                  ) : null}
+                </label>
+              ) : null}
+              {paymentMode === 'PARTIAL' ? (
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+                    Monto pagado ahora ({costCurrency})
+                  </span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0.01}
+                    {...register('initialPaymentAmount', { valueAsNumber: true })}
+                    className="ui-input"
+                  />
+                  {formState.errors.initialPaymentAmount ? (
+                    <p className="ui-error">{formState.errors.initialPaymentAmount.message}</p>
+                  ) : null}
+                </label>
+              ) : null}
+              {paymentMode === 'CREDIT' || paymentMode === 'PARTIAL' ? (
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">
+                    Vendedor / contraparte (CXP)
+                  </span>
+                  <input
+                    {...register('sellerCounterpartyName')}
+                    className="ui-input"
+                    placeholder="Nombre del vendedor"
+                    autoComplete="off"
+                  />
+                  {formState.errors.sellerCounterpartyName ? (
+                    <p className="ui-error">{formState.errors.sellerCounterpartyName.message}</p>
+                  ) : null}
+                </label>
+              ) : null}
+              <p className="text-xs text-muted/70">
+                {paymentMode === 'PAID'
+                  ? 'Inventario + salida de tesorería. Sin cuentas por pagar.'
+                  : paymentMode === 'CREDIT'
+                    ? 'Inventario + CXP por el costo completo. Sin movimiento de tesorería.'
+                    : 'Inventario + salida parcial de tesorería + CXP por el restante.'}
+              </p>
+            </div>
+          ) : null}
 
           {/* Status / Ownership */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
