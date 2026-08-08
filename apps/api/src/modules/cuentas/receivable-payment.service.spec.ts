@@ -1,8 +1,10 @@
 import {
+  AccountEntrySource,
   AccountEntryStatus,
   AccountEntryType,
   Currency,
   PaymentMethod,
+  PaymentStatus,
   Prisma,
   TreasuryAccount,
   TreasuryDirection,
@@ -18,7 +20,9 @@ describe('ReceivablePaymentService — canonical received-money registration', (
   function build(state: {
     entries: Map<string, any>;
     payments: Map<string, any>;
+    dealPayments: Map<string, any>;
     treasury: Map<string, any>;
+    deals?: Map<string, any>;
   }) {
     let paySeq = 0;
     let treasSeq = 0;
@@ -50,7 +54,12 @@ describe('ReceivablePaymentService — canonical received-money registration', (
       accountPayment: {
         findFirst: jest.fn(async ({ where }: any) => {
           for (const p of state.payments.values()) {
-            if (where.registerIdempotencyKey && p.registerIdempotencyKey !== where.registerIdempotencyKey) continue;
+            if (
+              where.registerIdempotencyKey &&
+              p.registerIdempotencyKey !== where.registerIdempotencyKey
+            ) {
+              continue;
+            }
             if (where.id && p.id !== where.id) continue;
             if (where.tenantId && p.tenantId !== where.tenantId) continue;
             if (where.deletedAt === null && p.deletedAt) continue;
@@ -80,11 +89,29 @@ describe('ReceivablePaymentService — canonical received-money registration', (
       },
       accountSettlement: {
         findFirst: jest.fn(async () => null),
+        create: jest.fn(async ({ data }: any) => {
+          const id = 'settlement-1';
+          return { id, ...data, deletedAt: null };
+        }),
+      },
+      payment: {
+        aggregate: jest.fn(async ({ where }: any) => {
+          let sum = d(0);
+          for (const p of state.dealPayments.values()) {
+            if (where.tenantId && p.tenantId !== where.tenantId) continue;
+            if (where.dealId && p.dealId !== where.dealId) continue;
+            if (where.status && p.status !== where.status) continue;
+            if (where.deletedAt === null && p.deletedAt) continue;
+            sum = sum.plus(p.amount);
+          }
+          return { _sum: { amount: sum } };
+        }),
       },
       treasuryEntry: {
         findFirst: jest.fn(async ({ where }: any) => {
           for (const t of state.treasury.values()) {
-            if (where.accountPaymentId && t.accountPaymentId !== where.accountPaymentId) continue;
+            if (where.accountPaymentId && t.accountPaymentId !== where.accountPaymentId)
+              continue;
             if (where.deletedAt === null && t.deletedAt) continue;
             return t;
           }
@@ -119,7 +146,7 @@ describe('ReceivablePaymentService — canonical received-money registration', (
     };
   }
 
-  function openReceivable(amount = 100000) {
+  function openReceivable(amount = 100000, overrides: Record<string, unknown> = {}) {
     return {
       id: 'ar-1',
       tenantId: 't1',
@@ -127,20 +154,30 @@ describe('ReceivablePaymentService — canonical received-money registration', (
       status: AccountEntryStatus.OPEN,
       currency: Currency.MXN,
       totalAmount: d(amount),
-      source: 'MANUAL',
+      source: AccountEntrySource.MANUAL,
       dealId: null,
       deletedAt: null,
       counterpartyName: 'José',
       concept: 'Saldo José',
       dueDate: null,
       closedAt: null,
+      ...overrides,
     };
+  }
+
+  function dealReceivable(amount = 350000) {
+    return openReceivable(amount, {
+      source: AccountEntrySource.DEAL_AUTO,
+      dealId: 'deal-1',
+      concept: 'Saldo pendiente — Rolex Batman',
+    });
   }
 
   it('CASH: decreases CXC outstanding and creates Treasury INFLOW once (atomic path)', async () => {
     const state = {
       entries: new Map([['ar-1', openReceivable()]]),
       payments: new Map(),
+      dealPayments: new Map(),
       treasury: new Map(),
     };
     const { service, treasuryService } = build(state);
@@ -164,6 +201,7 @@ describe('ReceivablePaymentService — canonical received-money registration', (
       const state = {
         entries: new Map([['ar-1', openReceivable()]]),
         payments: new Map(),
+        dealPayments: new Map(),
         treasury: new Map(),
       };
       const { service, treasuryService } = build(state);
@@ -185,6 +223,7 @@ describe('ReceivablePaymentService — canonical received-money registration', (
     const state = {
       entries: new Map([['ar-1', openReceivable(1000)]]),
       payments: new Map(),
+      dealPayments: new Map(),
       treasury: new Map(),
     };
     const { service } = build(state);
@@ -192,7 +231,11 @@ describe('ReceivablePaymentService — canonical received-money registration', (
       service.register('t1', { receivableEntryId: 'ar-1', amount: 0, destination: 'CASH' }),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      service.register('t1', { receivableEntryId: 'ar-1', amount: 1000.01, destination: 'CASH' }),
+      service.register('t1', {
+        receivableEntryId: 'ar-1',
+        amount: 1000.01,
+        destination: 'CASH',
+      }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -200,12 +243,21 @@ describe('ReceivablePaymentService — canonical received-money registration', (
     const state = {
       entries: new Map([['ar-1', openReceivable(100)]]),
       payments: new Map(),
+      dealPayments: new Map(),
       treasury: new Map(),
     };
     const { service } = build(state);
-    await service.register('t1', { receivableEntryId: 'ar-1', amount: 40, destination: 'CASH' });
+    await service.register('t1', {
+      receivableEntryId: 'ar-1',
+      amount: 40,
+      destination: 'CASH',
+    });
     expect(state.entries.get('ar-1')!.status).toBe(AccountEntryStatus.PARTIAL);
-    await service.register('t1', { receivableEntryId: 'ar-1', amount: 60, destination: 'BANK' });
+    await service.register('t1', {
+      receivableEntryId: 'ar-1',
+      amount: 60,
+      destination: 'BANK',
+    });
     expect(state.entries.get('ar-1')!.status).toBe(AccountEntryStatus.PAID);
   });
 
@@ -213,6 +265,7 @@ describe('ReceivablePaymentService — canonical received-money registration', (
     const state = {
       entries: new Map([['ar-1', openReceivable()]]),
       payments: new Map(),
+      dealPayments: new Map(),
       treasury: new Map(),
     };
     const { service, treasuryService } = build(state);
@@ -239,6 +292,7 @@ describe('ReceivablePaymentService — canonical received-money registration', (
     const state = {
       entries: new Map([['ar-1', openReceivable()]]),
       payments: new Map(),
+      dealPayments: new Map(),
       treasury: new Map(),
     };
     const { service } = build(state);
@@ -258,16 +312,119 @@ describe('ReceivablePaymentService — canonical received-money registration', (
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('blocks deal-linked receivables', async () => {
-    const entry = { ...openReceivable(), source: 'DEAL_AUTO', dealId: 'deal-1' as string | null };
+  it('DEAL_AUTO: CASH/BANK/CESAR payment reduces CXC using Deal.Payment + AccountPayment', async () => {
+    for (const destination of ['CASH', 'BANK', 'CESAR'] as const) {
+      const state = {
+        entries: new Map([['ar-1', dealReceivable(350000)]]),
+        payments: new Map(),
+        dealPayments: new Map([
+          [
+            'dp-1',
+            {
+              id: 'dp-1',
+              tenantId: 't1',
+              dealId: 'deal-1',
+              amount: d(50000),
+              status: PaymentStatus.PAID,
+              deletedAt: null,
+            },
+          ],
+        ]),
+        treasury: new Map(),
+      };
+      const { service, treasuryService } = build(state);
+      const result = await service.register('t1', {
+        receivableEntryId: 'ar-1',
+        amount: 100000,
+        destination,
+        registerIdempotencyKey: `deal-${destination}`,
+      });
+      expect(result.replayed).toBe(false);
+      expect(result.receivablePayment.amount.toFixed(2)).toBe('100000.00');
+      expect(treasuryService.createFromAccountPayment).toHaveBeenCalledTimes(1);
+      expect(state.entries.get('ar-1')!.status).toBe(AccountEntryStatus.PARTIAL);
+      // Overpayment against remaining 200k rejected
+      await expect(
+        service.register('t1', {
+          receivableEntryId: 'ar-1',
+          amount: 200000.01,
+          destination,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('DEAL_AUTO: final payment closes CXC without creating duplicate entry', async () => {
     const state = {
-      entries: new Map([['ar-1', entry]]),
+      entries: new Map([['ar-1', dealReceivable(100000)]]),
       payments: new Map(),
+      dealPayments: new Map(),
+      treasury: new Map(),
+    };
+    const { service } = build(state);
+    await service.register('t1', {
+      receivableEntryId: 'ar-1',
+      amount: 100000,
+      destination: 'BANK',
+    });
+    expect(state.entries.get('ar-1')!.status).toBe(AccountEntryStatus.PAID);
+    expect(state.entries.size).toBe(1);
+  });
+
+  it('DEAL_AUTO: idempotent replay and conflict', async () => {
+    const state = {
+      entries: new Map([['ar-1', dealReceivable(100000)]]),
+      payments: new Map(),
+      dealPayments: new Map(),
+      treasury: new Map(),
+    };
+    const { service, treasuryService } = build(state);
+    const first = await service.register('t1', {
+      receivableEntryId: 'ar-1',
+      amount: 25000,
+      destination: 'CESAR',
+      registerIdempotencyKey: 'ai-action-run:deal-pay',
+    });
+    const second = await service.register('t1', {
+      receivableEntryId: 'ar-1',
+      amount: 25000,
+      destination: 'CESAR',
+      registerIdempotencyKey: 'ai-action-run:deal-pay',
+    });
+    expect(second.replayed).toBe(true);
+    expect(second.receivablePayment.id).toBe(first.receivablePayment.id);
+    expect(treasuryService.createFromAccountPayment).toHaveBeenCalledTimes(1);
+    await expect(
+      service.register('t1', {
+        receivableEntryId: 'ar-1',
+        amount: 10,
+        destination: 'CESAR',
+        registerIdempotencyKey: 'ai-action-run:deal-pay',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects CRYPTO and arbitrary destinations', async () => {
+    const state = {
+      entries: new Map([['ar-1', openReceivable()]]),
+      payments: new Map(),
+      dealPayments: new Map(),
       treasury: new Map(),
     };
     const { service } = build(state);
     await expect(
-      service.register('t1', { receivableEntryId: 'ar-1', amount: 10, destination: 'CASH' }),
+      service.register('t1', {
+        receivableEntryId: 'ar-1',
+        amount: 10,
+        destination: 'CRYPTO' as any,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.register('t1', {
+        receivableEntryId: 'ar-1',
+        amount: 10,
+        destination: 'WALLET' as any,
+      }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

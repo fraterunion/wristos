@@ -12,6 +12,7 @@ import {
   AccountPayment,
   Currency,
   PaymentMethod,
+  PaymentStatus,
   Prisma,
   TreasuryAccount,
   TreasuryDirection,
@@ -79,16 +80,33 @@ export class ReceivablePaymentService {
   /**
    * Canonical receivable payment registration shared by manual Cuentas and future AI.
    *
+   * Eligible RECEIVABLE sources: MANUAL and DEAL_AUTO / deal-linked.
+   *
+   * Dual-ledger invariant (no double-write of the same economic event):
+   * - Sale / Ventas addPayment → Deal `Payment` (+ deal Treasury path)
+   * - This command → AccountPayment (+ account Treasury path; no bank fee)
+   * - Deal-linked outstanding = Σ Deal.Payment(PAID) + Σ AccountPayment(on entry)
+   *
    * A) CASH/BANK/CESAR — AccountPayment + Treasury inflow + status, atomic.
    * B) APPLY_TO_PAYABLE — AccountSettlement + two SETTLEMENT legs, atomic, no Treasury.
    *
-   * Bank commission is NOT modeled on CXC received-money payments (unlike deal BANCOS sales).
+   * Destinations are exactly: CASH | BANK | CESAR | APPLY_TO_PAYABLE (never CRYPTO).
    */
   async register(
     tenantId: string,
     input: RegisterReceivablePaymentInput,
   ): Promise<RegisterReceivablePaymentResult> {
     const destination = input.destination;
+    if (
+      destination !== 'CASH' &&
+      destination !== 'BANK' &&
+      destination !== 'CESAR' &&
+      destination !== 'APPLY_TO_PAYABLE'
+    ) {
+      throw new BadRequestException(
+        'Unsupported payment destination. Allowed: CASH, BANK, CESAR, APPLY_TO_PAYABLE',
+      );
+    }
     if (destination === 'APPLY_TO_PAYABLE') {
       return this.registerSettlement(tenantId, input);
     }
@@ -148,7 +166,7 @@ export class ReceivablePaymentService {
             include: { payments: { where: { deletedAt: null } } },
           });
           if (!entry) throw new NotFoundException('Account entry not found');
-          this.assertManualReceivable(entry);
+          this.assertPayableReceivable(entry);
           if (entry.status === AccountEntryStatus.CANCELLED) {
             throw new BadRequestException('Cannot pay a cancelled receivable');
           }
@@ -162,11 +180,11 @@ export class ReceivablePaymentService {
           }
           this.assertExchangeRateForCurrency(currency, input.exchangeRateUsed);
 
-          const paid = entry.payments.reduce(
-            (sum, p) => sum.plus(p.amount),
-            new Prisma.Decimal(0),
-          );
+          const paid = await this.resolveReceivablePaidTotal(entry, tenantId, tx);
           const outstanding = entry.totalAmount.minus(paid);
+          if (outstanding.lessThanOrEqualTo(0)) {
+            throw new BadRequestException('Cannot pay a fully paid receivable');
+          }
           if (amount.greaterThan(outstanding)) {
             throw new BadRequestException(
               `El monto excede el saldo pendiente (${outstanding.toFixed(2)} ${entry.currency}).`,
@@ -204,6 +222,7 @@ export class ReceivablePaymentService {
             tx,
           });
 
+          // Do NOT mutate Deal / Watch / agreedPrice — only AccountEntry payment state.
           const nextPaid = paid.plus(amount);
           const { status, closedAt } = this.resolveStatus(entry, nextPaid);
           if (entry.status !== status || entry.closedAt?.getTime() !== closedAt?.getTime()) {
@@ -279,12 +298,7 @@ export class ReceivablePaymentService {
             include: { payments: { where: { deletedAt: null } } },
           });
           if (!receivable) throw new NotFoundException('Account entry not found');
-          this.assertManualReceivable(receivable);
-          if (receivable.type !== AccountEntryType.RECEIVABLE) {
-            throw new BadRequestException(
-              'APPLY_TO_PAYABLE only applies when registering a payment on a RECEIVABLE',
-            );
-          }
+          this.assertPayableReceivable(receivable);
           if (receivable.status === AccountEntryStatus.CANCELLED) {
             throw new BadRequestException('Cannot settle a cancelled receivable');
           }
@@ -306,7 +320,8 @@ export class ReceivablePaymentService {
           if (payable.status === AccountEntryStatus.PAID) {
             throw new BadRequestException('Cannot settle against a fully paid payable');
           }
-          this.assertManualEntry(payable);
+          // Payables are manual Cuentas entries only (no DEAL_AUTO payables today).
+          this.assertManualPayable(payable);
 
           if (receivable.currency !== payable.currency) {
             throw new BadRequestException(
@@ -319,14 +334,19 @@ export class ReceivablePaymentService {
             throw new BadRequestException('Payment currency must match entry currency');
           }
 
-          const receivableOutstanding = this.outstandingFromPayments(
-            receivable.totalAmount,
-            receivable.payments,
+          const receivablePaid = await this.resolveReceivablePaidTotal(
+            receivable,
+            tenantId,
+            tx,
           );
+          const receivableOutstanding = receivable.totalAmount.minus(receivablePaid);
           const payableOutstanding = this.outstandingFromPayments(
             payable.totalAmount,
             payable.payments,
           );
+          if (receivableOutstanding.lessThanOrEqualTo(0)) {
+            throw new BadRequestException('Cannot settle a fully paid receivable');
+          }
           if (amount.greaterThan(receivableOutstanding)) {
             throw new BadRequestException(
               `El monto excede el saldo pendiente del cobro (${receivableOutstanding.toFixed(2)} ${currency}).`,
@@ -384,9 +404,8 @@ export class ReceivablePaymentService {
           });
 
           // Persist status on both sides inside the same transaction.
-          const nextRecvPaid = receivable.payments
-            .reduce((s, p) => s.plus(p.amount), new Prisma.Decimal(0))
-            .plus(amount);
+          // Deal / Watch remain untouched for deal-linked CXC settlements.
+          const nextRecvPaid = receivablePaid.plus(amount);
           const nextPayPaid = payable.payments
             .reduce((s, p) => s.plus(p.amount), new Prisma.Decimal(0))
             .plus(amount);
@@ -510,19 +529,73 @@ export class ReceivablePaymentService {
     }
   }
 
-  private assertManualReceivable(entry: AccountEntry) {
+  /**
+   * Business eligibility for receivable payment — not origin-type gatekeeping.
+   * MANUAL and DEAL_AUTO / deal-linked sale CXC are both payable here.
+   */
+  private assertPayableReceivable(entry: AccountEntry) {
     if (entry.type !== AccountEntryType.RECEIVABLE) {
       throw new BadRequestException('ReceivablePaymentService only registers RECEIVABLE payments');
     }
-    this.assertManualEntry(entry);
+    if (entry.deletedAt) {
+      throw new BadRequestException('Cannot pay a deleted receivable');
+    }
+    if (
+      entry.currency !== Currency.MXN &&
+      entry.currency !== Currency.USD
+    ) {
+      throw new BadRequestException('Unsupported receivable currency');
+    }
   }
 
-  private assertManualEntry(entry: AccountEntry) {
+  private assertManualPayable(entry: AccountEntry) {
     if (entry.source === AccountEntrySource.DEAL_AUTO || entry.dealId !== null) {
       throw new BadRequestException(
-        'Payments can only be recorded on manual entries without deal linkage',
+        'Settlement target must be a manual PAYABLE without deal linkage',
       );
     }
+  }
+
+  private isDealLinked(entry: Pick<AccountEntry, 'source' | 'dealId'>): boolean {
+    return entry.source === AccountEntrySource.DEAL_AUTO || entry.dealId !== null;
+  }
+
+  /**
+   * Canonical paid total for a receivable:
+   * - MANUAL → Σ AccountPayment
+   * - DEAL_AUTO → Σ Deal.Payment(PAID) + Σ AccountPayment (no double-write of one event)
+   */
+  private async resolveReceivablePaidTotal(
+    entry: AccountEntry & { payments: Array<{ amount: Prisma.Decimal }> },
+    tenantId: string,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<Prisma.Decimal> {
+    const accountPaid = entry.payments.reduce(
+      (sum, p) => sum.plus(p.amount),
+      new Prisma.Decimal(0),
+    );
+    if (!this.isDealLinked(entry) || !entry.dealId) {
+      return accountPaid;
+    }
+    const dealPaid = await this.getDealPaidTotal(tenantId, entry.dealId, db);
+    return dealPaid.plus(accountPaid);
+  }
+
+  private async getDealPaidTotal(
+    tenantId: string,
+    dealId: string,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<Prisma.Decimal> {
+    const agg = await db.payment.aggregate({
+      where: {
+        tenantId,
+        dealId,
+        status: PaymentStatus.PAID,
+        deletedAt: null,
+      },
+      _sum: { amount: true },
+    });
+    return agg._sum.amount ?? new Prisma.Decimal(0);
   }
 
   private assertExchangeRateForCurrency(

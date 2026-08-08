@@ -81,4 +81,15 @@ describe('intent-schema: the allowlist boundary', () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.data).toEqual({});
   });
+
+  it('REGISTER_RECEIVABLE_PAYMENT accepts CASH|BANK|CESAR|APPLY_TO_PAYABLE and rejects CRYPTO', () => {
+    const shape = entitySchemas.REGISTER_RECEIVABLE_PAYMENT;
+    for (const destination of ['CASH', 'BANK', 'CESAR', 'APPLY_TO_PAYABLE'] as const) {
+      const ok = shape.safeParse({ amount: '35000.00', destination });
+      expect(ok.success).toBe(true);
+      if (ok.success) expect(ok.data.destination).toBe(destination);
+    }
+    const crypto = shape.safeParse({ amount: '35000.00', destination: 'CRYPTO' });
+    expect(crypto.success).toBe(false);
+  });
 });

@@ -50,6 +50,9 @@ describe('legacy Receivable write guardrail', () => {
         })),
       },
       accountEntry,
+      accountPayment: {
+        findMany: jest.fn(async () => []),
+      },
       receivable,
       receivablePayment,
       payment: {

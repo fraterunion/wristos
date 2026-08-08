@@ -787,7 +787,8 @@ export class CuentasService {
 
   async removePayment(entryId: string, paymentId: string, tenantId: string) {
     const entry = await this.findEntryOrThrow(entryId, tenantId);
-    this.assertManualEntry(entry);
+    // Deal-linked RECEIVABLE AccountPayments may be reversed; Deal/Watch untouched.
+    // In-place edit of deal-linked entries remains blocked via updatePayment.
     await this.findPaymentOrThrow(paymentId, entryId, tenantId);
 
     const linkedSettlement = await this.findActiveSettlementForPayment(paymentId, tenantId);
@@ -1187,7 +1188,16 @@ export class CuentasService {
 
     if (!entry) return null;
 
-    const paidTotal = await this.getDealPaidTotal(tenantId, dealId, db);
+    const accountPayments = await db.accountPayment.findMany({
+      where: { tenantId, entryId: entry.id, deletedAt: null },
+      select: { amount: true },
+    });
+    const paidTotal = await this.resolvePaidTotal(
+      { ...entry, payments: accountPayments as EntryWithPayments['payments'] },
+      tenantId,
+      undefined,
+      db,
+    );
     const { status, closedAt } = this.resolveStatus(entry, paidTotal);
 
     if (
@@ -1219,7 +1229,16 @@ export class CuentasService {
 
     const now = new Date();
     for (const entry of entries) {
-      const paidTotal = await this.getDealPaidTotal(tenantId, dealId, db);
+      const accountPayments = await db.accountPayment.findMany({
+        where: { tenantId, entryId: entry.id, deletedAt: null },
+        select: { amount: true },
+      });
+      const paidTotal = await this.resolvePaidTotal(
+        { ...entry, payments: accountPayments as EntryWithPayments['payments'] },
+        tenantId,
+        undefined,
+        db,
+      );
       const { status } = this.resolveStatus(entry, paidTotal);
       if (status !== AccountEntryStatus.PAID) {
         await db.accountEntry.update({
@@ -1249,12 +1268,7 @@ export class CuentasService {
     const results = [];
 
     for (const entry of entries) {
-      const paidTotal = this.isDealLinked(entry)
-        ? dealPaidMap.get(entry.dealId!) ?? new Prisma.Decimal(0)
-        : entry.payments.reduce(
-            (sum, p) => sum.plus(p.amount),
-            new Prisma.Decimal(0),
-          );
+      const paidTotal = await this.resolvePaidTotal(entry, tenantId, dealPaidMap);
 
       const balance = entry.totalAmount.minus(paidTotal);
       const { status, closedAt } = this.resolveStatus(entry, paidTotal);
@@ -1277,16 +1291,29 @@ export class CuentasService {
     return results;
   }
 
-  private resolvePaidTotal(entry: EntryWithPayments, tenantId: string): Promise<Prisma.Decimal> {
-    if (this.isDealLinked(entry)) {
-      if (!entry.dealId) return Promise.resolve(new Prisma.Decimal(0));
-      return this.getDealPaidTotal(tenantId, entry.dealId);
-    }
-    const paid = entry.payments.reduce(
+  /**
+   * Canonical paid total:
+   * - MANUAL → Σ AccountPayment
+   * - DEAL_AUTO → Σ Deal.Payment(PAID) + Σ AccountPayment
+   *   (sale/Ventas write Deal Payment; Cuentas/AI write AccountPayment — never both for one event)
+   */
+  private async resolvePaidTotal(
+    entry: EntryWithPayments,
+    tenantId: string,
+    dealPaidMap?: Map<string, Prisma.Decimal>,
+    db: DbClient = this.prisma,
+  ): Promise<Prisma.Decimal> {
+    const accountPaid = entry.payments.reduce(
       (sum, p) => sum.plus(p.amount),
       new Prisma.Decimal(0),
     );
-    return Promise.resolve(paid);
+    if (!this.isDealLinked(entry) || !entry.dealId) {
+      return accountPaid;
+    }
+    const dealPaid =
+      dealPaidMap?.get(entry.dealId) ??
+      (await this.getDealPaidTotal(tenantId, entry.dealId, db));
+    return dealPaid.plus(accountPaid);
   }
 
   private resolveStatus(
@@ -1392,9 +1419,9 @@ export class CuentasService {
       updatedAt: entry.updatedAt.toISOString(),
       paidTotal: paidTotal.toFixed(2),
       balance: balance.toFixed(2),
-      payments: this.isDealLinked(entry)
-        ? []
-        : entry.payments.map((p) => this.serializePayment(p)),
+      // AccountPayments only (Cuentas/AI collections + settlements). Deal.Payment
+      // sale/Ventas legs are reflected in paidTotal/balance, not this array.
+      payments: entry.payments.map((p) => this.serializePayment(p)),
     };
     return base;
   }
@@ -1470,10 +1497,15 @@ export class CuentasService {
     return where;
   }
 
+  /**
+   * Retained for PAYABLE treasury outflows and in-place payment edits.
+   * Deal-linked RECEIVABLE collections use ReceivablePaymentService (eligible).
+   * Correction of deal-linked AccountPayments uses removePayment (allowed).
+   */
   private assertManualEntry(entry: AccountEntry) {
     if (this.isDealLinked(entry)) {
       throw new BadRequestException(
-        'Payments can only be recorded on manual entries without deal linkage',
+        'This mutation applies only to manual entries without deal linkage',
       );
     }
   }

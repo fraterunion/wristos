@@ -234,7 +234,10 @@ describe('CuentasService — account-to-account settlement', () => {
           return row;
         }),
       },
-      payment: { groupBy: jest.fn(async () => []) },
+      payment: {
+        groupBy: jest.fn(async () => []),
+        aggregate: jest.fn(async () => ({ _sum: { amount: d(0) } })),
+      },
       $transaction: jest.fn(async (fn: any) => fn(prisma as any)),
     } as any;
 

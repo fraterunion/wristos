@@ -224,7 +224,9 @@ export const entitySchemas = {
       customerQuery: query.optional(),
       amount: money.optional(),
       currency: currency.optional(),
-      destination: z.enum(['CASH', 'BANK', 'CESAR', 'CRYPTO']).optional(),
+      // Frozen to canonical payment destinations — CRYPTO has no CXC payment command.
+      destination: z.enum(['CASH', 'BANK', 'CESAR', 'APPLY_TO_PAYABLE']).optional(),
+      payableQuery: query.optional(),
       effectiveDate: isoDate.optional(),
     })
     .strip(),

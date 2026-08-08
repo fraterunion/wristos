@@ -4,7 +4,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Payment, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  AccountEntryType,
+  Payment,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CuentasService } from '../cuentas/cuentas.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -222,8 +227,33 @@ export class PaymentsService {
       _sum: { amount: true },
     });
 
+    // Cuentas/AI collections against the deal-linked AccountEntry (AccountPayment).
+    // Combined with Deal.Payment so Ventas pending matches Cuentas outstanding.
+    const accountEntry = await this.prisma.accountEntry.findFirst({
+      where: {
+        tenantId,
+        dealId,
+        type: AccountEntryType.RECEIVABLE,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    let accountPaid = new Prisma.Decimal(0);
+    if (accountEntry) {
+      const accountAgg = await this.prisma.accountPayment.aggregate({
+        where: {
+          tenantId,
+          entryId: accountEntry.id,
+          deletedAt: null,
+        },
+        _sum: { amount: true },
+      });
+      accountPaid = accountAgg._sum.amount ?? new Prisma.Decimal(0);
+    }
+
     const totalAgreedPrice = deal.agreedPrice;
-    const totalPaid = paidAgg._sum.amount ?? new Prisma.Decimal(0);
+    const dealPaid = paidAgg._sum.amount ?? new Prisma.Decimal(0);
+    const totalPaid = dealPaid.plus(accountPaid);
 
     const rawPending = totalAgreedPrice.minus(totalPaid);
     const pendingBalance = rawPending.lessThan(0)
