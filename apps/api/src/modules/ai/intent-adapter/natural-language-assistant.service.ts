@@ -160,6 +160,55 @@ export class NaturalLanguageAssistantService {
         uniqueResolution: true,
         candidateCount: 1,
       });
+
+      // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
+      if (
+        loaded.working?.lastIntent === 'CREATE_CLIENT' &&
+        resolution.entityType === 'CLIENT'
+      ) {
+        const createNew =
+          resolution.id === '__CREATE_NEW_CLIENT__' ||
+          resolution.id.startsWith('__CREATE_NEW_CLIENT__|');
+        const pendingName = createNew
+          ? resolution.id.includes('|')
+            ? resolution.id.slice('__CREATE_NEW_CLIENT__|'.length)
+            : undefined
+          : undefined;
+        const createEntities: Record<string, string | boolean> = createNew
+          ? {
+              allowProbableDuplicate: true,
+              ...(pendingName ? { name: pendingName } : {}),
+            }
+          : {
+              clientId: resolution.id,
+              useExistingClientId: resolution.id,
+              name: resolution.label,
+            };
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: 'CREATE_CLIENT',
+          entities: createEntities,
+          candidateHash: resolution.resolvedEntityHash,
+        });
+        const continued = await this.assistant.executeClaimed(
+          actor,
+          {
+            intent: 'CREATE_CLIENT',
+            entities: createEntities,
+            surface: dto.surface ?? 'DESKTOP',
+            clientRequestId: dto.clientRequestId,
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            userDisplayText: dto.text,
+          },
+          request,
+        );
+        return {
+          resolvedIntent: 'CREATE_CLIENT',
+          response: continued,
+          resolvedEntities: createEntities,
+        };
+      }
+
       const response = buildEntitySelectedResponse(resolution.label, responseCtx);
       await this.aiRequests.recordInterpretation(request.id, {
         intent: 'UNKNOWN',
@@ -325,6 +374,12 @@ export class NaturalLanguageAssistantService {
         } else {
           entities = mergeTrustedIds(entities, { customerId: resolution.id });
         }
+      }
+      if (outcome.candidate.intent === 'CREATE_CLIENT' && resolution.entityType === 'CLIENT') {
+        entities = mergeTrustedIds(entities, {
+          clientId: resolution.id,
+          useExistingClientId: resolution.id,
+        });
       }
       if (
         outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' &&

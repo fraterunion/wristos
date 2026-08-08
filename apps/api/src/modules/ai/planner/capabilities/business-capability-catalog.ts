@@ -29,6 +29,7 @@ export const BUSINESS_CAPABILITIES: readonly BusinessCapabilityDefinition[] = [
   capability('REGISTER_RECEIVABLE_PAYMENT', 'Register Receivable Payment', 'ACCOUNTS'),
   capability('REGISTER_PURCHASE', 'Register Purchase', 'INVENTORY'),
   capability('REGISTER_EXPENSE', 'Register Expense', 'EXPENSES'),
+  capability('CREATE_CLIENT', 'Create Client', 'CRM'),
   capability('REGISTER_SETTLEMENT', 'Register Settlement', 'ACCOUNTS'),
   capability('REGISTER_CRYPTO_POSITION', 'Register Crypto Position', 'TREASURY'),
   capability('REGISTER_CRYPTO_PRICE', 'Register Crypto Price', 'TREASURY'),

@@ -16,6 +16,7 @@ import { RuntimeService } from '../runtime/runtime.service';
 import { mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
 import { WriteCapabilityBindingRegistry } from './write-capability-binding-registry';
+import { createClientIdempotencyKey } from './write/create-client.binding';
 import { registerExpenseIdempotencyKey } from './write/register-expense.binding';
 import { registerPurchaseIdempotencyKey } from './write/register-purchase.binding';
 import { registerReceivablePaymentIdempotencyKey } from './write/register-receivable-payment.binding';
@@ -56,13 +57,19 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
   if (intent === 'REGISTER_PURCHASE') {
     return registerPurchaseIdempotencyKey(actionRunId);
   }
+  if (intent === 'CREATE_CLIENT') {
+    return createClientIdempotencyKey(actionRunId);
+  }
   return registerSaleIdempotencyKey(actionRunId);
 }
 
-function capabilityLabel(capability: string): 'venta' | 'pago' | 'gasto' | 'compra' {
+function capabilityLabel(
+  capability: string,
+): 'venta' | 'pago' | 'gasto' | 'compra' | 'cliente' {
   if (capability === 'REGISTER_RECEIVABLE_PAYMENT') return 'pago';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
+  if (capability === 'CREATE_CLIENT') return 'cliente';
   return 'venta';
 }
 
@@ -85,6 +92,7 @@ export class WritePlanRunner {
  *   or AccountSettlement.idempotencyKey (APPLY_TO_PAYABLE)
  * - REGISTER_EXPENSE → OperatingExpense.registerIdempotencyKey
  * - REGISTER_PURCHASE → Watch.registerIdempotencyKey
+ * - CREATE_CLIENT → Client.registerIdempotencyKey
  *
  * Post-commit recovery: EXECUTING/FAILED + durable marker under
  * ai-action-run:<id> → reconstruct receipt and finalize COMPLETED.
@@ -146,7 +154,9 @@ export class WritePlanRunner {
               ? 'El gasto se está registrando. Reintenta la misma confirmación en un momento. No inicies un gasto nuevo.'
               : label === 'compra'
                 ? 'La compra se está registrando. Reintenta la misma confirmación en un momento. No inicies una compra nueva.'
-                : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
+                : label === 'cliente'
+                  ? 'El cliente se está creando. Reintenta la misma confirmación en un momento. No inicies un alta nueva.'
+                  : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
         receipt: null,
         planFingerprint: claim.run.planFingerprint,
         executableWrite: true,
@@ -441,7 +451,9 @@ export class WritePlanRunner {
             ? 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING'
             : run.intent === 'REGISTER_PURCHASE'
               ? 'CANONICAL_PURCHASE_COMMITTED_RUNTIME_PENDING'
-              : 'CANONICAL_SALE_COMMITTED_RUNTIME_PENDING';
+              : run.intent === 'CREATE_CLIENT'
+                ? 'CANONICAL_CLIENT_COMMITTED_RUNTIME_PENDING'
+                : 'CANONICAL_SALE_COMMITTED_RUNTIME_PENDING';
       throw new ConflictException(
         `${prefix}: ${
           originalError instanceof Error ? originalError.constructor.name : 'UnknownError'
@@ -482,6 +494,13 @@ export class WritePlanRunner {
         select: { id: true },
       });
       return Boolean(watch);
+    }
+    if (intent === 'CREATE_CLIENT') {
+      const client = await db.client.findFirst({
+        where: { tenantId, registerIdempotencyKey: key },
+        select: { id: true },
+      });
+      return Boolean(client);
     }
     const deal = await db.deal.findFirst({
       where: { tenantId, registerIdempotencyKey: key, deletedAt: null },
@@ -728,9 +747,13 @@ export class WritePlanRunner {
               ? meta.recovered || meta.replayed
                 ? 'Listo. La compra ya estaba registrada.'
                 : 'Listo. La compra quedó registrada.'
-              : meta.recovered || meta.replayed
-                ? 'Listo. La venta ya estaba registrada.'
-                : 'Listo. La venta quedó registrada.',
+              : label === 'cliente'
+                ? meta.recovered || meta.replayed
+                  ? 'Listo. El cliente ya estaba creado.'
+                  : 'Listo. El cliente quedó creado.'
+                : meta.recovered || meta.replayed
+                  ? 'Listo. La venta ya estaba registrada.'
+                  : 'Listo. La venta quedó registrada.',
       receipt: result.receipt,
       planFingerprint: run.planFingerprint,
       executableWrite: true,
@@ -744,7 +767,8 @@ export class WritePlanRunner {
       failureType.startsWith('CANONICAL_SALE_COMMITTED') ||
       failureType.startsWith('CANONICAL_PAYMENT_COMMITTED') ||
       failureType.startsWith('CANONICAL_EXPENSE_COMMITTED') ||
-      failureType.startsWith('CANONICAL_PURCHASE_COMMITTED')
+      failureType.startsWith('CANONICAL_PURCHASE_COMMITTED') ||
+      failureType.startsWith('CANONICAL_CLIENT_COMMITTED')
     ) {
       return {
         actionRun: run,
@@ -761,7 +785,9 @@ export class WritePlanRunner {
               ? 'El gasto ya quedó registrado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
               : label === 'compra'
                 ? 'La compra ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-                : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
+                : label === 'cliente'
+                  ? 'El cliente ya quedó creado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+                  : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
         receipt: null,
         planFingerprint: run.planFingerprint,
         executableWrite: true,
@@ -774,6 +800,30 @@ export class WritePlanRunner {
       failureType.includes('stale') ||
       failureType.includes('WORKSPACE_');
     const permission = failureType.includes('PERMISSION') || failureType.includes('Forbidden');
+    if (
+      failureType === 'CLIENT_EXACT_DUPLICATE' ||
+      failureType === 'CLIENT_DELETED_MATCH' ||
+      failureType === 'CLIENT_IDENTITY_CONFLICT'
+    ) {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'FAILED',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          failureType === 'CLIENT_DELETED_MATCH'
+            ? 'Existe un cliente eliminado con esos datos. No se creó un duplicado. Restáuralo desde CRM si corresponde.'
+            : 'Ya existe un cliente con esos datos de contacto. No se creó un duplicado.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
     const message =
       label === 'pago'
         ? stale
@@ -793,13 +843,19 @@ export class WritePlanRunner {
               : permission
                 ? 'Ya no tienes permiso para registrar esta compra. No se realizó ningún cambio.'
                 : 'No pude registrar la compra. La operación se revirtió y no se realizó ningún cambio.'
-            : stale
-              ? failureType === 'STALE_WATCH_SOLD'
-                ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-                : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-              : permission
-                ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
-                : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
+            : label === 'cliente'
+              ? stale
+                ? 'El plan del cliente cambió o el espacio de trabajo ya no es válido. No se creó ningún cliente.'
+                : permission
+                  ? 'Ya no tienes permiso para crear este cliente. No se realizó ningún cambio.'
+                  : 'No pude crear el cliente. No se realizó ningún cambio.'
+              : stale
+                ? failureType === 'STALE_WATCH_SOLD'
+                  ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+                  : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+                : permission
+                  ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
+                  : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
     return {
       actionRun: run,
       executionState: 'FAILED',
@@ -818,7 +874,20 @@ export class WritePlanRunner {
 
   private failureType(error: unknown): string {
     if (error instanceof ConflictException) {
+      const response = error.getResponse();
+      if (response && typeof response === 'object' && !Array.isArray(response)) {
+        const code = (response as { code?: unknown }).code;
+        if (
+          code === 'CLIENT_EXACT_DUPLICATE' ||
+          code === 'CLIENT_DELETED_MATCH' ||
+          code === 'CLIENT_IDENTITY_CONFLICT' ||
+          code === 'CLIENT_IDEMPOTENCY_PAYLOAD_CONFLICT'
+        ) {
+          return String(code);
+        }
+      }
       const msg = String(error.message);
+      if (msg.includes('CANONICAL_CLIENT_COMMITTED')) return 'CANONICAL_CLIENT_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('CANONICAL_PAYMENT_COMMITTED')) return 'CANONICAL_PAYMENT_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('CANONICAL_EXPENSE_COMMITTED')) return 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('CANONICAL_EXPENSE_INVARIANT')) return 'CANONICAL_EXPENSE_INVARIANT';

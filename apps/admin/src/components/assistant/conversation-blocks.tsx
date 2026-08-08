@@ -173,6 +173,7 @@ export function ConversationBlocks({
                   (block.ctaKind === 'CONFIRM_SALE' ||
                     block.ctaKind === 'CONFIRM_PAYMENT' ||
                     block.ctaKind === 'CONFIRM_EXPENSE' ||
+                    block.ctaKind === 'CONFIRM_CLIENT' ||
                     block.ctaKind === 'CONFIRM_PURCHASE') &&
                   block.actionRunId &&
                   block.planFingerprint &&

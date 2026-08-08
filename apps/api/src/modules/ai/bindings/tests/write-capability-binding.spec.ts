@@ -1,5 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { WriteCapabilityBindingRegistry } from '../write-capability-binding-registry';
+import { CreateClientWriteBinding } from '../write/create-client.binding';
 import { RegisterExpenseWriteBinding } from '../write/register-expense.binding';
 import { RegisterPurchaseWriteBinding } from '../write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
@@ -33,17 +34,30 @@ function buildRegistry() {
     mode: 'WRITE',
     bindingName: 'register_purchase_canonical@1.0.0',
   });
-  const registry = new WriteCapabilityBindingRegistry(sale, payment, expense, purchase);
+  const createClient = Object.assign(new CreateClientWriteBinding({} as never, {} as never), {
+    capability: 'CREATE_CLIENT',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'create_client_canonical@1.0.0',
+  });
+  const registry = new WriteCapabilityBindingRegistry(
+    sale,
+    payment,
+    expense,
+    purchase,
+    createClient,
+  );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly four WRITE bindings: SALE + RECEIVABLE_PAYMENT + EXPENSE + PURCHASE', () => {
+  it('contains exactly five WRITE bindings including CREATE_CLIENT', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(4);
+    expect(bindings).toHaveLength(5);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
+      'CREATE_CLIENT',
       'REGISTER_EXPENSE',
       'REGISTER_PURCHASE',
       'REGISTER_RECEIVABLE_PAYMENT',
@@ -53,19 +67,16 @@ describe('WriteCapabilityBindingRegistry', () => {
     expect(registry).not.toHaveProperty('register');
   });
 
-  it.each([
-    'REGISTER_SETTLEMENT',
-    'REGISTER_CRYPTO_POSITION',
-    'REGISTER_CRYPTO_PRICE',
-    'CREATE_CLIENT',
-  ])('keeps %s explicitly unbound for WRITE', (capability) => {
+  it.each(['REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE', 'UPDATE_CLIENT'])(
+    'keeps %s explicitly unbound for WRITE',
+    (capability) => {
       const registry = buildRegistry();
       expect(registry.hasBinding(capability)).toBe(false);
       expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
     },
   );
 
-  it('rejects construction when REGISTER_PURCHASE is missing', () => {
+  it('rejects construction when CREATE_CLIENT is missing', () => {
     const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
       capability: 'REGISTER_SALE',
       mode: 'WRITE',
@@ -81,16 +92,76 @@ describe('WriteCapabilityBindingRegistry', () => {
       capability: 'REGISTER_EXPENSE',
       mode: 'WRITE',
     });
+    const purchase = Object.assign(new RegisterPurchaseWriteBinding({} as never, {} as never), {
+      capability: 'REGISTER_PURCHASE',
+      mode: 'WRITE',
+    });
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
       mode: 'WRITE',
       bindingName: 'x',
     } as never;
-    const registry = new WriteCapabilityBindingRegistry(sale, payment, expense, wrong);
+    const registry = new WriteCapabilityBindingRegistry(sale, payment, expense, purchase, wrong);
     expect(() => registry.onModuleInit()).toThrow(
-      /exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, and REGISTER_PURCHASE/,
+      /exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, and CREATE_CLIENT/,
     );
+  });
+});
+
+describe('CreateClientWriteBinding mapInput', () => {
+  const binding = new CreateClientWriteBinding({} as never, {} as never);
+  const context = {
+    tenantId: 't1',
+    userId: 'u1',
+    permissions: [],
+    conversationId: 'c1',
+    workspaceId: null,
+    actionRunId: 'run-client-1',
+    requestId: 'r1',
+    locale: 'es-MX',
+    timezone: 'UTC',
+    now: new Date('2026-08-08T00:00:00Z'),
+    planFingerprint: 'a'.repeat(64),
+  };
+
+  it('derives registerIdempotencyKey from actionRunId only and normalizes identity', () => {
+    const input = binding.mapInput(
+      {
+        stepId: 's1',
+        capability: 'CREATE_CLIENT',
+        arguments: {
+          name: '  José   Hernández ',
+          email: 'Jose@Email.COM',
+          phone: '55 1234 5678',
+          registerIdempotencyKey: 'client-forged',
+        },
+        dependsOn: [],
+        estimatedEffects: [],
+        reversibility: 'NONE',
+      },
+      context,
+    );
+    expect(input.registerIdempotencyKey).toBe('ai-action-run:run-client-1');
+    expect(input.name).toBe('José Hernández');
+    expect(input.email).toBe('jose@email.com');
+    expect(input.phone).toBe('+525512345678');
+  });
+
+  it('rejects empty name', () => {
+    expect(() =>
+      binding.mapInput(
+        {
+          stepId: 's1',
+          capability: 'CREATE_CLIENT',
+          arguments: { name: '   ' },
+          dependsOn: [],
+          estimatedEffects: [],
+          reversibility: 'NONE',
+        },
+        context,
+      ),
+    ).toThrow(/requires name/);
   });
 });
 

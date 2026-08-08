@@ -13,7 +13,15 @@ describe('Capability binding architecture', () => {
   it('does not leak write execution into intent-adapter production source', () => {
     const intentRoot = join(__dirname, '..', '..', 'intent-adapter');
     const source = files(intentRoot).map((path) => readFileSync(path, 'utf8')).join('\n');
-    expect(source).not.toMatch(/WritePlanRunner|WriteCapabilityBinding|SaleRegistrationService|register-sale\.binding/);
+    expect(source).not.toMatch(
+      /WritePlanRunner|WriteCapabilityBinding|SaleRegistrationService|ClientRegistrationService|register-sale\.binding|create-client\.binding/,
+    );
+  });
+
+  it('does not import ClientRegistrationService from planner production source', () => {
+    const plannerRoot = join(__dirname, '..', '..', 'planner');
+    const source = files(plannerRoot).map((path) => readFileSync(path, 'utf8')).join('\n');
+    expect(source).not.toMatch(/ClientRegistrationService|create-client\.binding/);
   });
 
   it('does not expose a capability execution controller', () => {

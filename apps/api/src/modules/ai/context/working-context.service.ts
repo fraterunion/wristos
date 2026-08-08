@@ -151,6 +151,33 @@ export function deriveWorkingContextAfterResponse(args: {
     working = applySelectedEntity(working, { type: 'CLIENT', id: clientId, label }, now);
   }
 
+  // After CREATE_CLIENT: prefer trusted client selection for multi-turn (created or reused).
+  if (args.intent === 'CREATE_CLIENT') {
+    if (args.responseType === 'SUCCESS_RECEIPT') {
+      const receipt =
+        args.payload.receipt && typeof args.payload.receipt === 'object'
+          ? (args.payload.receipt as Record<string, unknown>)
+          : null;
+      const createdId = typeof receipt?.clientId === 'string' ? receipt.clientId : null;
+      const createdName = typeof receipt?.name === 'string' ? receipt.name : 'Cliente';
+      if (createdId) {
+        working = applySelectedEntity(working, { type: 'CLIENT', id: createdId, label: createdName }, now);
+      }
+    } else {
+      const existingId =
+        (typeof args.entities.useExistingClientId === 'string' && args.entities.useExistingClientId) ||
+        (typeof args.entities.clientId === 'string' && args.entities.clientId) ||
+        null;
+      if (existingId && !existingId.startsWith('__CREATE_NEW_CLIENT__')) {
+        const label =
+          (typeof args.entities.clientLabel === 'string' && args.entities.clientLabel) ||
+          (typeof args.entities.name === 'string' && args.entities.name) ||
+          'Cliente';
+        working = applySelectedEntity(working, { type: 'CLIENT', id: existingId, label }, now);
+      }
+    }
+  }
+
   const customerId = typeof args.entities.customerId === 'string' ? args.entities.customerId : null;
   if (customerId && args.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
     const label =

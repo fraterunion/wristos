@@ -32,6 +32,7 @@ const manualRoutes: Readonly<Record<WritePreviewAction, string>> = {
   REGISTER_RECEIVABLE_PAYMENT: '/cuentas',
   REGISTER_PURCHASE: '/inventory',
   REGISTER_EXPENSE: '/expenses',
+  CREATE_CLIENT: '/crm',
   REGISTER_SETTLEMENT: '/cuentas',
   REGISTER_CRYPTO_POSITION: '/crypto',
   REGISTER_CRYPTO_PRICE: '/crypto',
@@ -137,6 +138,25 @@ function isCanonicalPurchaseSuccess(
   return true;
 }
 
+function isCanonicalCreateClientSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'CREATE_CLIENT') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.clientId !== 'string' || !receipt.clientId) return false;
+  if (typeof receipt.name !== 'string' || !receipt.name) return false;
+  if (payload.executableWrite !== true && payload.capability !== 'CREATE_CLIENT') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
 function isCanonicalExecutableWriteSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
@@ -145,7 +165,8 @@ function isCanonicalExecutableWriteSuccess(
     isCanonicalRegisterSaleSuccess(intent, response) ||
     isCanonicalReceivablePaymentSuccess(intent, response) ||
     isCanonicalExpenseSuccess(intent, response) ||
-    isCanonicalPurchaseSuccess(intent, response)
+    isCanonicalPurchaseSuccess(intent, response) ||
+    isCanonicalCreateClientSuccess(intent, response)
   );
 }
 
@@ -184,7 +205,8 @@ export function validateAssistantResponse(
           intent === 'REGISTER_SALE' ||
           intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
           intent === 'REGISTER_EXPENSE' ||
-          intent === 'REGISTER_PURCHASE'
+          intent === 'REGISTER_PURCHASE' ||
+          intent === 'CREATE_CLIENT'
             ? 'No se pudo confirmar el resultado de forma segura.'
             : 'La ejecución conversacional de esta acción todavía no está habilitada.',
         manualHref: manualRoutes[intent],

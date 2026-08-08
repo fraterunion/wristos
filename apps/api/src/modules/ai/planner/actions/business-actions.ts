@@ -29,6 +29,10 @@ const questions: Record<string, string> = {
   sourceAccountId: 'Which account is funding the settlement?',
   destinationAccountId: 'Which account receives the settlement?', asset: 'Which crypto asset?', quantity: 'What quantity applies?', unitPrice: 'What is the crypto unit price?',
   year: 'Which year?', month: 'Which month?', query: 'What should be searched?', clientId: 'Which client?',
+  name: '¿Cómo se llama el cliente?',
+  email: '¿Cuál es el correo?',
+  phone: '¿Cuál es el teléfono?',
+  allowProbableDuplicate: 'Encontré clientes con nombre parecido. ¿Creo uno nuevo de todos modos?',
 };
 
 interface ActionOptions {
@@ -869,6 +873,37 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     effectsBuilder: registerExpenseEffects,
     previewFields: registerExpensePreviewFields,
     conditionalMissing: registerExpenseConditionalMissing,
+    reversibility: 'NONE',
+  }),
+  define({
+    id: 'CREATE_CLIENT',
+    name: 'Create Client',
+    category: 'CRM',
+    tier: 'MEDIUM',
+    required: ['name'],
+    optional: [
+      'email',
+      'phone',
+      'notes',
+      'tags',
+      'budgetRange',
+      'allowProbableDuplicate',
+      'hasEmail',
+      'hasPhone',
+      'clientName',
+      'customerName',
+      'correo',
+      'telefono',
+    ],
+    effects: [
+      { area: 'CRM', description: '+1 cliente' },
+      { area: 'Finanzas', description: 'Sin movimientos financieros' },
+    ],
+    previewFields: (entities) => [
+      { label: 'Nombre', value: entities.name ?? '—' },
+      { label: 'Correo', value: entities.email ?? '—' },
+      { label: 'Teléfono', value: entities.phone ?? '—' },
+    ],
     reversibility: 'NONE',
   }),
   define({ id: 'REGISTER_SETTLEMENT', name: 'Register Settlement', category: 'ACCOUNTS', tier: 'HIGH', required: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'], optional: ['date'], effects: [{ area: 'Accounts', description: 'The selected accounts are settled by the confirmed amount.' }] }),
