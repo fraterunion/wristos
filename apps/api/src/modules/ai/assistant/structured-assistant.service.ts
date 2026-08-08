@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, PayloadTooLargeException } from '@nestjs/common';
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
@@ -6,6 +6,8 @@ import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-pa
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
 import { BusinessExecutionPlan } from '../planner/planner.types';
+import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
+import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
 import { AIRequestService } from './ai-request.service';
 import { PreparedAssistantRequest, StructuredAssistantPersistence } from './structured-assistant.persistence';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
@@ -21,6 +23,7 @@ export class StructuredAssistantService {
     private readonly planner: PlannerService,
     private readonly readRunner: ReadPlanRunner,
     private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
+    @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
   async execute(actor: AssistantActorContext, input: StructuredAssistantRequest): Promise<StructuredAssistantResponse> {
@@ -42,16 +45,40 @@ export class StructuredAssistantService {
 
   private async runClaimed(actor: AssistantActorContext, input: StructuredAssistantRequest, request: AIRequest): Promise<StructuredAssistantResponse> {
     let prepared: PreparedAssistantRequest | undefined;
+    const totalStarted = Date.now();
     try {
       await this.requests.transition(request.id, [AIRequestStatus.RECEIVED], AIRequestStatus.VALIDATING);
       this.assertRequestBounds(input);
       prepared = await this.persistence.prepare(request.id, actor, input, request.traceId);
+      telem(this.telemetry, {
+        event: 'ConversationStarted',
+        tenantId: actor.tenantId,
+        conversationId: prepared.conversationId,
+        workspaceId: prepared.workspaceId,
+        requestId: request.id,
+        normalizedIntent: input.intent,
+        plannerIntent: input.intent,
+        capability: input.intent,
+        funnelStage: 'intent',
+      });
 
       let entities = input.entities;
       if (input.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
         const resolved = await this.receivablePaymentResolver.resolve(actor.tenantId, entities);
         entities = resolved.entities;
         if (resolved.clarify) {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: 'account_disambiguation',
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: true,
+          });
           const response = this.accountDisambiguationResponse(
             request.id,
             request.traceId,
@@ -70,27 +97,87 @@ export class StructuredAssistantService {
             { intent: input.intent, entities },
           );
         }
+        telem(this.telemetry, {
+          event: 'PlannerCompleted',
+          tenantId: actor.tenantId,
+          requestId: request.id,
+          capability: input.intent,
+          uniqueResolution: resolved.uniqueReceivableSelected === true,
+          candidateCount: resolved.uniqueReceivableSelected ? 1 : undefined,
+        });
       }
       if (input.intent === 'REGISTER_EXPENSE') {
         entities = enrichExpenseEntities(entities, request.receivedAt) as typeof entities;
       }
 
       const plannedInput = { ...input, entities };
+      const plannerStarted = Date.now();
+      telem(this.telemetry, {
+        event: 'PlannerStarted',
+        tenantId: actor.tenantId,
+        requestId: request.id,
+        capability: plannedInput.intent,
+        plannerIntent: plannedInput.intent,
+      });
       const plan = this.planner.plan(
         { intent: plannedInput.intent, entities },
         { workspaceVersion: prepared.workspaceVersion, entityVersions: plannedInput.entityVersions ?? {} },
       );
+      const plannerLatencyMs = Date.now() - plannerStarted;
+      telem(this.telemetry, {
+        event: 'PlannerCompleted',
+        tenantId: actor.tenantId,
+        requestId: request.id,
+        capability: plan.businessAction,
+        plannerIntent: plan.businessAction,
+        plannerLatencyMs,
+        funnelStage: 'intent',
+      });
       const checkpoint = await this.persistence.checkpointPlan(request.id, actor, plannedInput, prepared, plan);
 
       if (plan.state === 'NEEDS_CLARIFICATION') {
+        for (const missing of plan.missingEntities) {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            actionRunId: checkpoint.actionRun.id,
+            capability: plan.businessAction,
+            clarificationType: mapClarificationType(missing.entity),
+            clarificationReason: missing.entity,
+          });
+        }
         const response = this.clarificationResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
         return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: plannedInput.intent, entities });
       }
       if (!READ_ACTIONS.has(plannedInput.intent)) {
+        telem(this.telemetry, {
+          event: 'PreviewShown',
+          tenantId: actor.tenantId,
+          conversationId: prepared.conversationId,
+          requestId: request.id,
+          actionRunId: checkpoint.actionRun.id,
+          capability: plan.businessAction,
+          plannerIntent: plan.businessAction,
+          shown: true,
+          funnelStage: 'preview',
+          plannerLatencyMs,
+          totalLatencyMs: Date.now() - totalStarted,
+        });
         const response = this.writePreviewResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
         return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION, { intent: plannedInput.intent, entities });
       }
 
+      telem(this.telemetry, {
+        event: 'ExecutionStarted',
+        tenantId: actor.tenantId,
+        requestId: request.id,
+        actionRunId: checkpoint.actionRun.id,
+        capability: plan.businessAction,
+        funnelStage: 'execution',
+      });
+      const execStarted = Date.now();
       const result = await this.readRunner.run({
         plan,
         current: { workspaceVersion: prepared.workspaceVersion, entityVersions: plannedInput.entityVersions ?? {} },
@@ -102,11 +189,47 @@ export class StructuredAssistantService {
           requestId: request.traceId, locale: plannedInput.locale ?? 'es-MX', timezone: plannedInput.timezone ?? 'UTC', now: request.receivedAt,
         },
       });
+      const domainLatencyMs = Date.now() - execStarted;
       const response = this.readResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plannedInput.intent, plan, result);
       const failed = result.executionState !== 'COMPLETED';
+      telem(this.telemetry, {
+        event: failed ? 'ExecutionFailed' : 'ExecutionCompleted',
+        tenantId: actor.tenantId,
+        requestId: request.id,
+        actionRunId: checkpoint.actionRun.id,
+        capability: plan.businessAction,
+        completed: !failed,
+        failed,
+        domainLatencyMs,
+        plannerLatencyMs,
+        totalLatencyMs: Date.now() - totalStarted,
+        funnelStage: failed ? 'execution' : 'completed',
+        outcome: failed ? 'FAILED' : 'SUCCESS',
+        failureType: failed ? 'DOMAIN_FAILURE' : undefined,
+      });
+      telem(this.telemetry, {
+        event: 'ConversationFinished',
+        tenantId: actor.tenantId,
+        requestId: request.id,
+        actionRunId: checkpoint.actionRun.id,
+        capability: plan.businessAction,
+        outcome: failed ? 'FAILED' : 'SUCCESS',
+        totalLatencyMs: Date.now() - totalStarted,
+      });
       return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, failed ? AIAuditEventType.ASSISTANT_REQUEST_FAILED : AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, failed ? AIRequestStatus.FAILED : AIRequestStatus.COMPLETED, { intent: plannedInput.intent, entities });
     } catch (error) {
       const response = this.errorResponse(request.id, request.traceId, prepared, error);
+      telem(this.telemetry, {
+        event: 'ExecutionFailed',
+        tenantId: actor.tenantId,
+        requestId: request.id,
+        conversationId: prepared?.conversationId,
+        capability: input.intent,
+        failed: true,
+        failureType: mapFailureTaxonomy(this.failureType(error)),
+        outcome: 'FAILED',
+        totalLatencyMs: Date.now() - totalStarted,
+      });
       if (!prepared) return this.requests.failUnattached(request, actor, input.intent, response, this.failureType(error));
       return this.persistence.complete(request.id, actor, response, await this.currentWorkspaceVersion(actor, prepared), AIAuditEventType.ASSISTANT_REQUEST_FAILED, AIRequestStatus.FAILED, { intent: input.intent, entities: input.entities });
     }

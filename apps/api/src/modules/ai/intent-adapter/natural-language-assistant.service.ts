@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, Optional } from '@nestjs/common';
 import { AIRequestService } from '../assistant/ai-request.service';
 import { StructuredAssistantService } from '../assistant/structured-assistant.service';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from '../assistant/structured-assistant.types';
@@ -11,6 +11,8 @@ import { WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
 import { WorkingContextService } from '../context/working-context.service';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { BusinessActionId } from '../planner/planner.types';
+import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
+import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
 import { IntentAdapterService } from './intent-adapter.service';
 import { INTENT_CANDIDATE_VALUES, IntentCandidateIntent } from './intent-schema';
 import { assertWithinTextLimit, decideConfidencePolicy } from './safety';
@@ -52,6 +54,7 @@ export class NaturalLanguageAssistantService {
     private readonly assistant: StructuredAssistantService,
     private readonly referenceResolver: ReferenceResolverService,
     private readonly workingContext: WorkingContextService,
+    @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
   async handleMessage(actor: AssistantActorContext, dto: AssistantMessageDto): Promise<NaturalLanguageAssistantResult> {
@@ -71,6 +74,16 @@ export class NaturalLanguageAssistantService {
     if (claim.kind === 'REPLAY') {
       await this.aiRequests.auditReplay(actor, claim.request);
       const { intent } = this.aiRequests.readInterpretation(claim.request);
+      telem(this.telemetry, {
+        event: 'ReplayServed',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: claim.request.id,
+        capability: intent ?? undefined,
+        replayed: true,
+        idempotentReplay: true,
+        outcome: 'REPLAYED',
+      });
       return {
         resolvedIntent: (intent as IntentCandidateIntent | null) ?? 'UNKNOWN',
         response: claim.response,
@@ -97,6 +110,18 @@ export class NaturalLanguageAssistantService {
         WORKING_CONTEXT_SCHEMA_VERSION,
       );
       if (resolution.kind === 'CLARIFY') {
+        telem(this.telemetry, {
+          event: 'ClarificationShown',
+          tenantId: actor.tenantId,
+          conversationId: dto.conversationId,
+          requestId: request.id,
+          clarificationType: mapClarificationType(resolution.failureType),
+          clarificationReason: resolution.failureType,
+          ordinalUsed: deterministicRef.kind === 'ORDINAL',
+          deicticUsed: deterministicRef.kind !== 'ORDINAL',
+          entityPickerUsed: true,
+          zeroCandidates: true,
+        });
         const response = buildReferenceClarificationResponse(resolution.message, responseCtx, resolution.failureType);
         await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolution.failureType);
         return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
@@ -124,6 +149,17 @@ export class NaturalLanguageAssistantService {
           throw error;
         }
       }
+      telem(this.telemetry, {
+        event: 'ClarificationAnswered',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        answered: true,
+        ordinalUsed: deterministicRef.kind === 'ORDINAL',
+        deicticUsed: deterministicRef.kind !== 'ORDINAL',
+        uniqueResolution: true,
+        candidateCount: 1,
+      });
       const response = buildEntitySelectedResponse(resolution.label, responseCtx);
       await this.aiRequests.recordInterpretation(request.id, {
         intent: 'UNKNOWN',
@@ -149,6 +185,17 @@ export class NaturalLanguageAssistantService {
           resolution.kind === 'CLARIFY'
             ? resolution.message
             : 'Necesito que elijas nuevamente un cliente para ver sus cuentas.';
+        telem(this.telemetry, {
+          event: 'ClarificationShown',
+          tenantId: actor.tenantId,
+          conversationId: dto.conversationId,
+          requestId: request.id,
+          capability: 'GET_CLIENT_ACCOUNTS',
+          clarificationType: mapClarificationType(
+            resolution.kind === 'CLARIFY' ? resolution.failureType : 'TYPE_MISMATCH',
+          ),
+          clarificationReason: resolution.kind === 'CLARIFY' ? resolution.failureType : 'TYPE_MISMATCH',
+        });
         const response = buildReferenceClarificationResponse(
           message,
           responseCtx,
@@ -191,6 +238,17 @@ export class NaturalLanguageAssistantService {
 
     if (outcome.kind !== 'CANDIDATE') {
       const response = buildProviderFailureResponse(outcome, responseCtx);
+      telem(this.telemetry, {
+        event: 'ConversationFinished',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        outcome: 'FAILED',
+        failureType: mapFailureTaxonomy(
+          outcome.kind === 'PROVIDER_FAILURE' ? outcome.failureType : outcome.reason,
+        ),
+        providerLatencyMs: outcome.latencyMs,
+      });
       await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, outcome.kind === 'PROVIDER_FAILURE' ? outcome.failureType : outcome.reason);
       return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
     }
@@ -202,6 +260,19 @@ export class NaturalLanguageAssistantService {
     if (reference) {
       const resolution = this.referenceResolver.resolve(reference, loaded.working);
       if (resolution.kind === 'CLARIFY') {
+        telem(this.telemetry, {
+          event: 'ClarificationShown',
+          tenantId: actor.tenantId,
+          conversationId: dto.conversationId,
+          requestId: request.id,
+          capability: outcome.candidate.intent,
+          providerIntent: outcome.candidate.intent,
+          clarificationType: mapClarificationType(resolution.failureType),
+          clarificationReason: resolution.failureType,
+          ordinalUsed: reference.kind === 'ORDINAL',
+          deicticUsed: reference.kind !== 'ORDINAL',
+          entityPickerUsed: true,
+        });
         const response = buildReferenceClarificationResponse(resolution.message, responseCtx, resolution.failureType);
         await this.aiRequests.recordInterpretation(request.id, {
           intent: outcome.candidate.intent,
@@ -211,6 +282,18 @@ export class NaturalLanguageAssistantService {
         await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, response, resolution.failureType);
         return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: entities };
       }
+      telem(this.telemetry, {
+        event: 'ClarificationAnswered',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: outcome.candidate.intent,
+        answered: true,
+        uniqueResolution: true,
+        candidateCount: 1,
+        ordinalUsed: reference.kind === 'ORDINAL',
+        deicticUsed: reference.kind !== 'ORDINAL',
+      });
       entities = mergeTrustedIds(entities, trustedIdsFromResolution(resolution));
       // Write intents: map CLIENT→customerId when preparing REGISTER_SALE preview.
       if (outcome.candidate.intent === 'REGISTER_SALE' && resolution.entityType === 'WATCH') {
@@ -285,6 +368,21 @@ export class NaturalLanguageAssistantService {
     const policy = decideConfidencePolicy(outcome.candidate);
 
     if (policy.action !== 'PROCEED') {
+      telem(this.telemetry, {
+        event: 'ClarificationShown',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: outcome.candidate.intent,
+        providerIntent: outcome.candidate.intent,
+        normalizedIntent: outcome.candidate.intent,
+        clarificationType:
+          outcome.candidate.intent === 'UNKNOWN'
+            ? 'OTHER'
+            : mapClarificationType(policy.action),
+        clarificationReason: policy.action,
+        failureType: mapFailureTaxonomy(policy.action),
+      });
       const response = buildPolicyResponse(policy, responseCtx);
       await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, response, policy.action);
       return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: entities };

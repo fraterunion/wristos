@@ -23,7 +23,8 @@
     "migrate:wrist-caviar:dry-run": "tsx scripts/migrations/wrist-caviar/cli.ts dry-run",
     "migrate:wrist-caviar:apply-resolutions": "tsx scripts/migrations/wrist-caviar/cli.ts apply-resolutions",
     "migrate:wrist-caviar:execute": "tsx scripts/migrations/wrist-caviar/cli.ts execute",
-    "migrate:wrist-caviar:reconcile": "tsx scripts/migrations/wrist-caviar/cli.ts reconcile"
+    "migrate:wrist-caviar:reconcile": "tsx scripts/migrations/wrist-caviar/cli.ts reconcile",
+    "assistant:evaluate": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/modules/ai/telemetry/evaluation/cli.ts"
   },
   "devDependencies": {
     "prisma": "^6.6.0",

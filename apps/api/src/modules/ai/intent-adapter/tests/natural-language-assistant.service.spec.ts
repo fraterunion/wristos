@@ -210,8 +210,8 @@ describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling th
     // so there is no way for this service to read or write a business table
     // or bypass AIRequestService's own idempotency/audit bookkeeping.
     // Deps: AIRequestService, IntentAdapterService, StructuredAssistantService,
-    // ReferenceResolverService, WorkingContextService.
-    expect(NaturalLanguageAssistantService.length).toBe(5);
+    // ReferenceResolverService, WorkingContextService, optional TelemetryEmitter.
+    expect(NaturalLanguageAssistantService.length).toBe(6);
   });
 });
 
