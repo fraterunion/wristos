@@ -6,11 +6,13 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
 } from 'class-validator';
 
 export class CreateClientDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(160)
   name!: string;
 
   @IsOptional()
@@ -26,6 +28,7 @@ export class CreateClientDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   notes?: string;
 
   @IsOptional()
@@ -36,5 +39,12 @@ export class CreateClientDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(80)
   budgetRange?: string;
+
+  /** Server/future AI only — never required from CRM UI. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  registerIdempotencyKey?: string;
 }

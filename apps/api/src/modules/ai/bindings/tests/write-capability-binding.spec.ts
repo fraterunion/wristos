@@ -53,9 +53,12 @@ describe('WriteCapabilityBindingRegistry', () => {
     expect(registry).not.toHaveProperty('register');
   });
 
-  it.each(['REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE'])(
-    'keeps %s explicitly unbound for WRITE',
-    (capability) => {
+  it.each([
+    'REGISTER_SETTLEMENT',
+    'REGISTER_CRYPTO_POSITION',
+    'REGISTER_CRYPTO_PRICE',
+    'CREATE_CLIENT',
+  ])('keeps %s explicitly unbound for WRITE', (capability) => {
       const registry = buildRegistry();
       expect(registry.hasBinding(capability)).toBe(false);
       expect(() => registry.getBinding(capability)).toThrow(NotFoundException);

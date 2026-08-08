@@ -1,31 +1,38 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Client, ClientInteraction, ClientPreference, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ClientRegistrationService } from './client-registration.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { CreateClientInteractionDto } from './dto/create-client-interaction.dto';
 import { ListClientInteractionsDto } from './dto/list-client-interactions.dto';
 import { ListClientsDto } from './dto/list-clients.dto';
 import { UpsertClientPreferenceDto } from './dto/upsert-client-preference.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
+import {
+  clientPhoneMatchKey,
+  normalizeClientEmail,
+  normalizeClientName,
+  normalizeClientPhone,
+} from './client-identity.util';
 
 @Injectable()
 export class CrmService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly registration: ClientRegistrationService,
+  ) {}
 
   async createClient(tenantId: string, dto: CreateClientDto) {
-    const client = await this.prisma.client.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        name: dto.name,
-        email: dto.email,
-        phone: dto.phone,
-        notes: dto.notes,
-        tags: dto.tags ?? [],
-        budgetRange: dto.budgetRange,
-      },
+    const result = await this.registration.register(tenantId, {
+      name: dto.name,
+      email: dto.email,
+      phone: dto.phone,
+      notes: dto.notes,
+      tags: dto.tags,
+      budgetRange: dto.budgetRange,
+      registerIdempotencyKey: dto.registerIdempotencyKey,
     });
-
-    return this.serializeClient(client);
+    return this.serializeClient(result.client);
   }
 
   async listClients(tenantId: string, query: ListClientsDto) {
@@ -90,15 +97,73 @@ export class CrmService {
 
     const data: Prisma.ClientUpdateInput = {};
 
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.email !== undefined) data.email = dto.email;
-    if (dto.phone !== undefined) data.phone = dto.phone;
+    if (dto.name !== undefined) data.name = normalizeClientName(dto.name);
+    if (dto.email !== undefined) {
+      data.email =
+        dto.email === null || dto.email === ''
+          ? null
+          : normalizeClientEmail(dto.email);
+    }
+    if (dto.phone !== undefined) {
+      if (dto.phone === null || dto.phone === '') {
+        data.phone = null;
+      } else {
+        const phone = normalizeClientPhone(dto.phone);
+        if (!phone) {
+          throw new BadRequestException('phone must be a valid phone-like string');
+        }
+        data.phone = phone;
+      }
+    }
     if (dto.notes !== undefined) data.notes = dto.notes;
     if (dto.tags !== undefined) data.tags = dto.tags;
     if (dto.budgetRange !== undefined) data.budgetRange = dto.budgetRange;
 
     if (Object.keys(data).length === 0) {
       return this.serializeClient(existing);
+    }
+
+    // Exact contact uniqueness on update (exclude self)
+    const nextEmail =
+      data.email !== undefined
+        ? ((data.email as string | null) ?? null)
+        : existing.email;
+    const nextPhone =
+      data.phone !== undefined
+        ? ((data.phone as string | null) ?? null)
+        : existing.phone;
+    if (nextEmail && nextEmail !== existing.email) {
+      const clash = await this.prisma.client.findFirst({
+        where: {
+          tenantId,
+          deletedAt: null,
+          id: { not: id },
+          email: { equals: nextEmail, mode: 'insensitive' },
+        },
+        select: { id: true, name: true },
+      });
+      if (clash) {
+        throw new BadRequestException(
+          `Otro cliente ya usa el correo ${nextEmail} (${clash.name}).`,
+        );
+      }
+    }
+    if (nextPhone && nextPhone !== existing.phone) {
+      const key = clientPhoneMatchKey(nextPhone);
+      if (key) {
+        const others = await this.prisma.client.findMany({
+          where: { tenantId, deletedAt: null, id: { not: id }, phone: { not: null } },
+          select: { id: true, name: true, phone: true },
+        });
+        const clash = others.find(
+          (c) => clientPhoneMatchKey(normalizeClientPhone(c.phone)) === key,
+        );
+        if (clash) {
+          throw new BadRequestException(
+            `Otro cliente ya usa ese teléfono (${clash.name}).`,
+          );
+        }
+      }
     }
 
     const client = await this.prisma.client.update({

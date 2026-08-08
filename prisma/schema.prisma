@@ -743,6 +743,8 @@ model Client {
   notes       String?
   tags        String[]
   budgetRange String?
+  /// Durable client registration idempotency. Future AI: `ai-action-run:<actionRunId>`.
+  registerIdempotencyKey String?
   deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -758,8 +760,10 @@ model Client {
   receivables            Receivable[]
   watchesSold            Watch[]                 @relation("WatchSellerClient")
 
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, email])
+  @@index([tenantId, phone])
   @@index([tenantId, deletedAt])
   @@map("clients")
 }
