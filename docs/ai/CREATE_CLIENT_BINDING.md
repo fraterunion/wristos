@@ -114,18 +114,30 @@ Canonical: **reject + ask to restore in CRM**. No silent resurrection. No automa
 
 ---
 
-## 7. Idempotency
+## 7. Idempotency vs identity (separate invariants)
 
-| Mechanism | Sufficient alone? |
-|---|---|
-| Unique email/phone | **No** — name-only clients are valid |
-| `registerIdempotencyKey` + `@@unique([tenantId, registerIdempotencyKey])` | **Yes** for request replay |
+| Mechanism | Protects | Does not protect |
+|---|---|---|
+| `registerIdempotencyKey` + unique `(tenantId, key)` | Same command replay / concurrent same key | Two different commands creating the same person |
+| Active email/phone expression unique indexes | Different commands / races creating the same identity | Name-only duplicates; soft-deleted historical rows |
 
-Future AI: `registerIdempotencyKey = ai-action-run:<actionRunId>`.
+Both are required for AI COO. Service-layer checks alone are **not** the correctness boundary (TOCTOU proven under concurrency).
 
-Replay: same key + compatible payload → `{ replayed: true, client }`.  
-Same key + changed payload → `409` conflict.  
-Concurrent same key → one row (P2002 recovery).
+### Durable indexes (same undeployed migration)
+
+```sql
+-- email: lower(btrim(email)), active non-null
+clients_tenantId_email_active_key
+
+-- phone: digit identity key matching clientPhoneIdentityKey(), active non-null
+clients_tenantId_phone_identity_active_key
+```
+
+Soft-deleted rows are excluded from indexes. Application still returns `CLIENT_DELETED_MATCH` before insert (indexes alone would allow recreating a deleted identity).
+
+P2002 recovery:
+- idempotency target → compatible replay
+- email/phone identity target → `CLIENT_EXACT_DUPLICATE` (never 500, never raw Prisma)
 
 ---
 
@@ -196,17 +208,18 @@ Future multi-action orchestration (“No encuentro a Pepe — ¿lo creo?”) is 
 
 ## 14. Schema gate (TYPE C)
 
-Additive migration (authored locally, **not** applied to production in 18A):
+Single undeployed migration: `prisma/migrations/20260809180000_client_register_idempotency/migration.sql`
 
-```
-Client.registerIdempotencyKey String?
-@@unique([tenantId, registerIdempotencyKey])
-@@index([tenantId, phone])
-```
+Adds:
 
-**No** unique email/phone DB constraints — production may contain legacy duplicates; service-layer enforcement only until data cleaned.
+1. `Client.registerIdempotencyKey` + unique `(tenantId, key)`
+2. non-unique `(tenantId, phone)` lookup index
+3. **active** email expression unique: `lower(btrim(email))`
+4. **active** phone identity expression unique: `clientPhoneIdentityKey` SQL equivalent
 
-File: `prisma/migrations/20260809180000_client_register_idempotency/migration.sql`
+**No** name uniqueness. **No** production migrate in 18A.
+
+Production shape audit (2026-08-08, read-only): WC 250 name-only / 0 contact dupes; DEMO 40 active contacts / 0 normalized dupes; DEMO phones not all `+52` stored form → expression identity index required (not plain column unique).
 
 ---
 

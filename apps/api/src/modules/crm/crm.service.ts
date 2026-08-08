@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Client, ClientInteraction, ClientPreference, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClientRegistrationService } from './client-registration.service';
@@ -9,7 +14,7 @@ import { ListClientsDto } from './dto/list-clients.dto';
 import { UpsertClientPreferenceDto } from './dto/upsert-client-preference.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import {
-  clientPhoneMatchKey,
+  clientPhoneIdentityKey,
   normalizeClientEmail,
   normalizeClientName,
   normalizeClientPhone,
@@ -123,7 +128,7 @@ export class CrmService {
       return this.serializeClient(existing);
     }
 
-    // Exact contact uniqueness on update (exclude self)
+    // Exact contact uniqueness on update (exclude self) — DB unique is the race boundary
     const nextEmail =
       data.email !== undefined
         ? ((data.email as string | null) ?? null)
@@ -143,35 +148,94 @@ export class CrmService {
         select: { id: true, name: true },
       });
       if (clash) {
-        throw new BadRequestException(
-          `Otro cliente ya usa el correo ${nextEmail} (${clash.name}).`,
-        );
+        throw new ConflictException({
+          code: 'CLIENT_EXACT_DUPLICATE',
+          message: 'Otro cliente activo ya usa ese correo.',
+          matchField: 'email',
+          existingClientId: clash.id,
+          existingClientName: clash.name,
+        });
+      }
+      const deleted = await this.prisma.client.findFirst({
+        where: {
+          tenantId,
+          deletedAt: { not: null },
+          id: { not: id },
+          email: { equals: nextEmail, mode: 'insensitive' },
+        },
+        select: { id: true, name: true },
+      });
+      if (deleted) {
+        throw new ConflictException({
+          code: 'CLIENT_DELETED_MATCH',
+          message:
+            'Existe un cliente eliminado con ese correo. Restáuralo desde CRM; no se reasigna automáticamente.',
+          matchField: 'email',
+          existingClientId: deleted.id,
+          existingClientName: deleted.name,
+        });
       }
     }
     if (nextPhone && nextPhone !== existing.phone) {
-      const key = clientPhoneMatchKey(nextPhone);
+      const key = clientPhoneIdentityKey(nextPhone);
       if (key) {
         const others = await this.prisma.client.findMany({
-          where: { tenantId, deletedAt: null, id: { not: id }, phone: { not: null } },
-          select: { id: true, name: true, phone: true },
+          where: { tenantId, id: { not: id }, phone: { not: null } },
+          select: { id: true, name: true, phone: true, deletedAt: true },
         });
-        const clash = others.find(
-          (c) => clientPhoneMatchKey(normalizeClientPhone(c.phone)) === key,
+        const activeClash = others.find(
+          (c) => !c.deletedAt && clientPhoneIdentityKey(c.phone) === key,
         );
-        if (clash) {
-          throw new BadRequestException(
-            `Otro cliente ya usa ese teléfono (${clash.name}).`,
-          );
+        if (activeClash) {
+          throw new ConflictException({
+            code: 'CLIENT_EXACT_DUPLICATE',
+            message: 'Otro cliente activo ya usa ese teléfono.',
+            matchField: 'phone',
+            existingClientId: activeClash.id,
+            existingClientName: activeClash.name,
+          });
+        }
+        const deletedClash = others.find(
+          (c) => c.deletedAt && clientPhoneIdentityKey(c.phone) === key,
+        );
+        if (deletedClash) {
+          throw new ConflictException({
+            code: 'CLIENT_DELETED_MATCH',
+            message:
+              'Existe un cliente eliminado con ese teléfono. Restáuralo desde CRM; no se reasigna automáticamente.',
+            matchField: 'phone',
+            existingClientId: deletedClash.id,
+            existingClientName: deletedClash.name,
+          });
         }
       }
     }
 
-    const client = await this.prisma.client.update({
-      where: { id },
-      data,
-    });
-
-    return this.serializeClient(client);
+    try {
+      const client = await this.prisma.client.update({
+        where: { id },
+        data,
+      });
+      return this.serializeClient(client);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const target = error.meta?.target;
+        const blob = Array.isArray(target)
+          ? target.map(String).join(',')
+          : String(target ?? error.message ?? '');
+        const field =
+          blob.includes('phone') || blob.includes('phone_identity') ? 'phone' : 'email';
+        throw new ConflictException({
+          code: 'CLIENT_EXACT_DUPLICATE',
+          message:
+            field === 'phone'
+              ? 'Otro cliente activo ya usa ese teléfono.'
+              : 'Otro cliente activo ya usa ese correo.',
+          matchField: field,
+        });
+      }
+      throw error;
+    }
   }
 
   async deleteClient(id: string, tenantId: string) {

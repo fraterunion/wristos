@@ -765,6 +765,11 @@ model Client {
   @@index([tenantId, email])
   @@index([tenantId, phone])
   @@index([tenantId, deletedAt])
+  /// Active identity uniqueness (email/phone) is enforced by partial expression
+  /// indexes in migration 20260809180000_client_register_idempotency:
+  ///   clients_tenantId_email_active_key
+  ///   clients_tenantId_phone_identity_active_key
+  /// Soft-deleted rows are excluded; app still blocks CLIENT_DELETED_MATCH.
   @@map("clients")
 }
 

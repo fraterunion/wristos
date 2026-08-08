@@ -7,7 +7,7 @@ import { Client, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   clientNameMatchKey,
-  clientPhoneMatchKey,
+  clientPhoneIdentityKey,
   normalizeClientEmail,
   normalizeClientName,
   normalizeClientPhone,
@@ -38,10 +38,19 @@ export type RegisterClientResult = {
   probableDuplicates: ClientDuplicateCandidate[];
 };
 
+export type ClientIdentityMatchField = 'email' | 'phone';
+
 function normalizeIdempotencyKey(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = String(raw).trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function p2002TargetBlob(error: Prisma.PrismaClientKnownRequestError): string {
+  const target = error.meta?.target;
+  if (Array.isArray(target)) return target.map(String).join(',');
+  if (typeof target === 'string') return target;
+  return String(target ?? error.message ?? '');
 }
 
 @Injectable()
@@ -51,6 +60,11 @@ export class ClientRegistrationService {
   /**
    * Canonical Client creation for CRM + future CREATE_CLIENT.
    * Side effects: Client row only. No financial mutation.
+   *
+   * Correctness boundaries:
+   * - registerIdempotencyKey unique → same-command replay
+   * - active email/phone expression unique indexes → identity integrity under concurrency
+   * - deleted contact search → CLIENT_DELETED_MATCH (indexes exclude deleted rows)
    */
   async register(tenantId: string, input: RegisterClientInput): Promise<RegisterClientResult> {
     const name = normalizeClientName(input.name ?? '');
@@ -97,7 +111,6 @@ export class ClientRegistrationService {
     const probableDuplicates = await this.findProbableDuplicates(tenantId, name, email, phone);
     if (probableDuplicates.length > 0 && !input.allowProbableDuplicate) {
       // Soft gate for future AI: manual CRM still creates (name-only overlap is common).
-      // Exact contact matches already threw above. Probable = same name, different/no contact.
     }
 
     try {
@@ -119,21 +132,109 @@ export class ClientRegistrationService {
         probableDuplicates,
       };
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002' &&
-        idempotencyKey
-      ) {
-        const raced = await this.prisma.client.findFirst({
-          where: { tenantId, registerIdempotencyKey: idempotencyKey },
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return this.recoverFromUniqueViolation(tenantId, error, {
+          name,
+          email,
+          phone,
+          notes,
+          budgetRange,
+          tags,
+          idempotencyKey,
+          probableDuplicates,
         });
-        if (raced) {
-          this.assertCompatibleReplay(raced, { name, email, phone, notes, budgetRange, tags });
-          return { client: raced, replayed: true, probableDuplicates: [] };
-        }
       }
       throw error;
     }
+  }
+
+  private async recoverFromUniqueViolation(
+    tenantId: string,
+    error: Prisma.PrismaClientKnownRequestError,
+    ctx: {
+      name: string;
+      email: string | null;
+      phone: string | null;
+      notes: string | null;
+      budgetRange: string | null;
+      tags: string[];
+      idempotencyKey: string | null;
+      probableDuplicates: ClientDuplicateCandidate[];
+    },
+  ): Promise<RegisterClientResult> {
+    const blob = p2002TargetBlob(error);
+
+    // Same command replay race
+    if (
+      ctx.idempotencyKey &&
+      (blob.includes('registerIdempotencyKey') ||
+        blob.includes('clients_tenantId_registerIdempotencyKey_key'))
+    ) {
+      const raced = await this.prisma.client.findFirst({
+        where: { tenantId, registerIdempotencyKey: ctx.idempotencyKey },
+      });
+      if (raced) {
+        this.assertCompatibleReplay(raced, {
+          name: ctx.name,
+          email: ctx.email,
+          phone: ctx.phone,
+          notes: ctx.notes,
+          budgetRange: ctx.budgetRange,
+          tags: ctx.tags,
+        });
+        return { client: raced, replayed: true, probableDuplicates: [] };
+      }
+    }
+
+    // Identity race: different command, same email/phone
+    if (
+      blob.includes('email') ||
+      blob.includes('clients_tenantId_email_active_key') ||
+      blob.includes('phone') ||
+      blob.includes('clients_tenantId_phone_identity_active_key')
+    ) {
+      const field: ClientIdentityMatchField =
+        blob.includes('phone') || blob.includes('phone_identity') ? 'phone' : 'email';
+      await this.throwExactOrDeletedMatch(tenantId, {
+        email: ctx.email,
+        phone: ctx.phone,
+        preferredField: field,
+      });
+    }
+
+    // Ambiguous P2002 — still try identity then idempotency recovery
+    if (ctx.email || ctx.phone) {
+      try {
+        await this.throwExactOrDeletedMatch(tenantId, {
+          email: ctx.email,
+          phone: ctx.phone,
+        });
+      } catch (mapped) {
+        if (mapped instanceof ConflictException) throw mapped;
+      }
+    }
+    if (ctx.idempotencyKey) {
+      const raced = await this.prisma.client.findFirst({
+        where: { tenantId, registerIdempotencyKey: ctx.idempotencyKey },
+      });
+      if (raced) {
+        this.assertCompatibleReplay(raced, {
+          name: ctx.name,
+          email: ctx.email,
+          phone: ctx.phone,
+          notes: ctx.notes,
+          budgetRange: ctx.budgetRange,
+          tags: ctx.tags,
+        });
+        return { client: raced, replayed: true, probableDuplicates: [] };
+      }
+    }
+
+    throw new ConflictException({
+      code: 'CLIENT_IDENTITY_CONFLICT',
+      message: 'No se pudo crear el cliente por un conflicto de identidad.',
+      matchField: null,
+    });
   }
 
   private assertCompatibleReplay(
@@ -157,10 +258,98 @@ export class ClientRegistrationService {
     const expectedTags = [...expected.tags].sort().join('|');
     if (existingTags !== expectedTags) mismatches.push('tags');
     if (mismatches.length > 0) {
-      throw new ConflictException(
-        `Idempotency key conflict: payload differs on ${mismatches.join(', ')}`,
-      );
+      throw new ConflictException({
+        code: 'CLIENT_IDEMPOTENCY_PAYLOAD_CONFLICT',
+        message: `Idempotency key conflict: payload differs on ${mismatches.join(', ')}`,
+        mismatchFields: mismatches,
+      });
     }
+  }
+
+  private exactDuplicateConflict(
+    field: ClientIdentityMatchField,
+    existing: { id: string; name: string },
+  ): never {
+    throw new ConflictException({
+      code: 'CLIENT_EXACT_DUPLICATE',
+      message:
+        field === 'email'
+          ? 'Ya existe un cliente activo con ese correo. No se crea un duplicado.'
+          : 'Ya existe un cliente activo con ese teléfono. No se crea un duplicado.',
+      matchField: field,
+      existingClientId: existing.id,
+      existingClientName: existing.name,
+    });
+  }
+
+  private deletedMatchConflict(
+    field: ClientIdentityMatchField,
+    existing: { id: string; name: string },
+  ): never {
+    throw new ConflictException({
+      code: 'CLIENT_DELETED_MATCH',
+      message:
+        field === 'email'
+          ? 'Existe un cliente eliminado con ese correo. Restáuralo desde CRM; no se crea uno nuevo automáticamente.'
+          : 'Existe un cliente eliminado con ese teléfono. Restáuralo desde CRM; no se crea uno nuevo automáticamente.',
+      matchField: field,
+      existingClientId: existing.id,
+      existingClientName: existing.name,
+    });
+  }
+
+  private async throwExactOrDeletedMatch(
+    tenantId: string,
+    identity: {
+      email: string | null;
+      phone: string | null;
+      preferredField?: ClientIdentityMatchField;
+    },
+  ): Promise<never> {
+    const order: ClientIdentityMatchField[] =
+      identity.preferredField === 'phone' ? ['phone', 'email'] : ['email', 'phone'];
+    for (const field of order) {
+      if (field === 'email' && identity.email) {
+        const matches = await this.findEmailMatches(tenantId, identity.email);
+        const active = matches.find((c) => !c.deletedAt);
+        if (active) this.exactDuplicateConflict('email', active);
+        const deleted = matches.find((c) => c.deletedAt);
+        if (deleted) this.deletedMatchConflict('email', deleted);
+      }
+      if (field === 'phone' && identity.phone) {
+        const matches = await this.findPhoneMatches(tenantId, identity.phone);
+        const active = matches.find((c) => !c.deletedAt);
+        if (active) this.exactDuplicateConflict('phone', active);
+        const deleted = matches.find((c) => c.deletedAt);
+        if (deleted) this.deletedMatchConflict('phone', deleted);
+      }
+    }
+    throw new ConflictException({
+      code: 'CLIENT_EXACT_DUPLICATE',
+      message: 'Ya existe un cliente con esa identidad de contacto.',
+      matchField: identity.preferredField ?? null,
+    });
+  }
+
+  private async findEmailMatches(tenantId: string, email: string) {
+    return this.prisma.client.findMany({
+      where: {
+        tenantId,
+        email: { equals: email, mode: 'insensitive' },
+      },
+      select: { id: true, name: true, deletedAt: true, email: true },
+      take: 10,
+    });
+  }
+
+  private async findPhoneMatches(tenantId: string, phone: string) {
+    const phoneKey = clientPhoneIdentityKey(phone);
+    if (!phoneKey) return [];
+    const candidates = await this.prisma.client.findMany({
+      where: { tenantId, phone: { not: null } },
+      select: { id: true, name: true, phone: true, deletedAt: true },
+    });
+    return candidates.filter((c) => clientPhoneIdentityKey(c.phone) === phoneKey);
   }
 
   private async assertNoExactDuplicate(
@@ -168,69 +357,19 @@ export class ClientRegistrationService {
     identity: { email: string | null; phone: string | null },
   ) {
     if (identity.email) {
-      const emailMatches = await this.prisma.client.findMany({
-        where: {
-          tenantId,
-          email: { equals: identity.email, mode: 'insensitive' },
-        },
-        select: { id: true, name: true, deletedAt: true, email: true },
-        take: 5,
-      });
+      const emailMatches = await this.findEmailMatches(tenantId, identity.email);
       const active = emailMatches.find((c) => !c.deletedAt);
-      if (active) {
-        throw new ConflictException({
-          code: 'CLIENT_EXACT_DUPLICATE',
-          message: `Ya existe un cliente con el correo ${identity.email}. No se crea un duplicado.`,
-          matchField: 'email',
-          existingClientId: active.id,
-          existingClientName: active.name,
-        });
-      }
+      if (active) this.exactDuplicateConflict('email', active);
       const deleted = emailMatches.find((c) => c.deletedAt);
-      if (deleted) {
-        throw new ConflictException({
-          code: 'CLIENT_DELETED_MATCH',
-          message:
-            'Existe un cliente eliminado con ese correo. Restáuralo desde CRM; no se crea uno nuevo automáticamente.',
-          matchField: 'email',
-          existingClientId: deleted.id,
-          existingClientName: deleted.name,
-        });
-      }
+      if (deleted) this.deletedMatchConflict('email', deleted);
     }
 
     if (identity.phone) {
-      const phoneKey = clientPhoneMatchKey(identity.phone);
-      if (phoneKey) {
-        const candidates = await this.prisma.client.findMany({
-          where: { tenantId, phone: { not: null } },
-          select: { id: true, name: true, phone: true, deletedAt: true },
-        });
-        const matches = candidates.filter(
-          (c) => clientPhoneMatchKey(normalizeClientPhone(c.phone)) === phoneKey,
-        );
-        const active = matches.find((c) => !c.deletedAt);
-        if (active) {
-          throw new ConflictException({
-            code: 'CLIENT_EXACT_DUPLICATE',
-            message: 'Ya existe un cliente con ese teléfono. No se crea un duplicado.',
-            matchField: 'phone',
-            existingClientId: active.id,
-            existingClientName: active.name,
-          });
-        }
-        const deleted = matches.find((c) => c.deletedAt);
-        if (deleted) {
-          throw new ConflictException({
-            code: 'CLIENT_DELETED_MATCH',
-            message:
-              'Existe un cliente eliminado con ese teléfono. Restáuralo desde CRM; no se crea uno nuevo automáticamente.',
-            matchField: 'phone',
-            existingClientId: deleted.id,
-            existingClientName: deleted.name,
-          });
-        }
-      }
+      const matches = await this.findPhoneMatches(tenantId, identity.phone);
+      const active = matches.find((c) => !c.deletedAt);
+      if (active) this.exactDuplicateConflict('phone', active);
+      const deleted = matches.find((c) => c.deletedAt);
+      if (deleted) this.deletedMatchConflict('phone', deleted);
     }
   }
 
@@ -240,7 +379,6 @@ export class ClientRegistrationService {
     email: string | null,
     phone: string | null,
   ): Promise<ClientDuplicateCandidate[]> {
-    // Same accent-insensitive name, no exact contact match (those already blocked).
     const nameKey = clientNameMatchKey(name);
     const actives = await this.prisma.client.findMany({
       where: { tenantId, deletedAt: null },
@@ -250,14 +388,12 @@ export class ClientRegistrationService {
     const out: ClientDuplicateCandidate[] = [];
     for (const c of actives) {
       if (clientNameMatchKey(c.name) !== nameKey) continue;
-      // If they share contact we would have thrown; name-only overlap is probable.
       const sameEmail =
         email &&
         normalizeClientEmail(c.email) &&
         normalizeClientEmail(c.email) === email;
       const samePhone =
-        phone &&
-        clientPhoneMatchKey(normalizeClientPhone(c.phone)) === clientPhoneMatchKey(phone);
+        phone && clientPhoneIdentityKey(c.phone) === clientPhoneIdentityKey(phone);
       if (sameEmail || samePhone) continue;
       out.push({
         id: c.id,
