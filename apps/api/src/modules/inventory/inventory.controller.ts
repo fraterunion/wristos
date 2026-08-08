@@ -18,18 +18,61 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreateWatchDto } from './dto/create-watch.dto';
 import { CreateWatchImageDto } from './dto/create-watch-image.dto';
 import { ListWatchesDto } from './dto/list-watches.dto';
+import { RegisterPurchaseDto } from './dto/register-purchase.dto';
 import { UpdateWatchDto } from './dto/update-watch.dto';
 import { UpdateWatchImageDto } from './dto/update-watch-image.dto';
 import { InventoryService } from './inventory.service';
+import { PurchaseRegistrationService } from './purchase-registration.service';
 
 @Controller('inventory')
 @UseGuards(JwtAuthGuard)
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(
+    private readonly inventoryService: InventoryService,
+    private readonly purchaseRegistrationService: PurchaseRegistrationService,
+  ) {}
 
   @Post()
   create(@CurrentUser() user: CurrentUserType, @Body() dto: CreateWatchDto) {
     return this.inventoryService.create(user.tenantId, dto);
+  }
+
+  /**
+   * Canonical economic purchase registration (Watch + optional Treasury + optional CXP).
+   * Shared future AI path — not AI-bound in 17A. Manual UI should prefer this when
+   * payment terms are known; plain POST /inventory remains inventory-only.
+   */
+  @Post('purchases')
+  registerPurchase(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: RegisterPurchaseDto,
+  ) {
+    return this.purchaseRegistrationService.register(user.tenantId, {
+      watch: {
+        brand: dto.brand,
+        model: dto.model,
+        reference: dto.reference,
+        serialNumber: dto.serialNumber,
+        imageUrl: dto.imageUrl,
+        condition: dto.condition,
+        priceMin: dto.priceMin,
+        priceMax: dto.priceMax,
+        status: dto.status,
+        ownershipType: dto.ownershipType,
+        consignmentOwnerName: dto.consignmentOwnerName,
+        consignmentSplitPercentage: dto.consignmentSplitPercentage,
+      },
+      purchaseAmount: dto.purchaseAmount,
+      currency: dto.currency,
+      acquisitionDate: dto.acquisitionDate,
+      sellerClientId: dto.sellerClientId,
+      sellerCounterpartyName: dto.sellerCounterpartyName,
+      paymentMode: dto.paymentMode,
+      initialPaymentAmount: dto.initialPaymentAmount,
+      sourceAccount: dto.sourceAccount,
+      notes: dto.notes,
+      registerIdempotencyKey: dto.registerIdempotencyKey,
+    });
   }
 
   @Get()

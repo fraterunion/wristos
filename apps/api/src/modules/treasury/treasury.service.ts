@@ -72,9 +72,26 @@ export function operatingExpenseOutflowProvenanceKey(operatingExpenseId: string)
   return `operating-expense:${operatingExpenseId}:outflow`;
 }
 
+/** Provenance for initial inventory-purchase Treasury OUTFLOW (Commit 17A). */
+export function inventoryPurchaseOutflowProvenanceKey(watchId: string): string {
+  return `inventory-purchase:${watchId}:outflow`;
+}
+
 export type CreateFromOperatingExpenseArgs = {
   tenantId: string;
   operatingExpenseId: string;
+  account: TreasuryAccount;
+  amount: CoercibleDecimal;
+  currency: Currency;
+  exchangeRateUsed?: CoercibleDecimal | null;
+  transactionDate: Date;
+  description?: string | null;
+  tx?: Prisma.TransactionClient;
+};
+
+export type CreateFromInventoryPurchaseArgs = {
+  tenantId: string;
+  watchId: string;
   account: TreasuryAccount;
   amount: CoercibleDecimal;
   currency: Currency;
@@ -394,6 +411,67 @@ export class TreasuryService {
       where: { id: existing.id },
       data: { deletedAt: new Date() },
     });
+  }
+
+  /**
+   * Canonical Treasury OUTFLOW for an inventory purchase (PAID / PARTIAL initial payment).
+   * - Liquidity: amountMxn OUTFLOW on CASH | BANK | CESAR
+   * - Idempotent on provenanceKey `inventory-purchase:<watchId>:outflow`
+   * - Later CXP servicing must NOT reuse this path (use Cuentas payable payment)
+   */
+  async createFromInventoryPurchase(args: CreateFromInventoryPurchaseArgs) {
+    const db: DbClient = args.tx ?? this.prisma;
+    const provenanceKey = inventoryPurchaseOutflowProvenanceKey(args.watchId);
+
+    const existing = await db.treasuryEntry.findFirst({
+      where: { tenantId: args.tenantId, provenanceKey },
+    });
+    if (existing && existing.deletedAt === null) {
+      return existing;
+    }
+
+    const { amount, amountMxn, exchangeRate } = this.resolveAmounts(
+      args.amount,
+      args.currency,
+      args.exchangeRateUsed,
+    );
+
+    const data = {
+      tenantId: args.tenantId,
+      account: args.account,
+      direction: TreasuryDirection.OUTFLOW,
+      amount,
+      currency: args.currency,
+      amountMxn,
+      exchangeRate,
+      commission: null as Prisma.Decimal | null,
+      transactionDate: args.transactionDate,
+      description: args.description ?? null,
+      provenanceKey,
+      deletedAt: null,
+    };
+
+    if (existing) {
+      return db.treasuryEntry.update({
+        where: { id: existing.id },
+        data,
+      });
+    }
+
+    try {
+      return await db.treasuryEntry.create({ data });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await db.treasuryEntry.findFirst({
+          where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
+        });
+        if (raced) return raced;
+      }
+      throw error;
+    }
   }
 
   /** Maps deal PaymentMethod → TreasuryAccount. BANCOS → BANK. */

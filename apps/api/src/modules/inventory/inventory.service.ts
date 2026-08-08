@@ -695,6 +695,8 @@ export class InventoryService {
       publicDescription: watch.publicDescription,
       publicPrice: watch.publicPrice?.toString() ?? null,
       reservationAmount: watch.reservationAmount?.toString() ?? null,
+      acquiredAt: watch.acquiredAt?.toISOString() ?? null,
+      sellerClientId: watch.sellerClientId ?? null,
       expenses: watch.expenses.map((e) => this.serializeExpense(e)),
       createdAt: watch.createdAt.toISOString(),
       updatedAt: watch.updatedAt.toISOString(),

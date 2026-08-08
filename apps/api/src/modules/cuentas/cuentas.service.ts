@@ -1095,6 +1095,74 @@ export class CuentasService {
    * Pass `tx` to participate in an outer Prisma transaction (sale registration).
    * Returns the active receivable row when one exists after sync, otherwise null.
    */
+  /**
+   * Canonical PAYABLE for CREDIT / PARTIAL inventory purchase (Commit 17A).
+   * One PURCHASE_AUTO payable per watch. Composable inside Prisma transactions.
+   */
+  async createPurchasePayable(
+    tenantId: string,
+    args: {
+      watchId: string;
+      totalAmount: Prisma.Decimal | number | string;
+      counterpartyName: string;
+      clientId?: string | null;
+      concept: string;
+      issuedAt: Date;
+      currency?: Currency;
+      exchangeRate?: Prisma.Decimal | number | string | null;
+      notes?: string | null;
+      counterpartyType?: CounterpartyType;
+    },
+    tx?: Prisma.TransactionClient,
+  ): Promise<AccountEntry> {
+    const db = tx ?? this.prisma;
+    const totalAmount = new Prisma.Decimal(args.totalAmount);
+    if (!totalAmount.isFinite() || totalAmount.lessThanOrEqualTo(0)) {
+      throw new BadRequestException('Purchase payable totalAmount must be greater than 0');
+    }
+
+    const existing = await db.accountEntry.findFirst({
+      where: {
+        tenantId,
+        watchId: args.watchId,
+        type: AccountEntryType.PAYABLE,
+        source: AccountEntrySource.PURCHASE_AUTO,
+        deletedAt: null,
+      },
+    });
+    if (existing) {
+      if (!existing.totalAmount.equals(totalAmount)) {
+        throw new ConflictException(
+          'A purchase payable already exists for this watch with a different amount',
+        );
+      }
+      return existing;
+    }
+
+    return db.accountEntry.create({
+      data: {
+        tenant: { connect: { id: tenantId } },
+        type: AccountEntryType.PAYABLE,
+        status: AccountEntryStatus.OPEN,
+        category: AccountEntryCategory.PURCHASE,
+        source: AccountEntrySource.PURCHASE_AUTO,
+        counterpartyName: args.counterpartyName.trim(),
+        counterpartyType: args.counterpartyType ?? CounterpartyType.SUPPLIER,
+        concept: args.concept,
+        totalAmount,
+        currency: args.currency ?? Currency.MXN,
+        exchangeRate:
+          args.exchangeRate !== undefined && args.exchangeRate !== null
+            ? new Prisma.Decimal(args.exchangeRate)
+            : undefined,
+        issuedAt: args.issuedAt,
+        notes: args.notes ?? undefined,
+        client: args.clientId ? { connect: { id: args.clientId } } : undefined,
+        watch: { connect: { id: args.watchId } },
+      },
+    });
+  }
+
   async syncDealReceivable(
     dealId: string,
     tenantId: string,
