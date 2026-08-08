@@ -322,9 +322,27 @@ If Capital started subtracting OpEx without reconciliation:
 
 **Decision: OPTION C — do not change Capital formulas in 15A.**
 
-UI clarification (no formula change): Capital now labels the figure **“Utilidad bruta acumulada”** and footnotes that Dashboard net profit does subtract Gastos.
+UI clarification (no formula change): Capital labels the figure **“Utilidad bruta acumulada”** with:
 
-**Business decision still required before treating Capital as partner-net-profit:** either reconcile/backfill Capital to include OpEx, or permanently define Capital as gross trading profit and keep labels distinct.
+> Capital refleja utilidad bruta de trading histórica.
+> La utilidad neta operativa del Dashboard también descuenta Gastos.
+
+**Business decision still required before treating Capital as partner-net-profit** — tracked as future work item **`CAPITAL_OPEX_RECONCILIATION`** (below). Do not implement a cutover in 15A.
+
+---
+
+## CAPITAL_OPEX_RECONCILIATION (future — not in 15A)
+
+Explicit future product/accounting decision. **Do not choose or implement in Commit 15A.**
+
+Possible approaches (non-exhaustive):
+
+1. Preserve historical Capital methodology permanently (gross trading profit forever).
+2. Introduce an effective-date cutover (new periods net of OpEx; history frozen).
+3. Reconcile prior years with explicit partner adjustments.
+4. Migrate Capital to net operating profit only after a formal reconciliation.
+
+Until that decision ships, Capital formulas stay frozen as gross trading profit.
 
 ---
 
