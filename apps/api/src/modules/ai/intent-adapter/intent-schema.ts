@@ -234,11 +234,27 @@ export const entitySchemas = {
   REGISTER_PURCHASE: z
     .object({
       watchQuery: query.optional(),
+      brand: z.string().trim().min(1).max(80).optional(),
+      model: z.string().trim().min(1).max(120).optional(),
       supplierQuery: query.optional(),
+      sellerQuery: query.optional(),
+      sellerName: z.string().trim().min(1).max(160).optional(),
+      sellerCounterpartyName: z.string().trim().min(1).max(160).optional(),
+      sellerClientId: z.string().trim().min(1).max(64).optional(),
       cost: money.optional(),
+      purchaseAmount: money.optional(),
       currency: currency.optional(),
+      paymentMode: z.enum(['PAID', 'CREDIT', 'PARTIAL']).optional(),
+      sourceAccount: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      initialPaymentAmount: money.optional(),
       effectiveDate: isoDate.optional(),
+      acquiredAt: isoDate.optional(),
+      status: z.enum(['AVAILABLE', 'IN_TRANSIT']).optional(),
+      condition: z.string().trim().min(1).max(64).optional(),
+      reference: z.string().trim().max(64).optional(),
       serial: z.string().trim().max(64).optional(),
+      serialNumber: z.string().trim().max(64).optional(),
     })
     .strip(),
 

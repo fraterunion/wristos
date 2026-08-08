@@ -330,11 +330,19 @@ export default function AssistantPage() {
     const executableIntent =
       item.intent === 'REGISTER_SALE' ||
       item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
-      item.intent === 'REGISTER_EXPENSE';
+      item.intent === 'REGISTER_EXPENSE' ||
+      item.intent === 'REGISTER_PURCHASE';
     if (pending || messagePending || confirmingSale || !executableIntent) return;
     const isPayment = item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
     const isExpense = item.intent === 'REGISTER_EXPENSE';
-    const confirmLabel = isExpense ? 'Confirmar gasto' : isPayment ? 'Confirmar pago' : 'Confirmar venta';
+    const isPurchase = item.intent === 'REGISTER_PURCHASE';
+    const confirmLabel = isPurchase
+      ? 'Confirmar compra'
+      : isExpense
+        ? 'Confirmar gasto'
+        : isPayment
+          ? 'Confirmar pago'
+          : 'Confirmar venta';
     setError(null);
     setMessageError(null);
     setConfirmingSale(true);

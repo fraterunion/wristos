@@ -2,6 +2,8 @@ import { ConflictException, ForbiddenException, Injectable, NotFoundException, O
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
+import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
+import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
 import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-payment-entity-resolver.service';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
@@ -13,7 +15,12 @@ import { PreparedAssistantRequest, StructuredAssistantPersistence } from './stru
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
 
 const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS', 'GET_INVENTORY_AGING', 'GET_TOP_INVENTORY_CAPITAL', 'GET_TOP_DEBTORS', 'GET_RECEIVABLE_SUMMARY', 'GET_SALES_MARGIN_SUMMARY', 'GET_PROFIT_BY_BRAND', 'GET_TOP_SALES', 'GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY']);
-const EXECUTABLE_WRITES = new Set(['REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_EXPENSE']);
+const EXECUTABLE_WRITES = new Set([
+  'REGISTER_SALE',
+  'REGISTER_RECEIVABLE_PAYMENT',
+  'REGISTER_EXPENSE',
+  'REGISTER_PURCHASE',
+]);
 
 @Injectable()
 export class StructuredAssistantService {
@@ -23,6 +30,7 @@ export class StructuredAssistantService {
     private readonly planner: PlannerService,
     private readonly readRunner: ReadPlanRunner,
     private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
+    private readonly purchaseEntityResolver: PurchaseEntityResolver,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -108,6 +116,45 @@ export class StructuredAssistantService {
       }
       if (input.intent === 'REGISTER_EXPENSE') {
         entities = enrichExpenseEntities(entities, request.receivedAt) as typeof entities;
+      }
+      if (input.intent === 'REGISTER_PURCHASE') {
+        entities = enrichPurchaseEntities(entities as Record<string, unknown>, request.receivedAt) as typeof entities;
+        const resolved = await this.purchaseEntityResolver.resolve(
+          actor.tenantId,
+          entities as Record<string, JsonValue>,
+        );
+        entities = resolved.entities as typeof entities;
+        if (resolved.clarify) {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: 'seller_disambiguation',
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: true,
+          });
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            resolved.clarify.message,
+            resolved.clarify.items,
+            resolved.clarify.entityType,
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
       }
 
       const plannedInput = { ...input, entities };
@@ -256,27 +303,34 @@ export class StructuredAssistantService {
     const executable = EXECUTABLE_WRITES.has(plan.businessAction);
     const isPayment = plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT';
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
+    const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     const correctionPolicy = !executable
       ? null
       : isPayment
         ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
         : isExpense
           ? 'Después de registrarlo, cualquier corrección se realiza desde Gastos.'
-          : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
+          : isPurchase
+            ? 'Después de registrarla, cualquier corrección se realiza desde Inventario.'
+            : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
     const message = !executable
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
       : isPayment
         ? 'Revisa el resumen y confirma para registrar el pago.'
         : isExpense
           ? 'Revisa el resumen y confirma para registrar el gasto.'
-          : 'Revisa el resumen y confirma para registrar la venta.';
+          : isPurchase
+            ? 'Revisa el resumen y confirma para registrar la compra.'
+            : 'Revisa el resumen y confirma para registrar la venta.';
     const nextAction = !executable
       ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
       : isPayment
         ? 'Confirma el pago para ejecutar el registro canónico.'
         : isExpense
           ? 'Confirma el gasto para ejecutar el registro canónico.'
-          : 'Confirma la venta para ejecutar el registro canónico.';
+          : isPurchase
+            ? 'Confirma la compra para ejecutar el registro canónico.'
+            : 'Confirma la venta para ejecutar el registro canónico.';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,

@@ -16,12 +16,19 @@ describe('StructuredAssistantService', () => {
       uniquePayableSelected: false,
     })),
   };
+  const purchaseEntityResolver = {
+    resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
+      entities,
+      clarify: null,
+    })),
+  };
   const service = new StructuredAssistantService(
     requests as never,
     persistence as never,
     planner as never,
     readRunner as never,
     receivablePaymentResolver as never,
+    purchaseEntityResolver as never,
   );
   const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] };
   const prepared = { conversationId: 'c1', workspaceId: 'w1', workspaceVersion: 1 };
@@ -63,11 +70,50 @@ describe('StructuredAssistantService', () => {
     );
   });
 
-  it('returns a truthful write preview without resolving or executing a binding for unbound writes', async () => {
-    planner.plan.mockReturnValue({ ...basePlan, businessAction: 'REGISTER_PURCHASE', confirmationTier: 'HIGH', executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_PURCHASE' }] });
-    const response = await service.execute(actor, { intent: 'REGISTER_PURCHASE', entities: { watch: 'Rolex', cost: '1.00', currency: 'MXN' }, surface: 'API', clientRequestId: 'write' });
+  it('marks REGISTER_PURCHASE preview as executable for confirmation without executing yet', async () => {
+    planner.plan.mockReturnValue({
+      ...basePlan,
+      businessAction: 'REGISTER_PURCHASE',
+      confirmationTier: 'HIGH',
+      executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_PURCHASE' }],
+    });
+    const response = await service.execute(actor, {
+      intent: 'REGISTER_PURCHASE',
+      entities: {
+        brand: 'Rolex',
+        model: 'Daytona',
+        cost: '350000',
+        currency: 'MXN',
+        paymentMode: 'CREDIT',
+        sellerCounterpartyName: 'José',
+      },
+      surface: 'API',
+      clientRequestId: 'write-purchase',
+    });
     expect(response.responseType).toBe('ACTION_PREVIEW_CARD');
-    expect(response.payload.message).toBe('Esta acción todavía no está habilitada para ejecución desde el asistente.');
+    expect(response.payload.executable).toBe(true);
+    expect(response.payload.message).toBe('Revisa el resumen y confirma para registrar la compra.');
+    expect(purchaseEntityResolver.resolve).toHaveBeenCalled();
+    expect(readRunner.run).not.toHaveBeenCalled();
+  });
+
+  it('returns a truthful write preview without resolving or executing a binding for unbound writes', async () => {
+    planner.plan.mockReturnValue({
+      ...basePlan,
+      businessAction: 'REGISTER_SETTLEMENT',
+      confirmationTier: 'HIGH',
+      executionSteps: [{ ...basePlan.executionSteps[0], capability: 'REGISTER_SETTLEMENT' }],
+    });
+    const response = await service.execute(actor, {
+      intent: 'REGISTER_SETTLEMENT',
+      entities: { amount: '1.00', currency: 'MXN' },
+      surface: 'API',
+      clientRequestId: 'write-unbound',
+    });
+    expect(response.responseType).toBe('ACTION_PREVIEW_CARD');
+    expect(response.payload.message).toBe(
+      'Esta acción todavía no está habilitada para ejecución desde el asistente.',
+    );
     expect(response.payload.executable).toBe(false);
     expect(readRunner.run).not.toHaveBeenCalled();
   });

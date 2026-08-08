@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { WriteCapabilityBindingRegistry } from '../write-capability-binding-registry';
 import { RegisterExpenseWriteBinding } from '../write/register-expense.binding';
+import { RegisterPurchaseWriteBinding } from '../write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
 
@@ -26,18 +27,25 @@ function buildRegistry() {
     mode: 'WRITE',
     bindingName: 'register_expense_canonical@1.0.0',
   });
-  const registry = new WriteCapabilityBindingRegistry(sale, payment, expense);
+  const purchase = Object.assign(new RegisterPurchaseWriteBinding({} as never, {} as never), {
+    capability: 'REGISTER_PURCHASE',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'register_purchase_canonical@1.0.0',
+  });
+  const registry = new WriteCapabilityBindingRegistry(sale, payment, expense, purchase);
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly three WRITE bindings: SALE + RECEIVABLE_PAYMENT + EXPENSE', () => {
+  it('contains exactly four WRITE bindings: SALE + RECEIVABLE_PAYMENT + EXPENSE + PURCHASE', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(3);
+    expect(bindings).toHaveLength(4);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'REGISTER_EXPENSE',
+      'REGISTER_PURCHASE',
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_SALE',
     ]);
@@ -45,18 +53,16 @@ describe('WriteCapabilityBindingRegistry', () => {
     expect(registry).not.toHaveProperty('register');
   });
 
-  it.each([
-    'REGISTER_PURCHASE',
-    'REGISTER_SETTLEMENT',
-    'REGISTER_CRYPTO_POSITION',
-    'REGISTER_CRYPTO_PRICE',
-  ])('keeps %s explicitly unbound for WRITE', (capability) => {
-    const registry = buildRegistry();
-    expect(registry.hasBinding(capability)).toBe(false);
-    expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
-  });
+  it.each(['REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE'])(
+    'keeps %s explicitly unbound for WRITE',
+    (capability) => {
+      const registry = buildRegistry();
+      expect(registry.hasBinding(capability)).toBe(false);
+      expect(() => registry.getBinding(capability)).toThrow(NotFoundException);
+    },
+  );
 
-  it('rejects construction when REGISTER_EXPENSE is missing', () => {
+  it('rejects construction when REGISTER_PURCHASE is missing', () => {
     const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
       capability: 'REGISTER_SALE',
       mode: 'WRITE',
@@ -68,15 +74,19 @@ describe('WriteCapabilityBindingRegistry', () => {
         mode: 'WRITE',
       },
     );
+    const expense = Object.assign(new RegisterExpenseWriteBinding({} as never, {} as never), {
+      capability: 'REGISTER_EXPENSE',
+      mode: 'WRITE',
+    });
     const wrong = {
-      capability: 'REGISTER_PURCHASE',
+      capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
       mode: 'WRITE',
       bindingName: 'x',
     } as never;
-    const registry = new WriteCapabilityBindingRegistry(sale, payment, wrong);
+    const registry = new WriteCapabilityBindingRegistry(sale, payment, expense, wrong);
     expect(() => registry.onModuleInit()).toThrow(
-      /exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, and REGISTER_EXPENSE/,
+      /exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, and REGISTER_PURCHASE/,
     );
   });
 });
@@ -277,10 +287,106 @@ describe('RegisterExpenseWriteBinding mapInput', () => {
   });
 });
 
+describe('RegisterPurchaseWriteBinding mapInput', () => {
+  const binding = new RegisterPurchaseWriteBinding({} as never, {} as never);
+  const context = {
+    tenantId: 't1',
+    userId: 'u1',
+    permissions: [],
+    conversationId: 'c1',
+    workspaceId: null,
+    actionRunId: 'run-purchase-1',
+    requestId: 'r1',
+    locale: 'es-MX',
+    timezone: 'UTC',
+    now: new Date('2026-08-08T00:00:00Z'),
+    planFingerprint: 'd'.repeat(64),
+  };
+
+  it('derives registerIdempotencyKey from actionRunId only', () => {
+    const input = binding.mapInput(
+      {
+        stepId: 's1',
+        capability: 'REGISTER_PURCHASE',
+        arguments: {
+          brand: 'Rolex',
+          model: 'GMT-Master II Batman',
+          cost: 280000,
+          currency: 'MXN',
+          paymentMode: 'PAID',
+          sourceAccount: 'BANK',
+          acquiredAt: '2026-08-08',
+          condition: 'Bueno',
+          status: 'AVAILABLE',
+          registerIdempotencyKey: 'forged',
+        },
+        dependsOn: [],
+        estimatedEffects: [],
+        reversibility: 'NONE',
+      },
+      context,
+    );
+    expect(input.registerIdempotencyKey).toBe('ai-action-run:run-purchase-1');
+    expect(input.paymentMode).toBe('PAID');
+    expect(input.sourceAccount).toBe('BANK');
+    expect(input.purchaseAmount).toBe(280000);
+  });
+
+  it('maps CREDIT with sellerCounterpartyName and no source', () => {
+    const input = binding.mapInput(
+      {
+        stepId: 's1',
+        capability: 'REGISTER_PURCHASE',
+        arguments: {
+          brand: 'Rolex',
+          model: 'Daytona',
+          cost: '350000',
+          currency: 'MXN',
+          paymentMode: 'CREDIT',
+          sellerCounterpartyName: 'José',
+          acquiredAt: '2026-08-08',
+          condition: 'Bueno',
+        },
+        dependsOn: [],
+        estimatedEffects: [],
+        reversibility: 'NONE',
+      },
+      context,
+    );
+    expect(input.paymentMode).toBe('CREDIT');
+    expect(input.sourceAccount).toBeNull();
+    expect(input.sellerCounterpartyName).toBe('José');
+  });
+
+  it('requires sourceAccount for PAID', () => {
+    expect(() =>
+      binding.mapInput(
+        {
+          stepId: 's1',
+          capability: 'REGISTER_PURCHASE',
+          arguments: {
+            brand: 'Rolex',
+            model: 'Batman',
+            cost: 280000,
+            currency: 'MXN',
+            paymentMode: 'PAID',
+            acquiredAt: '2026-08-08',
+            condition: 'Bueno',
+          },
+          dependsOn: [],
+          estimatedEffects: [],
+          reversibility: 'NONE',
+        },
+        context,
+      ),
+    ).toThrow(/sourceAccount/);
+  });
+});
+
 describe('WritePlanRunner fail-closed unbound', () => {
   it('documents that unbound writes throw Forbidden via registry', () => {
     const registry = buildRegistry();
-    expect(() => registry.getBinding('REGISTER_PURCHASE')).toThrow(NotFoundException);
+    expect(() => registry.getBinding('REGISTER_SETTLEMENT')).toThrow(NotFoundException);
     expect(() => {
       throw new ForbiddenException('This write capability is not bound for conversational execution');
     }).toThrow(ForbiddenException);

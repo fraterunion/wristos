@@ -63,7 +63,12 @@ export function manualCtaLabel(intent: BusinessActionId): string {
   return MANUAL_CTA_LABEL[intent as WritePreviewAction] ?? 'Continuar en el módulo';
 }
 
-export type PreviewCtaKind = 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'CONFIRM_EXPENSE' | 'MANUAL_MODULE';
+export type PreviewCtaKind =
+  | 'CONFIRM_SALE'
+  | 'CONFIRM_PAYMENT'
+  | 'CONFIRM_EXPENSE'
+  | 'CONFIRM_PURCHASE'
+  | 'MANUAL_MODULE';
 
 
 function isRecord(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
@@ -535,16 +540,20 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'REGISTER_RECEIVABLE_PAYMENT' && response.payload.executable === true;
   const executableExpense =
     intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
+  const executablePurchase =
+    intent === 'REGISTER_PURCHASE' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
-  const intro = executableExpense
-    ? 'Voy a registrar este gasto:'
-    : executablePayment
-      ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
-          ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
-          : 'Voy a registrar este pago:')
-      : executableSale
-        ? 'Perfecto. Esto es lo que voy a registrar:'
-        : 'Perfecto. Esto es lo que voy a preparar:';
+  const intro = executablePurchase
+    ? 'Voy a registrar esta compra:'
+    : executableExpense
+      ? 'Voy a registrar este gasto:'
+      : executablePayment
+        ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
+            ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
+            : 'Voy a registrar este pago:')
+        : executableSale
+          ? 'Perfecto. Esto es lo que voy a registrar:'
+          : 'Perfecto. Esto es lo que voy a preparar:';
   return [
     {
       kind: 'preview',
@@ -553,20 +562,24 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
       title,
       fields,
       effects,
-      ctaLabel: executableExpense
-        ? 'Confirmar gasto'
-        : executablePayment
-          ? 'Confirmar pago'
-          : executableSale
-            ? 'Confirmar venta'
-            : manualCtaLabel(intent),
-      ctaKind: executableExpense
-        ? 'CONFIRM_EXPENSE'
-        : executablePayment
-          ? 'CONFIRM_PAYMENT'
-          : executableSale
-            ? 'CONFIRM_SALE'
-            : 'MANUAL_MODULE',
+      ctaLabel: executablePurchase
+        ? 'Confirmar compra'
+        : executableExpense
+          ? 'Confirmar gasto'
+          : executablePayment
+            ? 'Confirmar pago'
+            : executableSale
+              ? 'Confirmar venta'
+              : manualCtaLabel(intent),
+      ctaKind: executablePurchase
+        ? 'CONFIRM_PURCHASE'
+        : executableExpense
+          ? 'CONFIRM_EXPENSE'
+          : executablePayment
+            ? 'CONFIRM_PAYMENT'
+            : executableSale
+              ? 'CONFIRM_SALE'
+              : 'MANUAL_MODULE',
       planFingerprint,
       actionRunId: response.actionRunId,
     },
@@ -653,6 +666,66 @@ function expenseReceiptBlocks(response: StructuredAssistantResponse): Conversati
       lines,
       dealHref: '/expenses',
       correctHref: '/expenses',
+    },
+  ];
+}
+
+function purchaseReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. La compra quedó registrada.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const watch = asString(receipt.watchLabel);
+    if (watch) lines.push(watch);
+    const cost = formatMoney(receipt.costMxn, asString(receipt.currency) ?? 'MXN');
+    if (cost) lines.push(`Costo ${cost}`);
+    const mode = asString(receipt.paymentMode);
+    const source =
+      asString(receipt.sourceLabel) ||
+      (() => {
+        const raw = asString(receipt.sourceAccount);
+        if (raw === 'CASH') return 'Efectivo';
+        if (raw === 'BANK') return 'Bancos';
+        if (raw === 'CESAR') return 'Cuenta César';
+        return raw;
+      })();
+    if (mode === 'PAID') {
+      lines.push(source ? `Pagado desde ${source}` : 'Pagado');
+      lines.push('Pendiente: Sin saldo');
+    } else if (mode === 'CREDIT') {
+      const seller = asString(receipt.seller);
+      const outstanding = formatMoney(
+        receipt.outstandingPayable ?? receipt.costMxn,
+        asString(receipt.currency) ?? 'MXN',
+      );
+      if (seller) lines.push(`Vendedor: ${seller}`);
+      lines.push('Pago: A crédito');
+      if (outstanding) lines.push(`Cuenta por pagar: ${outstanding}`);
+    } else if (mode === 'PARTIAL') {
+      const paid = formatMoney(
+        receipt.initialPaymentAmount,
+        asString(receipt.currency) ?? 'MXN',
+      );
+      const outstanding = formatMoney(
+        receipt.outstandingPayable,
+        asString(receipt.currency) ?? 'MXN',
+      );
+      if (paid) lines.push(source ? `Pagado ${paid} desde ${source}` : `Pagado ${paid}`);
+      if (outstanding) lines.push(`Pendiente ${outstanding}`);
+    }
+    const status = asString(receipt.statusLabel) ?? asString(receipt.status);
+    if (status) lines.push(`Estado: ${status}`);
+  }
+  const watchId = receipt && typeof receipt.watchId === 'string' ? receipt.watchId : null;
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: watchId ? `/inventory?watch=${watchId}` : '/inventory',
+      correctHref: '/inventory',
     },
   ];
 }
@@ -764,6 +837,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'REGISTER_EXPENSE') {
         main = expenseReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REGISTER_PURCHASE') {
+        main = purchaseReceiptBlocks(response);
         break;
       }
       const summary = asString(response.payload.message) ?? asString(response.payload.summary);

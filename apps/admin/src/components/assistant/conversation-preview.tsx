@@ -23,7 +23,7 @@ export function ConversationPreview({
   fields: Array<{ label: string; value: string }>;
   effects: string[];
   ctaLabel: string;
-  ctaKind: 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'CONFIRM_EXPENSE' | 'MANUAL_MODULE';
+  ctaKind: 'CONFIRM_SALE' | 'CONFIRM_PAYMENT' | 'CONFIRM_EXPENSE' | 'CONFIRM_PURCHASE' | 'MANUAL_MODULE';
   ctaHref?: string;
   onConfirm?: () => void;
   onEdit?: () => void;
@@ -33,7 +33,10 @@ export function ConversationPreview({
   delayMs?: number;
 }) {
   const confirmable =
-    ctaKind === 'CONFIRM_SALE' || ctaKind === 'CONFIRM_PAYMENT' || ctaKind === 'CONFIRM_EXPENSE';
+    ctaKind === 'CONFIRM_SALE' ||
+    ctaKind === 'CONFIRM_PAYMENT' ||
+    ctaKind === 'CONFIRM_EXPENSE' ||
+    ctaKind === 'CONFIRM_PURCHASE';
   return (
     <AssistantMessage showAvatar={showAvatar} delayMs={delayMs}>
       <div className="space-y-3">
@@ -122,7 +125,9 @@ export function ConversationReceipt({
                 ? 'Ver gastos'
                 : dealHref.startsWith('/cuentas')
                   ? 'Ver cuenta'
-                  : 'Ver venta'}
+                  : dealHref.startsWith('/inventory')
+                    ? 'Ver reloj'
+                    : 'Ver venta'}
             </Link>
           ) : null}
           {correctHref ? (
@@ -131,7 +136,9 @@ export function ConversationReceipt({
                 ? 'Corregir en Gastos'
                 : correctHref.startsWith('/cuentas')
                   ? 'Corregir en Cuentas'
-                  : 'Corregir en Ventas'}
+                  : correctHref.startsWith('/inventory')
+                    ? 'Corregir en Inventario'
+                    : 'Corregir en Ventas'}
             </Link>
           ) : null}
         </div>

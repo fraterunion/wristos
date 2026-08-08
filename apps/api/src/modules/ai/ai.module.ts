@@ -21,7 +21,9 @@ import { CapabilityBindingRegistry } from './bindings/capability-binding-registr
 import { CapabilityBindingService } from './bindings/capability-binding.service';
 import { ReadPlanRunner } from './bindings/read-plan-runner';
 import { ReceivablePaymentEntityResolver } from './bindings/write/receivable-payment-entity-resolver.service';
+import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
 import { RegisterExpenseWriteBinding } from './bindings/write/register-expense.binding';
+import { RegisterPurchaseWriteBinding } from './bindings/write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './bindings/write/register-sale.binding';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
@@ -67,7 +69,9 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     RegisterSaleWriteBinding,
     RegisterReceivablePaymentWriteBinding,
     RegisterExpenseWriteBinding,
+    RegisterPurchaseWriteBinding,
     ReceivablePaymentEntityResolver,
+    PurchaseEntityResolver,
     WriteCapabilityBindingRegistry,
     WritePlanRunner,
     AIRequestService,

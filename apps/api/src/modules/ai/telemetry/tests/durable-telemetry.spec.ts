@@ -397,7 +397,7 @@ describe('Architecture: production logic does not depend on telemetry', () => {
     }
   });
 
-  it('exactly three executable write bindings remain registered', () => {
+  it('exactly four executable write bindings remain registered', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -409,12 +409,15 @@ describe('Architecture: production logic does not depend on telemetry', () => {
     expect(registry).toContain('RegisterSaleWriteBinding');
     expect(registry).toContain('RegisterReceivablePaymentWriteBinding');
     expect(registry).toContain('RegisterExpenseWriteBinding');
+    expect(registry).toContain('RegisterPurchaseWriteBinding');
+    expect(registry).toContain('this.bindings.size !== 4');
     const structured = fs.readFileSync(
       path.join(__dirname, '../../assistant/structured-assistant.service.ts'),
       'utf8',
     );
-    expect(structured).toContain(
-      "const EXECUTABLE_WRITES = new Set(['REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_EXPENSE'])",
-    );
+    expect(structured).toContain("'REGISTER_PURCHASE'");
+    expect(structured).toContain("'REGISTER_SALE'");
+    expect(structured).toContain("'REGISTER_RECEIVABLE_PAYMENT'");
+    expect(structured).toContain("'REGISTER_EXPENSE'");
   });
 });

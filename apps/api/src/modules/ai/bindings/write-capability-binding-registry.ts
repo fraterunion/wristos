@@ -1,14 +1,15 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { BusinessCapability } from '../planner/planner.types';
 import { RegisterExpenseWriteBinding } from './write/register-expense.binding';
+import { RegisterPurchaseWriteBinding } from './write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './write/register-sale.binding';
 import { WriteCapabilityBindingDefinition } from './write/write-capability-binding-definition';
 
 /**
  * Construction-time allowlist for WRITE capability bindings.
- * Commit 15B: exactly three bindings —
- * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE.
+ * Commit 17B: exactly four bindings —
+ * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE + REGISTER_PURCHASE.
  * No dynamic registration API. No user-supplied binding names.
  */
 @Injectable()
@@ -19,6 +20,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
     private readonly registerSale: RegisterSaleWriteBinding,
     private readonly registerReceivablePayment: RegisterReceivablePaymentWriteBinding,
     private readonly registerExpense: RegisterExpenseWriteBinding,
+    private readonly registerPurchase: RegisterPurchaseWriteBinding,
   ) {}
 
   onModuleInit() {
@@ -26,6 +28,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.registerSale,
       this.registerReceivablePayment,
       this.registerExpense,
+      this.registerPurchase,
     ];
     if (new Set(bindings.map((b) => b.capability)).size !== bindings.length) {
       throw new Error('Duplicate write capability binding');
@@ -37,13 +40,14 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.bindings.set(binding.capability, binding);
     }
     if (
-      this.bindings.size !== 3 ||
+      this.bindings.size !== 4 ||
       !this.bindings.has('REGISTER_SALE') ||
       !this.bindings.has('REGISTER_RECEIVABLE_PAYMENT') ||
-      !this.bindings.has('REGISTER_EXPENSE')
+      !this.bindings.has('REGISTER_EXPENSE') ||
+      !this.bindings.has('REGISTER_PURCHASE')
     ) {
       throw new Error(
-        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, and REGISTER_EXPENSE',
+        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, and REGISTER_PURCHASE',
       );
     }
   }

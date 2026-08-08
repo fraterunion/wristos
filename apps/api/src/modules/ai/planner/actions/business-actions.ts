@@ -14,7 +14,15 @@ const questions: Record<string, string> = {
   watchId: 'Which watch should be used?', customerId: 'Who is the customer?', price: 'What is the price?', currency: 'What currency applies?',
   date: 'What date applies?', accountId: 'Which account should be used?', amount: 'What amount should be applied?', destination: 'Where should the payment be received?',
   payableAccountId: 'Which payable account should receive the settlement?',
-  watch: 'Which watch is being purchased?', cost: 'What is the purchase cost?',
+  watch: '¿Qué reloj compraste? (marca y modelo)',
+  brand: '¿Qué marca?',
+  model: '¿Qué modelo?',
+  cost: '¿Cuánto costó la compra?',
+  paymentMode: '¿Cómo lo pagaste? (pagado / a crédito / parcial)',
+  acquiredAt: '¿Qué fecha de compra?',
+  sourceAccount: '¿Desde dónde lo pagaste? (Efectivo, Bancos o Cuenta César)',
+  initialPaymentAmount: '¿Cuánto pagaste ahora?',
+  seller: '¿A quién le compraste?',
   concept: 'What is the expense for?',
   category: '¿Cuál es la categoría del gasto?',
   source: '¿Desde dónde lo pagaste?',
@@ -319,6 +327,274 @@ function registerReceivablePaymentConditionalMissing(
   return missing;
 }
 
+const purchaseSourceLabel: Record<string, string> = {
+  CASH: 'Efectivo',
+  BANK: 'Bancos',
+  CESAR: 'Cuenta César',
+};
+
+const purchasePaymentModeLabel: Record<string, string> = {
+  PAID: 'Pagado',
+  CREDIT: 'A crédito',
+  PARTIAL: 'Pago parcial',
+};
+
+const purchaseStatusLabel: Record<string, string> = {
+  AVAILABLE: 'Disponible',
+  IN_TRANSIT: 'En tránsito',
+};
+
+function registerPurchaseEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
+  const costLabel = formatMoneyPreview(
+    entities.cost ?? entities.purchaseAmount,
+    entities.currency ?? 'MXN',
+  );
+  const mode = typeof entities.paymentMode === 'string' ? entities.paymentMode : null;
+  const source = typeof entities.sourceAccount === 'string'
+    ? entities.sourceAccount
+    : typeof entities.source === 'string'
+      ? entities.source
+      : null;
+  const sourceLabel =
+    (typeof entities.sourceLabel === 'string' && entities.sourceLabel) ||
+    (source ? purchaseSourceLabel[source] ?? source : null);
+  const seller =
+    (typeof entities.sellerLabel === 'string' && entities.sellerLabel) ||
+    (typeof entities.sellerCounterpartyName === 'string' && entities.sellerCounterpartyName) ||
+    null;
+  const initial = formatMoneyPreview(entities.initialPaymentAmount, entities.currency ?? 'MXN');
+  const outstanding = formatMoneyPreview(entities.outstandingAmount, entities.currency ?? 'MXN');
+
+  const inventory = {
+    area: 'Inventario',
+    description: `+1 reloj · +${costLabel} de costo`,
+  };
+  const pnl = {
+    area: 'Utilidad',
+    description: 'Sin cambio hasta que el reloj se venda',
+  };
+  const correction = {
+    area: 'Corrección',
+    description: 'Después de registrarla, cualquier corrección se realiza desde Inventario.',
+  };
+
+  if (mode === 'CREDIT') {
+    return [
+      inventory,
+      { area: 'Tesorería', description: 'Sin cambio' },
+      {
+        area: 'Cuentas por pagar',
+        description: seller ? `${seller}: +${costLabel}` : `+${costLabel}`,
+      },
+      pnl,
+      correction,
+    ];
+  }
+  if (mode === 'PARTIAL') {
+    return [
+      inventory,
+      {
+        area: sourceLabel ?? 'Tesorería',
+        description: `-${initial}`,
+      },
+      {
+        area: 'Cuentas por pagar',
+        description: seller ? `${seller}: +${outstanding}` : `+${outstanding}`,
+      },
+      pnl,
+      correction,
+    ];
+  }
+  // PAID (or unknown — planner should clarify before preview)
+  return [
+    inventory,
+    {
+      area: sourceLabel ?? 'Tesorería',
+      description: `-${costLabel}`,
+    },
+    { area: 'Cuentas por pagar', description: 'Sin saldo' },
+    pnl,
+    correction,
+  ];
+}
+
+function registerPurchasePreviewFields(
+  entities: StructuredEntities,
+): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  const watchLabel =
+    (typeof entities.watchLabel === 'string' && entities.watchLabel) ||
+    [entities.brand, entities.model].filter((v) => typeof v === 'string' && v).join(' ') ||
+    null;
+  if (watchLabel) rows.push({ label: 'Reloj', value: watchLabel });
+  if (present(entities.cost) || present(entities.purchaseAmount)) {
+    rows.push({
+      label: 'Costo',
+      value: formatMoneyPreview(
+        entities.cost ?? entities.purchaseAmount,
+        entities.currency ?? 'MXN',
+      ),
+    });
+  }
+  const status = typeof entities.status === 'string' ? entities.status : null;
+  const statusLabel =
+    (typeof entities.statusLabel === 'string' && entities.statusLabel) ||
+    (status ? purchaseStatusLabel[status] ?? status : null);
+  if (statusLabel) rows.push({ label: 'Estado', value: statusLabel });
+  const dateLabel =
+    (typeof entities.dateLabel === 'string' && entities.dateLabel) ||
+    (typeof entities.acquiredAt === 'string' ? entities.acquiredAt : null) ||
+    (typeof entities.acquisitionDate === 'string' ? entities.acquisitionDate : null);
+  if (dateLabel) rows.push({ label: 'Fecha de compra', value: dateLabel });
+
+  const seller =
+    (typeof entities.sellerLabel === 'string' && entities.sellerLabel) ||
+    (typeof entities.sellerCounterpartyName === 'string' && entities.sellerCounterpartyName) ||
+    null;
+  if (seller) rows.push({ label: 'Vendedor', value: seller });
+
+  const mode = typeof entities.paymentMode === 'string' ? entities.paymentMode : null;
+  const modeLabel =
+    (typeof entities.paymentModeLabel === 'string' && entities.paymentModeLabel) ||
+    (mode ? purchasePaymentModeLabel[mode] ?? mode : null);
+  if (modeLabel) rows.push({ label: 'Pago', value: modeLabel });
+
+  if (mode === 'PARTIAL' && present(entities.initialPaymentAmount)) {
+    rows.push({
+      label: 'Pagado ahora',
+      value: formatMoneyPreview(entities.initialPaymentAmount, entities.currency ?? 'MXN'),
+    });
+  }
+  const source = typeof entities.sourceAccount === 'string'
+    ? entities.sourceAccount
+    : typeof entities.source === 'string'
+      ? entities.source
+      : null;
+  const sourceLabel =
+    (typeof entities.sourceLabel === 'string' && entities.sourceLabel) ||
+    (source ? purchaseSourceLabel[source] ?? source : null);
+  if (sourceLabel && mode !== 'CREDIT') {
+    rows.push({ label: 'Desde', value: sourceLabel });
+  }
+  if (mode === 'PARTIAL' && present(entities.outstandingAmount)) {
+    rows.push({
+      label: 'Pendiente',
+      value: formatMoneyPreview(entities.outstandingAmount, entities.currency ?? 'MXN'),
+    });
+  }
+  if (typeof entities.serialNumber === 'string' || typeof entities.serial === 'string') {
+    rows.push({
+      label: 'Serie',
+      value: (entities.serialNumber ?? entities.serial) as JsonValue,
+    });
+  }
+  return rows;
+}
+
+function registerPurchaseConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+
+  if (entities.duplicateSerial === true || entities.duplicateSerial === 'true') {
+    missing.push({
+      entity: 'serial',
+      question:
+        'Ya existe un reloj activo con ese número de serie. Corrige la serie o revisa el inventario — no se sobrescribe un reloj existente.',
+    });
+    return missing;
+  }
+
+  if (entities.watchIdentityAmbiguous === true || entities.watchIdentityAmbiguous === 'true') {
+    missing.push({
+      entity: 'watch',
+      question:
+        '¿Qué marca y modelo exactamente? (ej. Rolex GMT-Master II Batman). No invento referencia ni serie.',
+    });
+  } else if (!present(entities.brand) || !present(entities.model)) {
+    missing.push({
+      entity: 'watch',
+      question: '¿Qué reloj compraste? Indica marca y modelo.',
+    });
+  }
+
+  if (!present(entities.cost) && !present(entities.purchaseAmount)) {
+    missing.push({
+      entity: 'cost',
+      question: '¿Cuánto costó la compra?',
+    });
+  }
+
+  const currency =
+    typeof entities.currency === 'string' ? entities.currency.toUpperCase() : null;
+  if (currency && currency !== 'MXN' && currency !== 'USD') {
+    missing.push({
+      entity: 'currency',
+      question: 'Solo registro compras en MXN o USD. Indica la moneda correcta.',
+    });
+  }
+  if (currency === 'USD' && !present(entities.fxRate) && !present(entities.exchangeRate)) {
+    // Canonical domain fetches FX at execution; preview can proceed with USD cost.
+  }
+
+  if (entities.sourceUnsupported === 'CRYPTO') {
+    missing.push({
+      entity: 'sourceAccount',
+      question:
+        'No registro compras de inventario pagadas con crypto. Usa Efectivo, Bancos o Cuenta César.',
+    });
+  }
+
+  const mode = typeof entities.paymentMode === 'string' ? entities.paymentMode : null;
+  if (!mode) {
+    missing.push({
+      entity: 'paymentMode',
+      question:
+        '¿Cómo lo pagaste? (pagado completo / a crédito / pago parcial con monto inicial)',
+    });
+  }
+
+  if (mode === 'PAID' || mode === 'PARTIAL') {
+    const source =
+      entities.sourceAccount ?? entities.source;
+    if (!present(source)) {
+      missing.push({
+        entity: 'sourceAccount',
+        question: '¿Desde dónde lo pagaste? (Efectivo, Bancos o Cuenta César)',
+      });
+    }
+  }
+
+  if (mode === 'PARTIAL') {
+    const cost = moneyNumber(entities.cost ?? entities.purchaseAmount);
+    const initial = moneyNumber(entities.initialPaymentAmount);
+    if (initial == null || initial <= 0) {
+      missing.push({
+        entity: 'initialPaymentAmount',
+        question: '¿Cuánto pagaste ahora? (debe ser mayor que 0 y menor que el costo)',
+      });
+    } else if (cost != null && initial >= cost) {
+      missing.push({
+        entity: 'paymentMode',
+        question:
+          'El pago inicial es igual o mayor al costo. Si lo pagaste completo, confirma “pagado”; si no, indica un monto menor.',
+      });
+    }
+  }
+
+  if (mode === 'CREDIT' || mode === 'PARTIAL') {
+    if (!present(entities.sellerClientId) && !present(entities.sellerCounterpartyName)) {
+      missing.push({
+        entity: 'seller',
+        question:
+          '¿A quién le compraste? Necesito el vendedor para la cuenta por pagar (cliente existente o nombre).',
+      });
+    }
+  }
+
+  return missing;
+}
+
 const expenseSourceLabel: Record<string, string> = {
   CASH: 'Efectivo',
   BANK: 'Bancos',
@@ -511,7 +787,64 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
       ),
     ],
   }),
-  define({ id: 'REGISTER_PURCHASE', name: 'Register Purchase', category: 'INVENTORY', tier: 'HIGH', required: ['watch', 'cost', 'currency'], optional: ['date', 'serial', 'duplicateSerial'], effects: [{ area: 'Inventory', description: 'A purchased watch is added to inventory.' }, { area: 'Treasury', description: 'Purchase funding is recorded.' }], warnings: [warning('DUPLICATE_SERIAL', 'The supplied serial already exists.', (e) => e.duplicateSerial === true)] }),
+  define({
+    id: 'REGISTER_PURCHASE',
+    name: 'Register Purchase',
+    category: 'INVENTORY',
+    tier: 'HIGH',
+    required: ['brand', 'model', 'cost', 'currency', 'paymentMode', 'acquiredAt'],
+    optional: [
+      'watch',
+      'watchQuery',
+      'watchLabel',
+      'purchaseAmount',
+      'reference',
+      'serial',
+      'serialNumber',
+      'condition',
+      'conditionDefaulted',
+      'status',
+      'statusLabel',
+      'date',
+      'acquisitionDate',
+      'dateLabel',
+      'effectiveDate',
+      'paymentModeLabel',
+      'source',
+      'sourceAccount',
+      'sourceLabel',
+      'initialPaymentAmount',
+      'outstandingAmount',
+      'sellerClientId',
+      'sellerCounterpartyName',
+      'sellerLabel',
+      'sellerUnlinked',
+      'sellerFallbackNote',
+      'supplierQuery',
+      'sellerQuery',
+      'duplicateSerial',
+      'sourceUnsupported',
+      'watchIdentityAmbiguous',
+      'priceMin',
+      'priceMax',
+    ],
+    effectsBuilder: registerPurchaseEffects,
+    previewFields: registerPurchasePreviewFields,
+    conditionalMissing: registerPurchaseConditionalMissing,
+    reversibility: 'NONE',
+    warnings: [
+      warning(
+        'DUPLICATE_SERIAL',
+        'Ya existe un reloj activo con ese número de serie. No se puede registrar esta compra.',
+        (e) => e.duplicateSerial === true || e.duplicateSerial === 'true',
+      ),
+      warning(
+        'SELLER_UNLINKED',
+        'El vendedor se registrará como texto libre (sin cliente vinculado).',
+        (e) => e.sellerUnlinked === true || e.sellerUnlinked === 'true',
+      ),
+    ],
+  }),
   define({
     id: 'REGISTER_EXPENSE',
     name: 'Register Expense',
