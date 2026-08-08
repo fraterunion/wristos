@@ -30,14 +30,18 @@ function buildService(overrides: {
       resolutionResult: 'RESOLVED',
     }),
   };
+  const prisma = {
+    aIRequest: { findFirst: jest.fn().mockResolvedValue(null) },
+  };
   const service = new NaturalLanguageAssistantService(
     aiRequests as never,
     intentAdapter as never,
     assistant as never,
     referenceResolver,
     workingContext as never,
+    prisma as never,
   );
-  return { service, request, aiRequests, intentAdapter, assistant, workingContext };
+  return { service, request, aiRequests, intentAdapter, assistant, workingContext, prisma };
 }
 
 const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] as string[] };
@@ -211,8 +215,9 @@ describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling th
     // so there is no way for this service to read or write a business table
     // or bypass AIRequestService's own idempotency/audit bookkeeping.
     // Deps: AIRequestService, IntentAdapterService, StructuredAssistantService,
-    // ReferenceResolverService, WorkingContextService, optional TelemetryEmitter.
-    expect(NaturalLanguageAssistantService.length).toBe(6);
+    // ReferenceResolverService, WorkingContextService, PrismaService,
+    // optional TelemetryEmitter.
+    expect(NaturalLanguageAssistantService.length).toBe(7);
   });
 });
 

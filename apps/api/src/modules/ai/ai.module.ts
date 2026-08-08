@@ -28,6 +28,8 @@ import { RegisterExpenseWriteBinding } from './bindings/write/register-expense.b
 import { RegisterPurchaseWriteBinding } from './bindings/write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './bindings/write/register-sale.binding';
+import { UpdateClientEntityResolver } from './bindings/write/update-client-entity-resolver.service';
+import { UpdateClientWriteBinding } from './bindings/write/update-client.binding';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
 import { WritePlanRunner } from './bindings/write-plan-runner';
 import { AIRequestService } from './assistant/ai-request.service';
@@ -73,9 +75,11 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     RegisterExpenseWriteBinding,
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,
+    UpdateClientWriteBinding,
     ReceivablePaymentEntityResolver,
     PurchaseEntityResolver,
     CreateClientEntityResolver,
+    UpdateClientEntityResolver,
     WriteCapabilityBindingRegistry,
     WritePlanRunner,
     AIRequestService,

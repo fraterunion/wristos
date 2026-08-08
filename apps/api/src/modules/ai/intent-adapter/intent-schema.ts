@@ -31,6 +31,7 @@ export const WRITE_INTENTS = [
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
   'CREATE_CLIENT',
+  'UPDATE_CLIENT',
   'REGISTER_SETTLEMENT',
   'REGISTER_CRYPTO_POSITION',
   'REGISTER_CRYPTO_PRICE',
@@ -298,6 +299,38 @@ export const entitySchemas = {
       budgetRange: z.string().trim().min(1).max(80).optional(),
       allowProbableDuplicate: z.boolean().optional(),
       // Trusted client ids are merged server-side after picker/deictic resolve — never from LLM.
+    })
+    .strip(),
+
+  UPDATE_CLIENT: z
+    .object({
+      clientQuery: z.string().trim().min(1).max(160).optional(),
+      clientName: z.string().trim().min(1).max(160).optional(),
+      customerName: z.string().trim().min(1).max(160).optional(),
+      query: z.string().trim().min(1).max(160).optional(),
+      setName: z.string().trim().min(1).max(160).optional(),
+      newName: z.string().trim().min(1).max(160).optional(),
+      setEmail: z.string().trim().min(3).max(160).optional(),
+      email: z.string().trim().min(3).max(160).optional(),
+      correo: z.string().trim().min(3).max(160).optional(),
+      clearEmail: z.boolean().optional(),
+      setPhone: z.string().trim().min(7).max(40).optional(),
+      phone: z.string().trim().min(7).max(40).optional(),
+      telefono: z.string().trim().min(7).max(40).optional(),
+      clearPhone: z.boolean().optional(),
+      setNotes: z.string().trim().min(1).max(2000).optional(),
+      appendNotes: z.string().trim().min(1).max(2000).optional(),
+      notes: z.string().trim().min(1).max(2000).optional(),
+      clearNotes: z.boolean().optional(),
+      addTags: z.string().trim().min(1).max(200).optional(),
+      addTag: z.string().trim().min(1).max(80).optional(),
+      removeTags: z.string().trim().min(1).max(200).optional(),
+      removeTag: z.string().trim().min(1).max(80).optional(),
+      replaceTags: z.string().trim().min(1).max(200).optional(),
+      budgetRange: z.string().trim().min(1).max(80).optional(),
+      setBudgetRange: z.string().trim().min(1).max(80).optional(),
+      operations: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+      // Trusted client ids are merged server-side — never from LLM.
     })
     .strip(),
 

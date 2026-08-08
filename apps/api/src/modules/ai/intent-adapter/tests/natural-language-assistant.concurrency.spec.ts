@@ -100,6 +100,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       assistant as never,
       new ReferenceResolverService(),
       workingContext as never,
+      prisma as never,
     );
 
     const [resultA, resultB] = await Promise.all([
@@ -140,6 +141,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       { executeClaimed } as never,
       new ReferenceResolverService(),
       workingContext as never,
+      prisma as never,
     );
 
     await service.handleMessage(actor, dto);

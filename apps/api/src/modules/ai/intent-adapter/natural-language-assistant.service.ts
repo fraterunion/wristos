@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, Optional } from '@nestjs/common';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { AIRequestService } from '../assistant/ai-request.service';
 import { StructuredAssistantService } from '../assistant/structured-assistant.service';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from '../assistant/structured-assistant.types';
@@ -54,6 +55,7 @@ export class NaturalLanguageAssistantService {
     private readonly assistant: StructuredAssistantService,
     private readonly referenceResolver: ReferenceResolverService,
     private readonly workingContext: WorkingContextService,
+    private readonly prisma: PrismaService,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -160,6 +162,73 @@ export class NaturalLanguageAssistantService {
         uniqueResolution: true,
         candidateCount: 1,
       });
+
+      // UPDATE_CLIENT client picker: continue with trusted id + prior mutation entities.
+      if (
+        loaded.working?.lastIntent === 'UPDATE_CLIENT' &&
+        resolution.entityType === 'CLIENT'
+      ) {
+        const prior = dto.conversationId
+          ? await this.prisma.aIRequest.findFirst({
+              where: {
+                tenantId: actor.tenantId,
+                conversationId: dto.conversationId,
+                id: { not: request.id },
+                requestPayload: {
+                  path: ['resolvedIntent'],
+                  equals: 'UPDATE_CLIENT',
+                },
+              },
+              orderBy: { createdAt: 'desc' },
+              select: { requestPayload: true },
+            })
+          : null;
+        const priorPayload =
+          prior?.requestPayload && typeof prior.requestPayload === 'object'
+            ? (prior.requestPayload as Record<string, unknown>)
+            : null;
+        const priorEntities =
+          priorPayload?.resolvedEntities &&
+          typeof priorPayload.resolvedEntities === 'object' &&
+          !Array.isArray(priorPayload.resolvedEntities)
+            ? Object.fromEntries(
+                Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
+                  ([, v]) =>
+                    typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
+                ),
+              )
+            : {};
+        const updateEntities: Record<string, string | number | boolean> = {
+          ...priorEntities,
+          selectedClientId: resolution.id,
+          clientId: resolution.id,
+          clientLabel: resolution.label,
+        };
+        delete (updateEntities as Record<string, unknown>).clientQuery;
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: 'UPDATE_CLIENT',
+          entities: updateEntities,
+          candidateHash: resolution.resolvedEntityHash,
+        });
+        const continued = await this.assistant.executeClaimed(
+          actor,
+          {
+            intent: 'UPDATE_CLIENT',
+            entities: updateEntities,
+            surface: dto.surface ?? 'DESKTOP',
+            clientRequestId: dto.clientRequestId,
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            userDisplayText: dto.text,
+          },
+          request,
+        );
+        return {
+          resolvedIntent: 'UPDATE_CLIENT',
+          response: continued,
+          resolvedEntities: updateEntities,
+        };
+      }
 
       // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
       if (
@@ -381,6 +450,12 @@ export class NaturalLanguageAssistantService {
           useExistingClientId: resolution.id,
         });
       }
+      if (outcome.candidate.intent === 'UPDATE_CLIENT' && resolution.entityType === 'CLIENT') {
+        entities = mergeTrustedIds(entities, {
+          clientId: resolution.id,
+          selectedClientId: resolution.id,
+        });
+      }
       if (
         outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' &&
         resolution.entityType === 'ACCOUNT_ENTRY'
@@ -413,6 +488,14 @@ export class NaturalLanguageAssistantService {
       loaded.working?.lastResolvedEntities?.clientId
     ) {
       entities = mergeTrustedIds(entities, { customerId: loaded.working.lastResolvedEntities.clientId });
+    } else if (
+      outcome.candidate.intent === 'UPDATE_CLIENT' &&
+      loaded.working?.lastResolvedEntities?.clientId
+    ) {
+      entities = mergeTrustedIds(entities, {
+        clientId: loaded.working.lastResolvedEntities.clientId,
+        selectedClientId: loaded.working.lastResolvedEntities.clientId,
+      });
     }
 
     if (

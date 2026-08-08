@@ -56,6 +56,7 @@ const writeCards: Array<{ id: WritePreviewAction; label: string; href: string; i
   { id: 'REGISTER_PURCHASE', label: 'Preparar compra', href: '/inventory', icon: ShoppingCart },
   { id: 'REGISTER_EXPENSE', label: 'Preparar gasto', href: '/expenses', icon: WalletCards },
   { id: 'CREATE_CLIENT', label: 'Crear cliente', href: '/crm', icon: UserPlus },
+  { id: 'UPDATE_CLIENT', label: 'Actualizar cliente', href: '/crm', icon: UserPlus },
   { id: 'REGISTER_SETTLEMENT', label: 'Preparar liquidación', href: '/cuentas', icon: Landmark },
   { id: 'REGISTER_CRYPTO_POSITION', label: 'Preparar posición crypto', href: '/crypto', icon: PackagePlus },
   { id: 'REGISTER_CRYPTO_PRICE', label: 'Preparar precio crypto', href: '/crypto', icon: Bitcoin },
@@ -77,6 +78,7 @@ const mobileWriteLabels: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_PURCHASE: 'Registrar compra',
   REGISTER_EXPENSE: 'Registrar gasto',
   CREATE_CLIENT: 'Crear cliente',
+  UPDATE_CLIENT: 'Actualizar cliente',
   REGISTER_SETTLEMENT: 'Liquidación',
   REGISTER_CRYPTO_POSITION: 'Posición crypto',
   REGISTER_CRYPTO_PRICE: 'Precio crypto',
@@ -335,21 +337,25 @@ export default function AssistantPage() {
       item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
       item.intent === 'REGISTER_EXPENSE' ||
       item.intent === 'REGISTER_PURCHASE' ||
-      item.intent === 'CREATE_CLIENT';
+      item.intent === 'CREATE_CLIENT' ||
+      item.intent === 'UPDATE_CLIENT';
     if (pending || messagePending || confirmingSale || !executableIntent) return;
     const isPayment = item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
     const isExpense = item.intent === 'REGISTER_EXPENSE';
     const isPurchase = item.intent === 'REGISTER_PURCHASE';
     const isCreateClient = item.intent === 'CREATE_CLIENT';
-    const confirmLabel = isCreateClient
-      ? 'Crear cliente'
-      : isPurchase
-        ? 'Confirmar compra'
-        : isExpense
-          ? 'Confirmar gasto'
-          : isPayment
-            ? 'Confirmar pago'
-            : 'Confirmar venta';
+    const isUpdateClient = item.intent === 'UPDATE_CLIENT';
+    const confirmLabel = isUpdateClient
+      ? 'Guardar cambios'
+      : isCreateClient
+        ? 'Crear cliente'
+        : isPurchase
+          ? 'Confirmar compra'
+          : isExpense
+            ? 'Confirmar gasto'
+            : isPayment
+              ? 'Confirmar pago'
+              : 'Confirmar venta';
     setError(null);
     setMessageError(null);
     setConfirmingSale(true);
