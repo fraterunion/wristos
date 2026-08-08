@@ -252,19 +252,117 @@ For an 18k BANK expense:
 |---|---|
 | OperatingExpense | +18k |
 | Treasury BANK | −18k OUTFLOW once |
-| Monthly net profit | −18k once (OpEx sum) |
+| Dashboard / Analytics monthly net profit | −18k once (includes OpEx) |
+| OI `GET_MONTHLY_PROFIT` | same Analytics path (−18k) |
 | Dashboard liquidity BANK | −18k once |
 | Bank commission P&L | **unchanged** (`commission` null) |
-| Capital partner formula | still does not subtract OpEx (unchanged product rule) |
+| Capital `totalBusinessProfit` | **unchanged** (excludes OpEx — see gate below) |
 
 ---
 
-## Historical compatibility
+## Capital / OpEx financial gate (OPTION C)
+
+### Exact Capital formulas (current code)
+
+```
+totalBusinessProfit = Σ CLOSED_WON revenue − Σ COGS − Σ Treasury BANK commission > 0
+capitalNeto         = totalCapitalContributed + totalBusinessProfit − totalDistributionsPaid
+profitEntitlement   = totalBusinessProfit × ownershipPercent / 100
+pendingProfit       = profitEntitlement − distributionsPaid
+ROI                 = (capitalNeto − contributed) / contributed   (UI; requires contributions)
+```
+
+Annual month `businessProfit` uses the same definition (revenue − COGS − bank fees; **no OpEx**).
+
+Analytics / Dashboard / OI monthly net profit:
+
+```
+netProfit = sales − COGS − bank commissions − OperatingExpense(deletedAt null)
+```
+
+### Does a normal OpEx reduce…?
+
+| Metric | Reduces? |
+|---|---|
+| 1. monthly net profit (Analytics/Dashboard/OI) | **Yes** |
+| 2. Capital `totalBusinessProfit` | **No** |
+| 3. `capitalNeto` | **No** (via profit) |
+| 4. investor profit entitlement | **No** |
+| 5. pending partner profit | **No** |
+| 6. ROI (derived from capitalNeto) | **No** |
+| 7. annual/monthly partner Capital table | **No** |
+
+### Intended business semantics
+
+Workbook model (`docs/migrations/MASTER_WORKBOOK_ANALYSIS.md`):
+
+> Net monthly profit ≈ sum(utilidades) − **gastos del mes** − bank commissions
+> Split net profit 75% Cesar / 25% Edgar
+
+So **true business profit should include OpEx** before partner entitlement.
+
+Capital today is therefore a **financial inconsistency** relative to workbook + Analytics labels — not an intentionally documented “gross trading profit” product (until labeled).
+
+### Historical impact (Wrist Caviar production, read-only audit)
+
+| Item | Value |
+|---|---|
+| OperatingExpense rows | 287 |
+| OpEx sum | **MXN 3,083,674.74** (2025: 703,467 · 2026: 2,380,207.74) |
+| Residual OpEx BANK_FEES | 0 |
+| Distributions already paid | **MXN 2,732,961.16** (13 rows) |
+| Ownership | CESAR 75% / EDGAR 25% |
+
+If Capital started subtracting OpEx without reconciliation:
+
+- `totalBusinessProfit` ↓ 3,083,674.74
+- CESAR entitlement ↓ ~2,312,756
+- EDGAR entitlement ↓ ~770,919
+- Prior distributions would no longer reconcile to the new entitlement base
+
+**Decision: OPTION C — do not change Capital formulas in 15A.**
+
+UI clarification (no formula change): Capital now labels the figure **“Utilidad bruta acumulada”** and footnotes that Dashboard net profit does subtract Gastos.
+
+**Business decision still required before treating Capital as partner-net-profit:** either reconcile/backfill Capital to include OpEx, or permanently define Capital as gross trading profit and keep labels distinct.
+
+---
+
+## Historical / legacy compatibility
 
 - No rewrite of imported expenses
-- New fields nullable / defaulted
-- No backfill of Treasury for legacy OpEx-only rows
-- Legacy rows remain readable in Gastos lists
+- `currency` DEFAULT `MXN` — valid for Wrist Caviar (business books are MXN; prior UI “USD” label was incorrect display, not stored FX)
+- `sourceAccount` nullable — legacy rows have **no** invented CASH/BANK/CESAR source
+- `registerIdempotencyKey` nullable — no backfill
+- `deletedAt` nullable — soft-delete only going forward
+- No Treasury backfill for legacy OpEx-only rows
+- Legacy delete: soft-delete OpEx only; **never invents** a Treasury reversal
+
+---
+
+## Reversal semantics
+
+Canonical paid expense:
+
+1. Soft-delete `OperatingExpense` (`deletedAt`)
+2. Soft-delete Treasury OUTFLOW by provenance `operating-expense:<id>:outflow`
+
+Not a compensating INFLOW. Retry is idempotent (`alreadyReversed`).
+
+Liquidity and Analytics restore once OpEx + OUTFLOW are soft-deleted.
+
+---
+
+## Category / Rent policy (V1)
+
+No `RENT` enum. Future AI must **not** silently invent enums.
+
+Preferred V1:
+
+- clarify category when uncertain, **or**
+- map to `OTHER` only when preview surfaces **Categoría: Otro** + **Concepto: Renta oficina**
+
+Do not hide “renta” inside free-text without showing OTHER.
 
 ---
 
@@ -274,11 +372,25 @@ Migration file (local only — **do not deploy migrate** until approved):
 
 `prisma/migrations/20260808060000_operating_expense_register_idempotency/migration.sql`
 
+Additions:
+
+| Column | Nullability | Default |
+|---|---|---|
+| `currency` | NOT NULL | `'MXN'` |
+| `sourceAccount` | NULL | — |
+| `registerIdempotencyKey` | NULL | — |
+| `deletedAt` | NULL | — |
+
+Indexes: unique `(tenantId, registerIdempotencyKey)`; index `(tenantId, deletedAt)`.
+
+Additive only. No destructive SQL. No historical amount/source rewrite.
+
 Before AI execution:
 
 1. Apply migration to production manually
-2. Verify `registerIdempotencyKey` unique constraint live
-3. Implement WRITE binding only after domain green on DEMO
+2. Verify unique constraint live
+3. Capital/OpEx reconciliation decision (or accept labeled divergence)
+4. WRITE binding + DEMO QA + WC hash proof
 
 ---
 
@@ -297,9 +409,10 @@ Before AI execution:
 
 ## Exact blocker before Commit 15B
 
-1. Production migrate of OperatingExpense idempotency / source / soft-delete columns  
-2. WRITE binding + confirmation freshness + recovery wired to `ExpenseRegistrationService.register()`  
-3. Planner category allowlist + source clarification  
-4. DEMO QA matrix + Wrist Caviar hash proof  
+1. Production migrate of OperatingExpense idempotency / source / soft-delete columns
+2. **Capital vs OpEx business decision** (reconcile historical partner profit **or** permanently accept “utilidad bruta” definition)
+3. WRITE binding + confirmation freshness + recovery → `ExpenseRegistrationService.register()`
+4. Planner category allowlist + source clarification
+5. DEMO QA matrix + Wrist Caviar hash proof
 
 Do **not** bind AI until (1) is live and domain QA is green.

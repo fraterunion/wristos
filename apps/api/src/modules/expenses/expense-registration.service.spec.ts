@@ -286,6 +286,33 @@ describe('ExpenseRegistrationService — canonical paid expense', () => {
     expect(again.alreadyReversed).toBe(true);
   });
 
+  it('legacy expense without Treasury soft-deletes without inventing reversal', async () => {
+    const { service, expenses, treasuryService } = build();
+    expenses.set('legacy', {
+      id: 'legacy',
+      tenantId: 't1',
+      category: OperatingExpenseCategory.GASOLINE,
+      amount: d(2500),
+      currency: Currency.MXN,
+      sourceAccount: null,
+      expenseDate: new Date('2025-06-01T00:00:00.000Z'),
+      notes: 'legacy import',
+      registerIdempotencyKey: null,
+      deletedAt: null,
+    });
+    const reversed = await service.reverse('t1', 'legacy');
+    expect(reversed.expense.deletedAt).toBeTruthy();
+    expect(reversed.treasuryEntry).toBeNull();
+    expect(treasuryService.softDeleteOperatingExpenseOutflow).toHaveBeenCalled();
+    // softDelete helper returns null when no provenance row exists
+    expect(
+      await treasuryService.softDeleteOperatingExpenseOutflow({
+        tenantId: 't1',
+        operatingExpenseId: 'legacy',
+      }),
+    ).toBeNull();
+  });
+
   it('refuses replay when expense exists without Treasury', async () => {
     const { service, expenses } = build();
     expenses.set('orphan', {

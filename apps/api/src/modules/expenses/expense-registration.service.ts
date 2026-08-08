@@ -254,8 +254,11 @@ export class ExpenseRegistrationService {
   }
 
   /**
-   * Soft-delete expense + soft-delete matching Treasury OUTFLOW atomically.
+   * Soft-delete expense + soft-delete matching Treasury OUTFLOW (if any) atomically.
    * Idempotent: second call returns alreadyReversed.
+   *
+   * Treasury convention: soft-delete original OUTFLOW (not a compensating INFLOW).
+   * Legacy OpEx rows without provenance: soft-delete expense only — never invents Treasury.
    */
   async reverse(
     tenantId: string,
