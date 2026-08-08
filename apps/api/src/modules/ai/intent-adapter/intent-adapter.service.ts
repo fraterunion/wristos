@@ -1,4 +1,6 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
+import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
 import { buildIntentCandidate, IntentCandidateFailureReason, StructuredIntentCandidate } from './intent-candidate';
 import { IntentAdapterProvider, IntentInterpretationInput, IntentProviderFailureType } from './intent-adapter-provider';
 import { assertWithinTextLimit, sanitizeConversationContext, MAX_USER_TEXT_LENGTH } from './safety';
@@ -29,7 +31,10 @@ export type IntentAdapterOutcome =
 export class IntentAdapterService {
   private readonly logger = new Logger(IntentAdapterService.name);
 
-  constructor(@Inject(INTENT_ADAPTER_PROVIDER) private readonly provider: IntentAdapterProvider) {}
+  constructor(
+    @Inject(INTENT_ADAPTER_PROVIDER) private readonly provider: IntentAdapterProvider,
+    @Optional() private readonly telemetry?: TelemetryEmitter,
+  ) {}
 
   async interpret(rawInput: IntentInterpretationInput): Promise<IntentAdapterOutcome> {
     assertWithinTextLimit(rawInput.userText);
@@ -43,6 +48,11 @@ export class IntentAdapterService {
       conversationContext: sanitizeConversationContext(rawInput.conversationContext),
     };
 
+    telem(this.telemetry, {
+      event: 'ProviderStarted',
+      provider: 'intent-adapter',
+      requestId: rawInput.requestTraceId,
+    });
     const started = Date.now();
     const raw = await this.provider.interpret(input);
     const latencyMs = Date.now() - started;
@@ -56,15 +66,49 @@ export class IntentAdapterService {
 
     if (raw.failure) {
       this.logger.warn(`[intent-adapter] provider failure type=${raw.failure.type} provider=${raw.provider} model=${raw.model} latencyMs=${latencyMs}`);
+      telem(this.telemetry, {
+        event: 'ProviderCompleted',
+        provider: raw.provider,
+        model: raw.model,
+        providerLatencyMs: latencyMs,
+        timeout: raw.failure.type === 'TIMEOUT',
+        failureType: mapFailureTaxonomy(raw.failure.type),
+        requestId: rawInput.requestTraceId,
+        tokenInput: raw.tokenUsage?.inputTokens,
+        tokenOutput: raw.tokenUsage?.outputTokens,
+      });
       return { kind: 'PROVIDER_FAILURE', failureType: raw.failure.type, detail: raw.failure.detail, ...meta };
     }
 
     const result = buildIntentCandidate(raw.output, rawInput.currentDate);
     if (result.kind === 'FAILED') {
       this.logger.warn(`[intent-adapter] invalid output reason=${result.reason} issueCount=${result.issueCount} provider=${raw.provider}`);
+      telem(this.telemetry, {
+        event: 'ProviderCompleted',
+        provider: raw.provider,
+        model: raw.model,
+        providerLatencyMs: latencyMs,
+        schemaValidationFailure: true,
+        failureType: 'SCHEMA_INVALID',
+        requestId: rawInput.requestTraceId,
+        tokenInput: raw.tokenUsage?.inputTokens,
+        tokenOutput: raw.tokenUsage?.outputTokens,
+      });
       return { kind: 'INVALID_OUTPUT', reason: result.reason, issueCount: result.issueCount, issuePaths: result.issuePaths, ...meta };
     }
 
+    telem(this.telemetry, {
+      event: 'ProviderCompleted',
+      provider: raw.provider,
+      model: raw.model,
+      providerLatencyMs: latencyMs,
+      providerIntent: result.candidate.intent,
+      normalizedIntent: result.candidate.intent,
+      requestId: rawInput.requestTraceId,
+      tokenInput: raw.tokenUsage?.inputTokens,
+      tokenOutput: raw.tokenUsage?.outputTokens,
+      funnelStage: 'intent',
+    });
     return { kind: 'CANDIDATE', candidate: result.candidate, ...meta };
   }
 }

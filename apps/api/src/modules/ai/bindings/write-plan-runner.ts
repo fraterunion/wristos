@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { AIActionRun, AIActionRunStatus, AIAuditEventType, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
@@ -12,6 +13,8 @@ import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { BusinessActionResult, BusinessExecutionPlan } from '../planner/planner.types';
 import { PlannerService } from '../planner/planner.service';
 import { RuntimeService } from '../runtime/runtime.service';
+import { mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
+import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
 import { WriteCapabilityBindingRegistry } from './write-capability-binding-registry';
 import { registerExpenseIdempotencyKey } from './write/register-expense.binding';
 import { registerReceivablePaymentIdempotencyKey } from './write/register-receivable-payment.binding';
@@ -65,6 +68,7 @@ export class WritePlanRunner {
     private readonly runtime: RuntimeService,
     private readonly planner: PlannerService,
     private readonly writeRegistry: WriteCapabilityBindingRegistry,
+    @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
   /**
@@ -88,11 +92,34 @@ export class WritePlanRunner {
     locale?: string;
     timezone?: string;
   }): Promise<ConfirmWriteResult> {
+    const totalStarted = Date.now();
     const claim = await this.claimConfirmation(args);
 
     if (claim.kind === 'REPLAY') {
       const result = this.readStoredResult(claim.run);
-      return this.successEnvelope(claim.run, result, { replayed: true, recovered: false });
+      const envelope = this.successEnvelope(claim.run, result, { replayed: true, recovered: false });
+      telem(this.telemetry, {
+        event: 'ReplayServed',
+        tenantId: args.tenantId,
+        conversationId: claim.run.conversationId,
+        actionRunId: claim.run.id,
+        capability: claim.run.intent,
+        replayed: true,
+        idempotentReplay: true,
+        outcome: 'REPLAYED',
+        funnelStage: 'completed',
+        totalLatencyMs: Date.now() - totalStarted,
+      });
+      telem(this.telemetry, {
+        event: 'ConversationFinished',
+        tenantId: args.tenantId,
+        conversationId: claim.run.conversationId,
+        actionRunId: claim.run.id,
+        capability: claim.run.intent,
+        outcome: 'REPLAYED',
+        totalLatencyMs: Date.now() - totalStarted,
+      });
+      return envelope;
     }
 
     if (claim.kind === 'IN_PROGRESS') {
@@ -121,21 +148,116 @@ export class WritePlanRunner {
     const run = claim.run;
     const recovered = claim.kind === 'RECOVER';
     const plan = this.parsePlan(run);
+    telem(this.telemetry, {
+      event: 'PreviewConfirmed',
+      tenantId: args.tenantId,
+      conversationId: run.conversationId,
+      actionRunId: run.id,
+      capability: run.intent,
+      confirmed: true,
+      funnelStage: 'confirmation',
+      recovered,
+    });
+    if (recovered) {
+      telem(this.telemetry, {
+        event: 'ExecutionRecovered',
+        tenantId: args.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: run.id,
+        capability: run.intent,
+        recovered: true,
+        recoveryReason: String(claim.priorStatus ?? 'RECOVER'),
+        funnelStage: 'execution',
+      });
+    }
+    telem(this.telemetry, {
+      event: 'ExecutionStarted',
+      tenantId: args.tenantId,
+      conversationId: run.conversationId,
+      actionRunId: run.id,
+      capability: run.intent,
+      funnelStage: 'execution',
+      recovered,
+    });
+    const bindingStarted = Date.now();
     try {
       await this.validateWritePlan(plan, args.expectedFingerprint, run, args.tenantId, args.userId, {
         skipActiveRunCheck: recovered,
       });
 
       const primary = await this.executeWriteSteps(plan, run, args);
-      return await this.finalizeSuccess(args, run, plan, primary, {
+      const bindingLatencyMs = Date.now() - bindingStarted;
+      const envelope = await this.finalizeSuccess(args, run, plan, primary, {
         replayed: this.isReplayedReceipt(primary),
         recovered,
         priorStatus: claim.kind === 'RECOVER' ? claim.priorStatus : undefined,
       });
+      telem(this.telemetry, {
+        event: 'ExecutionCompleted',
+        tenantId: args.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: run.id,
+        capability: run.intent,
+        completed: true,
+        recovered: envelope.recovered,
+        replayed: envelope.replayed,
+        bindingLatencyMs,
+        domainLatencyMs: bindingLatencyMs,
+        totalLatencyMs: Date.now() - totalStarted,
+        funnelStage: 'receipt',
+        outcome: envelope.recovered ? 'RECOVERED' : envelope.replayed ? 'REPLAYED' : 'SUCCESS',
+      });
+      telem(this.telemetry, {
+        event: 'ConversationFinished',
+        tenantId: args.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: run.id,
+        capability: run.intent,
+        outcome: envelope.recovered ? 'RECOVERED' : envelope.replayed ? 'REPLAYED' : 'SUCCESS',
+        totalLatencyMs: Date.now() - totalStarted,
+        funnelStage: 'completed',
+      });
+      return envelope;
     } catch (error) {
       // Financial trust: if the canonical domain committed, never report "no change".
       const recoveredAfterError = await this.tryRecoverCommittedWrite(args, run, plan, error);
-      if (recoveredAfterError) return recoveredAfterError;
+      if (recoveredAfterError) {
+        telem(this.telemetry, {
+          event: 'ExecutionRecovered',
+          tenantId: args.tenantId,
+          conversationId: run.conversationId,
+          actionRunId: run.id,
+          capability: run.intent,
+          recovered: true,
+          recoveryReason: this.failureType(error),
+          recoveryDurationMs: Date.now() - bindingStarted,
+          funnelStage: 'receipt',
+          outcome: 'RECOVERED',
+          totalLatencyMs: Date.now() - totalStarted,
+        });
+        telem(this.telemetry, {
+          event: 'ExecutionCompleted',
+          tenantId: args.tenantId,
+          conversationId: run.conversationId,
+          actionRunId: run.id,
+          capability: run.intent,
+          completed: true,
+          recovered: true,
+          totalLatencyMs: Date.now() - totalStarted,
+          funnelStage: 'receipt',
+          outcome: 'RECOVERED',
+        });
+        telem(this.telemetry, {
+          event: 'ConversationFinished',
+          tenantId: args.tenantId,
+          conversationId: run.conversationId,
+          actionRunId: run.id,
+          capability: run.intent,
+          outcome: 'RECOVERED',
+          totalLatencyMs: Date.now() - totalStarted,
+        });
+        return recoveredAfterError;
+      }
 
       const failureType = this.failureType(error);
       if (run.status === AIActionRunStatus.EXECUTING || run.status === AIActionRunStatus.READY_FOR_CONFIRMATION) {
@@ -149,7 +271,29 @@ export class WritePlanRunner {
           );
         }
       }
-      return this.failureEnvelope(run, failureType);
+      const envelope = this.failureEnvelope(run, failureType);
+      telem(this.telemetry, {
+        event: 'ExecutionFailed',
+        tenantId: args.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: run.id,
+        capability: run.intent,
+        failed: true,
+        failureType: mapFailureTaxonomy(failureType),
+        totalLatencyMs: Date.now() - totalStarted,
+        outcome: 'FAILED',
+        funnelStage: 'execution',
+      });
+      telem(this.telemetry, {
+        event: 'ConversationFinished',
+        tenantId: args.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: run.id,
+        capability: run.intent,
+        outcome: 'FAILED',
+        totalLatencyMs: Date.now() - totalStarted,
+      });
+      return envelope;
     }
   }
 

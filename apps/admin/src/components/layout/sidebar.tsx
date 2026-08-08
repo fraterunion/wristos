@@ -16,6 +16,7 @@ import {
   Users,
   WalletCards,
   Upload,
+  Activity,
   type LucideIcon,
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
@@ -37,6 +38,7 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/radar', label: 'Radar', icon: Radar },
   { href: '/data-onboarding', label: 'Importar datos', icon: Upload },
   { href: '/platform/migrations/wrist-caviar', label: 'Migración WC', icon: Upload },
+  { href: '/platform/assistant-health', label: 'Assistant Health', icon: Activity },
 ];
 export function Sidebar() {
   const pathname = usePathname();

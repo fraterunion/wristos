@@ -36,6 +36,7 @@ import { IntentAdapterRateLimitGuard } from './intent-adapter/rate-limit.guard';
 import { ReferenceResolverService } from './context/reference-resolver.service';
 import { WorkingContextService } from './context/working-context.service';
 import { OperationalIntelligenceService } from './operational-intelligence/operational-intelligence.service';
+import { TelemetryModule } from './telemetry/telemetry.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { OperationalIntelligenceService } from './operational-intelligence/opera
     HistoryModule,
     DealsModule,
     ExpensesModule,
+    TelemetryModule,
   ],
   controllers: [AIController],
   providers: [

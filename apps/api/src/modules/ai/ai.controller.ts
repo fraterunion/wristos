@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Res, UseGuards, Optional } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentUser as CurrentUserType } from '../../common/types/current-user.type';
@@ -19,6 +19,8 @@ import { StructuredAssistantService } from './assistant/structured-assistant.ser
 import { structuredAssistantHttpStatus } from './assistant/assistant-http-status';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
 import { WritePlanRunner } from './bindings/write-plan-runner';
+import { telem } from './telemetry/telemetry-hooks';
+import { TelemetryEmitter } from './telemetry/telemetry-emitter.service';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
@@ -31,6 +33,7 @@ export class AIController {
     private readonly naturalLanguageAssistant: NaturalLanguageAssistantService,
     private readonly writeRegistry: WriteCapabilityBindingRegistry,
     private readonly writeRunner: WritePlanRunner,
+    @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
   @Post('assistant/structured')
@@ -111,8 +114,42 @@ export class AIController {
   }
 
   @Post('action-runs/:id/cancel')
-  cancelActionRun(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
-    return this.runtime.cancel(user.tenantId, user.userId, id);
+  async cancelActionRun(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
+    const run = await this.runtime.findOne(user.tenantId, id);
+    const cancelled = await this.runtime.cancel(user.tenantId, user.userId, id);
+    const wasPreview = run.status === 'READY_FOR_CONFIRMATION';
+    const wasClarification = run.status === 'NEEDS_CLARIFICATION';
+    if (wasPreview) {
+      telem(this.telemetry, {
+        event: 'PreviewCancelled',
+        tenantId: user.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: id,
+        capability: run.intent,
+        cancelled: true,
+        outcome: 'CANCELLED',
+      });
+    }
+    if (wasClarification) {
+      telem(this.telemetry, {
+        event: 'ClarificationAbandoned',
+        tenantId: user.tenantId,
+        conversationId: run.conversationId,
+        actionRunId: id,
+        capability: run.intent,
+        abandoned: true,
+        outcome: 'ABANDONED',
+      });
+    }
+    telem(this.telemetry, {
+      event: 'ConversationFinished',
+      tenantId: user.tenantId,
+      conversationId: run.conversationId,
+      actionRunId: id,
+      capability: run.intent,
+      outcome: wasClarification ? 'ABANDONED' : 'CANCELLED',
+    });
+    return cancelled;
   }
 
   @Post('workspaces')
