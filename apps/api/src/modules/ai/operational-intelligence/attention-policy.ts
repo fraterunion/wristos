@@ -15,8 +15,8 @@
 export const ATTENTION_POLICY = Object.freeze({
   /**
    * AGED_INVENTORY_DAYS = 120
-   * Days of inventory *record age* (Watch.createdAt) before an item is
-   * considered aged. Approximation until a canonical acquisitionDate exists.
+   * Days of inventory age (Watch.acquiredAt, fallback createdAt) before an
+   * item is considered aged.
    */
   AGED_INVENTORY_DAYS: 120,
   /**

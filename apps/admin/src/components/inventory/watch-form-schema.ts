@@ -15,6 +15,12 @@ export const WATCH_OWNERSHIP_VALUES = ['OWNED', 'CONSIGNMENT'] as const;
 export const COST_CURRENCY_VALUES = ['MXN', 'USD'] as const;
 export type CostCurrency = (typeof COST_CURRENCY_VALUES)[number];
 
+export const PURCHASE_PAYMENT_MODE_VALUES = ['PAID', 'CREDIT', 'PARTIAL'] as const;
+export type PurchasePaymentMode = (typeof PURCHASE_PAYMENT_MODE_VALUES)[number];
+
+export const PURCHASE_SOURCE_VALUES = ['CASH', 'BANK', 'CESAR'] as const;
+export type PurchaseSourceAccount = (typeof PURCHASE_SOURCE_VALUES)[number];
+
 export const PUBLIC_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** NULL/unknown costCurrency defaults to MXN (canonical ledger currency). */
@@ -58,6 +64,16 @@ export const watchFormSchema = z
     publicDescription: z.string().optional(),
     publicPrice: publishNumericField('Public price'),
     reservationAmount: publishNumericField('Reservation amount'),
+    // Create-mode acquisition economics (ignored on edit)
+    acquisitionDate: z.string().trim().min(1, 'Fecha de compra requerida'),
+    paymentMode: z.enum(PURCHASE_PAYMENT_MODE_VALUES),
+    sourceAccount: z.enum(PURCHASE_SOURCE_VALUES).optional(),
+    initialPaymentAmount: z.preprocess((val) => {
+      if (val === '' || val === null || val === undefined) return undefined;
+      const n = Number(val);
+      return Number.isFinite(n) ? n : undefined;
+    }, z.number().min(0.01).optional()),
+    sellerCounterpartyName: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.priceMax < data.priceMin) {
@@ -110,9 +126,50 @@ export const watchFormSchema = z
         });
       }
     }
+    if (data.paymentMode === 'PAID' || data.paymentMode === 'PARTIAL') {
+      if (!data.sourceAccount) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Cuenta de pago requerida',
+          path: ['sourceAccount'],
+        });
+      }
+    }
+    if (data.paymentMode === 'PARTIAL') {
+      if (data.initialPaymentAmount == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Monto inicial requerido',
+          path: ['initialPaymentAmount'],
+        });
+      } else if (data.initialPaymentAmount >= data.cost) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'El pago parcial debe ser menor al costo',
+          path: ['initialPaymentAmount'],
+        });
+      }
+    }
+    if (data.paymentMode === 'CREDIT' || data.paymentMode === 'PARTIAL') {
+      if (!data.sellerCounterpartyName?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Vendedor / contraparte requerido para CXP',
+          path: ['sellerCounterpartyName'],
+        });
+      }
+    }
   });
 
 export type WatchFormValues = z.infer<typeof watchFormSchema>;
+
+function todayYmd() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export const defaultWatchFormValues: WatchFormValues = {
   brand: '',
@@ -133,6 +190,11 @@ export const defaultWatchFormValues: WatchFormValues = {
   publicDescription: '',
   publicPrice: 0,
   reservationAmount: 0,
+  acquisitionDate: todayYmd(),
+  paymentMode: 'PAID',
+  sourceAccount: 'BANK',
+  initialPaymentAmount: undefined,
+  sellerCounterpartyName: '',
 };
 
 export function watchToFormValues(watch: Watch): WatchFormValues {
@@ -159,6 +221,14 @@ export function watchToFormValues(watch: Watch): WatchFormValues {
     publicPrice: watch.publicPrice != null ? Number(watch.publicPrice) : 0,
     reservationAmount:
       watch.reservationAmount != null ? Number(watch.reservationAmount) : 0,
+    acquisitionDate:
+      watch.acquiredAt?.slice(0, 10) ??
+      watch.createdAt?.slice(0, 10) ??
+      todayYmd(),
+    paymentMode: 'PAID',
+    sourceAccount: 'BANK',
+    initialPaymentAmount: undefined,
+    sellerCounterpartyName: '',
   };
 }
 
@@ -203,6 +273,50 @@ export function buildCreateWatchBody(values: WatchFormValues) {
   }
 
   appendPublishFields(body, values);
+
+  return body;
+}
+
+/**
+ * Canonical purchase body for POST /inventory/purchases.
+ * Single backend transaction owns Watch + Treasury + CXP.
+ */
+export function buildRegisterPurchaseBody(values: WatchFormValues) {
+  const body: Record<string, unknown> = {
+    brand: values.brand.trim(),
+    model: values.model.trim(),
+    condition: values.condition.trim(),
+    currency: values.costCurrency,
+    purchaseAmount: values.cost,
+    priceMin: values.priceMin,
+    priceMax: values.priceMax,
+    ownershipType: values.ownershipType,
+    status: values.status,
+    acquisitionDate: values.acquisitionDate,
+    paymentMode: values.paymentMode,
+  };
+
+  const serial = values.serialNumber?.trim();
+  if (serial) body.serialNumber = serial;
+
+  const imageUrl = values.imageUrl?.trim();
+  if (imageUrl) body.imageUrl = imageUrl;
+
+  if (values.ownershipType === 'CONSIGNMENT') {
+    const owner = values.consignmentOwnerName?.trim();
+    if (owner) body.consignmentOwnerName = owner;
+    const split = values.consignmentSplitPercentage?.trim();
+    if (split) body.consignmentSplitPercentage = Number(split);
+  }
+
+  if (values.paymentMode === 'PAID' || values.paymentMode === 'PARTIAL') {
+    body.sourceAccount = values.sourceAccount;
+  }
+  if (values.paymentMode === 'PARTIAL' && values.initialPaymentAmount != null) {
+    body.initialPaymentAmount = values.initialPaymentAmount;
+  }
+  const seller = values.sellerCounterpartyName?.trim();
+  if (seller) body.sellerCounterpartyName = seller;
 
   return body;
 }

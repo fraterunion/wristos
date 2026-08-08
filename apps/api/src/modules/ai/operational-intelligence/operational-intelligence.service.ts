@@ -31,7 +31,12 @@ type ActiveWatchRow = {
   cost: Prisma.Decimal | null;
   status: WatchStatus;
   createdAt: Date;
+  acquiredAt: Date | null;
 };
+
+function inventoryAgeAnchor(w: { acquiredAt?: Date | null; createdAt: Date }): Date {
+  return w.acquiredAt ?? w.createdAt;
+}
 
 type DealMarginRow = {
   id?: string;
@@ -141,11 +146,10 @@ export class OperationalIntelligenceService {
   ) {}
 
   /**
-   * Inventory *record age* (not guaranteed physical acquisition age).
+   * Inventory age for attention / aging.
    *
-   * Age source: Watch.createdAt — schema has no canonical acquisitionDate.
-   * TODO(future): replace with canonical acquisitionDate / purchase date when
-   * the domain field exists (requires schema + migration — out of scope here).
+   * Prefer Watch.acquiredAt (canonical purchase date from REGISTER_PURCHASE).
+   * Fallback: Watch.createdAt for legacy / inventory-only creates.
    *
    * Active inventory only: deletedAt null AND status ≠ SOLD.
    */
@@ -171,12 +175,13 @@ export class OperationalIntelligenceService {
         cost: true,
         status: true,
         createdAt: true,
+        acquiredAt: true,
       },
     })) as ActiveWatchRow[];
 
     const items = watches
       .map((w) => {
-        const days = ageDays(w.createdAt, now);
+        const days = ageDays(inventoryAgeAnchor(w), now);
         const cost = new Prisma.Decimal(w.cost ?? 0);
         return {
           watchId: w.id,
@@ -202,10 +207,10 @@ export class OperationalIntelligenceService {
 
     return {
       asOf: now.toISOString(),
-      ageSource: 'Watch.createdAt' as const,
-      ageMetric: 'inventory_record_age' as const,
+      ageSource: 'Watch.acquiredAt|createdAt' as const,
+      ageMetric: 'inventory_acquisition_age' as const,
       ageSourceNote:
-        'Inventory record age (not guaranteed physical acquisition age). Until WristOS has a canonical acquisitionDate, ageDays is calculated from Watch.createdAt.',
+        'Prefer Watch.acquiredAt (canonical purchase date). Fallback Watch.createdAt = días en WristOS / inventory record age for legacy inventory-only rows.',
       minAgeDays,
       items: sliced.map((row) => { const { _cost, ...rest } = row; void _cost; return rest; }),
       totalCapitalAtRisk: money(totalCapitalAtRisk),
@@ -234,6 +239,7 @@ export class OperationalIntelligenceService {
         cost: true,
         status: true,
         createdAt: true,
+        acquiredAt: true,
       },
     })) as ActiveWatchRow[];
 
@@ -255,7 +261,7 @@ export class OperationalIntelligenceService {
           reference: w.reference,
           cost: money(cost),
           percentOfActiveInventoryCapital: pct.toFixed(2),
-          ageDays: ageDays(w.createdAt, now),
+          ageDays: ageDays(inventoryAgeAnchor(w), now),
           status: w.status,
           _cost: cost,
         };

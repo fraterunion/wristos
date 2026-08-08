@@ -59,28 +59,49 @@ describe('OperationalIntelligenceService', () => {
     expect(prisma.watch.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ tenantId: 't1', deletedAt: null, status: { not: 'SOLD' } }),
     }));
-    expect(result.ageSource).toBe('Watch.createdAt');
-    expect(result.ageMetric).toBe('inventory_record_age');
-    expect(result.ageSourceNote).toMatch(/not guaranteed physical acquisition/i);
-    expect(result.ageSourceNote).not.toMatch(/comprado|acquisition age guaranteed/i);
+    expect(result.ageSource).toBe('Watch.acquiredAt|createdAt');
+    expect(result.ageMetric).toBe('inventory_acquisition_age');
+    expect(result.ageSourceNote).toMatch(/Prefer Watch\.acquiredAt/i);
+    expect(result.ageSourceNote).toMatch(/días en WristOS|Fallback Watch\.createdAt/i);
     expect(result.items[0].watchId).toBe('w-tie'); // same age, higher cost
     expect(result.items[1].watchId).toBe('w-old');
     expect(result.items.map((i) => i.watchId)).not.toContain('sold');
     expect(result.items[0].ageDays).toBeGreaterThan(result.items[2].ageDays);
   });
 
-  it('ageDays uses createdAt fallback (inventory record age)', async () => {
+  it('ageDays uses createdAt fallback when acquiredAt is null', async () => {
     const createdAt = new Date('2026-02-07T12:00:00.000Z');
     const prisma = {
       watch: {
         findMany: jest.fn(async () => [
-          { id: 'w1', brand: 'A', model: '1', reference: null, cost: d(10), status: 'AVAILABLE', createdAt },
+          { id: 'w1', brand: 'A', model: '1', reference: null, cost: d(10), status: 'AVAILABLE', createdAt, acquiredAt: null },
         ]),
       },
     };
     const result = await makeService(prisma).getInventoryAging('t1', { now });
     expect(result.items[0].ageDays).toBe(181);
-    expect(result.ageSource).toBe('Watch.createdAt');
+    expect(result.ageSource).toBe('Watch.acquiredAt|createdAt');
+  });
+
+  it('ageDays prefers acquiredAt over createdAt', async () => {
+    const prisma = {
+      watch: {
+        findMany: jest.fn(async () => [
+          {
+            id: 'w1',
+            brand: 'A',
+            model: '1',
+            reference: null,
+            cost: d(10),
+            status: 'AVAILABLE',
+            createdAt: new Date('2026-07-01T00:00:00Z'),
+            acquiredAt: new Date('2026-02-07T00:00:00Z'),
+          },
+        ]),
+      },
+    };
+    const result = await makeService(prisma).getInventoryAging('t1', { now });
+    expect(result.items[0].ageDays).toBe(181);
   });
 
   it('filters by minAgeDays threshold', async () => {

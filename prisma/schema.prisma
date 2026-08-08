@@ -166,6 +166,8 @@ enum TreasuryDirection {
 enum AccountEntrySource {
   MANUAL
   DEAL_AUTO
+  /// Auto-created PAYABLE from canonical inventory purchase registration (CREDIT / PARTIAL).
+  PURCHASE_AUTO
 }
 
 // --- Accounts Receivable ledger (Sprint 2) ---
@@ -754,6 +756,7 @@ model Client {
   accountEntries         AccountEntry[]
   storefrontReservations StorefrontReservation[]
   receivables            Receivable[]
+  watchesSold            Watch[]                 @relation("WatchSellerClient")
 
   @@index([tenantId])
   @@index([tenantId, email])
@@ -826,11 +829,18 @@ model Watch {
   publicDescription          String?            @db.Text
   publicPrice                Decimal?           @db.Decimal(12, 2)
   reservationAmount          Decimal?           @db.Decimal(12, 2)
+  /// Canonical acquisition / purchase date. Prefer over createdAt for age & reporting.
+  acquiredAt                 DateTime?
+  /// Optional seller represented as CRM Client. Does not auto-create clients.
+  sellerClientId             String?
+  /// Durable purchase registration idempotency. Future AI: `ai-action-run:<actionRunId>`.
+  registerIdempotencyKey     String?
   deletedAt                  DateTime?
   createdAt                  DateTime           @default(now())
   updatedAt                  DateTime           @updatedAt
 
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sellerClient           Client?                 @relation("WatchSellerClient", fields: [sellerClientId], references: [id], onDelete: SetNull)
   deals                  Deal[]
   expenses               WatchExpense[]
   images                 WatchImage[]
@@ -839,10 +849,16 @@ model Watch {
   storefrontReservations StorefrontReservation[]
 
   @@unique([tenantId, publicSlug])
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([tenantId, isPublished])
   @@index([tenantId, deletedAt])
+  @@index([tenantId, acquiredAt])
+  @@index([tenantId, sellerClientId])
+  /// Active non-null serial uniqueness is enforced by partial unique index
+  /// `watches_tenantId_serialNumber_active_key` in migration SQL
+  /// (WHERE serialNumber IS NOT NULL AND deletedAt IS NULL).
   @@map("watches")
 }
 

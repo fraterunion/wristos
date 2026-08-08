@@ -17,6 +17,7 @@ import { CreateWatchImageDto } from './dto/create-watch-image.dto';
 import { ListWatchesDto } from './dto/list-watches.dto';
 import { UpdateWatchDto } from './dto/update-watch.dto';
 import { UpdateWatchImageDto } from './dto/update-watch-image.dto';
+import { PurchaseRegistrationService } from './purchase-registration.service';
 import {
   isValidPublicSlug,
   normalizePublicSlug,
@@ -36,6 +37,7 @@ export class InventoryService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly fxService: FxService,
+    private readonly purchaseRegistration: PurchaseRegistrationService,
   ) {}
 
   async create(tenantId: string, dto: CreateWatchDto) {
@@ -50,7 +52,7 @@ export class InventoryService {
       brand: dto.brand,
       model: dto.model,
       reference: dto.reference?.trim() || null,
-      serialNumber: dto.serialNumber,
+      serialNumber: dto.serialNumber?.trim() ? dto.serialNumber.trim() : null,
       imageUrl: dto.imageUrl ?? null,
       condition: dto.condition,
       cost: canonicalCost,
@@ -76,6 +78,19 @@ export class InventoryService {
     const status = dto.status ?? WatchStatus.AVAILABLE;
     this.applyPublishFieldsToCreate(data, dto, status);
 
+    const serial = data.serialNumber as string | null;
+    if (serial) {
+      const dup = await this.prisma.watch.findFirst({
+        where: { tenantId, deletedAt: null, serialNumber: serial },
+        select: { id: true },
+      });
+      if (dup) {
+        throw new ConflictException(
+          `A watch with serial "${serial}" already exists in inventory`,
+        );
+      }
+    }
+
     let watch: WatchWithExpenses;
     try {
       watch = await this.prisma.watch.create({
@@ -84,6 +99,7 @@ export class InventoryService {
       });
     } catch (error) {
       this.rethrowPublicSlugConflict(error);
+      this.rethrowSerialConflict(error, serial);
       throw error;
     }
     return this.serializeWatch(watch);
@@ -249,11 +265,25 @@ export class InventoryService {
     return this.serializeWatch(watch);
   }
 
+  /**
+   * Soft-delete inventory Watch.
+   * Canonical purchases (Treasury / PURCHASE_AUTO provenance) → PurchaseRegistrationService.reverse.
+   * Legacy inventory-only watches → soft-delete Watch only (no fabricated financial unwind).
+   */
   async remove(id: string, tenantId: string) {
     const existing = await this.prisma.watch.findFirst({
       where: { id, tenantId, deletedAt: null },
     });
     if (!existing) throw new NotFoundException('Watch not found');
+
+    const markers = await this.purchaseRegistration.getCanonicalPurchaseMarkers(
+      tenantId,
+      id,
+    );
+    if (markers.isCanonical) {
+      await this.purchaseRegistration.reverse(tenantId, id);
+      return;
+    }
 
     await this.prisma.watch.update({
       where: { id },
@@ -666,6 +696,27 @@ export class InventoryService {
     }
   }
 
+  private rethrowSerialConflict(error: unknown, serial: string | null): void {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      const target = error.meta?.target;
+      const fields = Array.isArray(target) ? target.map(String) : [String(target ?? '')];
+      const blob = fields.join(',');
+      if (
+        blob.includes('serialNumber') ||
+        blob.includes('watches_tenantId_serialNumber_active_key')
+      ) {
+        throw new ConflictException(
+          serial
+            ? `A watch with serial "${serial}" already exists in inventory`
+            : 'A watch with this serial already exists in inventory',
+        );
+      }
+    }
+  }
+
   private serializeWatch(watch: WatchWithExpenses) {
     return {
       id: watch.id,
@@ -695,6 +746,8 @@ export class InventoryService {
       publicDescription: watch.publicDescription,
       publicPrice: watch.publicPrice?.toString() ?? null,
       reservationAmount: watch.reservationAmount?.toString() ?? null,
+      acquiredAt: watch.acquiredAt?.toISOString() ?? null,
+      sellerClientId: watch.sellerClientId ?? null,
       expenses: watch.expenses.map((e) => this.serializeExpense(e)),
       createdAt: watch.createdAt.toISOString(),
       updatedAt: watch.updatedAt.toISOString(),
