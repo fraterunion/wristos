@@ -349,15 +349,15 @@ export class ClientUpdateService {
         id: { not: clientId },
         email: { equals: email, mode: 'insensitive' },
       },
-      select: { id: true, name: true },
+      select: { id: true },
     });
     if (clash) {
       throw new ConflictException({
         code: 'CLIENT_EXACT_DUPLICATE',
         message: 'Otro cliente activo ya usa ese correo.',
         matchField: 'email',
+        // No raw competing email / name in error payloads (privacy).
         existingClientId: clash.id,
-        existingClientName: clash.name,
       });
     }
     const deleted = await this.prisma.client.findFirst({
@@ -367,7 +367,7 @@ export class ClientUpdateService {
         id: { not: clientId },
         email: { equals: email, mode: 'insensitive' },
       },
-      select: { id: true, name: true },
+      select: { id: true },
     });
     if (deleted) {
       throw new ConflictException({
@@ -376,7 +376,6 @@ export class ClientUpdateService {
           'Existe un cliente eliminado con ese correo. Restáuralo desde CRM; no se reasigna automáticamente.',
         matchField: 'email',
         existingClientId: deleted.id,
-        existingClientName: deleted.name,
       });
     }
   }
@@ -386,7 +385,7 @@ export class ClientUpdateService {
     if (!key) return;
     const others = await this.prisma.client.findMany({
       where: { tenantId, id: { not: clientId }, phone: { not: null } },
-      select: { id: true, name: true, phone: true, deletedAt: true },
+      select: { id: true, phone: true, deletedAt: true },
     });
     const activeClash = others.find(
       (c) => !c.deletedAt && clientPhoneIdentityKey(c.phone) === key,
@@ -397,7 +396,6 @@ export class ClientUpdateService {
         message: 'Otro cliente activo ya usa ese teléfono.',
         matchField: 'phone',
         existingClientId: activeClash.id,
-        existingClientName: activeClash.name,
       });
     }
     const deletedClash = others.find(
@@ -410,7 +408,6 @@ export class ClientUpdateService {
           'Existe un cliente eliminado con ese teléfono. Restáuralo desde CRM; no se reasigna automáticamente.',
         matchField: 'phone',
         existingClientId: deletedClash.id,
-        existingClientName: deletedClash.name,
       });
     }
   }

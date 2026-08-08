@@ -8,6 +8,12 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { z } from 'zod';
 import { DeleteConfirmDialog } from '@/components/inventory/DeleteConfirmDialog';
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '@/lib/api-client';
+import {
+  buildClientUpdatePatch,
+  clientToEditBaseline,
+  isClientStaleError,
+  type ClientEditBaseline,
+} from '@/lib/crm-client-edit-patch';
 import { listAccountEntries } from '@/lib/cuentas-api';
 import { queryKeys } from '@/lib/query-keys';
 import type { Client, ClientInteraction, ClientPreference, Deal, DealStage, Watch } from '@/types/domain';
@@ -354,6 +360,7 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
 
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [clientModalMode, setClientModalMode] = useState<'create' | 'edit'>('create');
+  const [editBaseline, setEditBaseline] = useState<ClientEditBaseline | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -479,6 +486,7 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
   useEffect(() => {
     if (searchParams.get('action') !== 'create') return;
     setClientModalMode('create');
+    setEditBaseline(null);
     clientForm.reset({ name: '', email: '', phone: '', notes: '', tagsInput: '', budgetRange: '' });
     setClientModalOpen(true);
     router.replace(pathname, { scroll: false });
@@ -517,49 +525,104 @@ export default function CrmWorkspace({ initialClientId }: { initialClientId?: st
 
   const openCreateModal = () => {
     setClientModalMode('create');
+    setEditBaseline(null);
     clientForm.reset({ name: '', email: '', phone: '', notes: '', tagsInput: '', budgetRange: '' });
     setClientModalOpen(true);
+  };
+
+  const fillEditForm = (client: Client) => {
+    setEditBaseline(clientToEditBaseline(client));
+    clientForm.reset({
+      name: client.name,
+      email: client.email ?? '',
+      phone: client.phone ?? '',
+      notes: client.notes ?? '',
+      tagsInput: client.tags?.join(', ') ?? '',
+      budgetRange: client.budgetRange ?? '',
+    });
   };
 
   const openEditModal = () => {
     if (!selectedClient) return;
     setClientModalMode('edit');
-    clientForm.reset({
-      name: selectedClient.name,
-      email: selectedClient.email ?? '',
-      phone: selectedClient.phone ?? '',
-      notes: selectedClient.notes ?? '',
-      tagsInput: selectedClient.tags?.join(', ') ?? '',
-      budgetRange: selectedClient.budgetRange ?? '',
-    });
+    fillEditForm(selectedClient);
     setClientModalOpen(true);
   };
 
   const submitClient = clientForm.handleSubmit(async (values) => {
-    const payload = {
-      name: values.name.trim(),
-      email: values.email?.trim() || (clientModalMode === 'edit' ? null : undefined),
-      phone: values.phone?.trim() || (clientModalMode === 'edit' ? null : undefined),
-      notes: values.notes?.trim() || (clientModalMode === 'edit' ? null : undefined),
-      tags: parseList(values.tagsInput),
-      budgetRange: values.budgetRange?.trim() || (clientModalMode === 'edit' ? null : undefined),
-    };
-
     try {
       if (clientModalMode === 'create') {
+        const payload = {
+          name: values.name.trim(),
+          email: values.email?.trim() || undefined,
+          phone: values.phone?.trim() || undefined,
+          notes: values.notes?.trim() || undefined,
+          tags: parseList(values.tagsInput),
+          budgetRange: values.budgetRange?.trim() || undefined,
+        };
         const created = await apiPost<Client>('/crm/clients', payload, { authenticated: true });
         setFlash({ type: 'success', message: 'Cliente creado correctamente.' });
         setClientModalOpen(false);
+        setEditBaseline(null);
         await loadClients();
         setSelectedClientId(created.id);
-      } else if (selectedClientId) {
-        await apiPatch<Client>(`/crm/clients/${selectedClientId}`, payload, { authenticated: true });
-        setFlash({ type: 'success', message: 'Cliente actualizado correctamente.' });
+        return;
+      }
+
+      if (!selectedClientId || !editBaseline) {
+        setFlash({
+          type: 'error',
+          message: 'No se pudo guardar: recarga el cliente e inténtalo de nuevo.',
+        });
+        return;
+      }
+
+      const diff = buildClientUpdatePatch(editBaseline, {
+        name: values.name,
+        email: values.email,
+        phone: values.phone,
+        notes: values.notes,
+        tags: parseList(values.tagsInput),
+        budgetRange: values.budgetRange,
+      });
+
+      if (diff.noop) {
+        setFlash({ type: 'success', message: 'Sin cambios que guardar.' });
         setClientModalOpen(false);
+        setEditBaseline(null);
+        return;
+      }
+
+      await apiPatch<Client>(`/crm/clients/${selectedClientId}`, diff.body, {
+        authenticated: true,
+      });
+      setFlash({ type: 'success', message: 'Cliente actualizado correctamente.' });
+      setClientModalOpen(false);
+      setEditBaseline(null);
+      await loadClients();
+      await loadClientDetails(selectedClientId);
+    } catch (error) {
+      if (error instanceof ApiError && isClientStaleError(error) && selectedClientId) {
+        setFlash({
+          type: 'error',
+          message:
+            'Este cliente cambió mientras lo estabas editando. Recarga la información y vuelve a intentarlo.',
+        });
         await loadClients();
         await loadClientDetails(selectedClientId);
+        const refreshed = await apiGet<Client>(`/crm/clients/${selectedClientId}`, {
+          authenticated: true,
+        }).catch(() => null);
+        if (refreshed) {
+          fillEditForm(refreshed);
+          setClientModalMode('edit');
+          setClientModalOpen(true);
+        } else {
+          setClientModalOpen(false);
+          setEditBaseline(null);
+        }
+        return;
       }
-    } catch (error) {
       setFlash({
         type: 'error',
         message: error instanceof ApiError ? error.message : 'Error al guardar el cliente.',

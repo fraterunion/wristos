@@ -86,7 +86,17 @@ export class CrmService {
     return this.serializeClient(client);
   }
 
+  /**
+   * Interactive CRM PATCH — always CAS on expectedUpdatedAt.
+   * Domain ClientUpdateService.update() still allows omitting the token for
+   * controlled server workflows (e.g. appendNotes helpers that supply it themselves).
+   */
   async updateClient(id: string, tenantId: string, dto: UpdateClientDto) {
+    if (!dto.expectedUpdatedAt) {
+      throw new BadRequestException(
+        'expectedUpdatedAt is required for client updates',
+      );
+    }
     const result = await this.clientUpdate.update(
       tenantId,
       id,

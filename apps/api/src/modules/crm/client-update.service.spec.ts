@@ -272,5 +272,21 @@ describe('ClientUpdateService', () => {
     const result = await service.update('t1', 'c1', { name: '  José Hernández  ' });
     expect(result.noop).toBe(true);
     expect(prisma.client.update).not.toHaveBeenCalled();
+    expect(prisma.client.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('noop does not bump updatedAt when email already matches', async () => {
+    const { service, row, prisma } = build();
+    row.email = 'ana@x.com';
+    const before = row.updatedAt.toISOString();
+    const result = await service.update(
+      't1',
+      'c1',
+      { email: 'Ana@X.com' },
+      { expectedUpdatedAt: before },
+    );
+    expect(result.noop).toBe(true);
+    expect(row.updatedAt.toISOString()).toBe(before);
+    expect(prisma.client.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,11 @@
 # UPDATE_CLIENT — Canonical Domain Gate (Commit 19A)
 
-Status: **DOMAIN READY — AI UNBOUND**  
-Canonical command: `ClientUpdateService.update()`  
-HTTP (manual): `PATCH /api/crm/clients/:id` → `CrmService.updateClient` → update service  
+Status: **DOMAIN READY — AI UNBOUND** (concurrency gate closed)
+
+Canonical command: `ClientUpdateService.update()`
+
+HTTP (manual): `PATCH /api/crm/clients/:id` → `CrmService.updateClient` → update service (**requires** `expectedUpdatedAt`)
+
 AI binding: **none** (must remain non-executable until Commit 19B+)
 
 Executable AI writes remain exactly **five**:
@@ -15,22 +18,22 @@ Executable AI writes remain exactly **five**:
 
 `UPDATE_CLIENT` must not appear in the write-capability registry until an explicit later commit.
 
-Schema gate: **NO MIGRATION** for 19A. Optimistic concurrency uses existing `Client.updatedAt` CAS (`expectedUpdatedAt`). No Client-level update idempotency column required — ActionRun lifecycle + naturally idempotent patches + optional `updatedAt` fingerprint cover future AI recovery.
+Schema gate: **NO MIGRATION**. Optimistic concurrency uses existing `Client.updatedAt` CAS (`expectedUpdatedAt`).
 
 ---
 
-## 1. Manual update audit (pre-19A → 19A)
+## 1. Manual update audit
 
-| Path | Before | After 19A |
-|---|---|---|
-| `PATCH /crm/clients/:id` | `CrmService.updateClient` + direct Prisma | **Delegates** → `ClientUpdateService.update()` |
-| CRM Admin edit modal | `apiPatch(/crm/clients/:id)` full form payload | Unchanged caller; canonical server path |
-| Ventas / storefront | create-only (registration); no client edit | N/A |
-| Soft-delete | `CrmService.deleteClient` sets `deletedAt` | Separate command (not UPDATE_CLIENT) |
-| Preferences / interactions | Separate endpoints | Out of UPDATE_CLIENT scope |
-| Imports / seeds | Direct Prisma exceptions | Documented offline tools |
+| Path | Behavior |
+|---|---|
+| `PATCH /crm/clients/:id` | Delegates → `ClientUpdateService.update()` with **required** `expectedUpdatedAt` |
+| CRM Admin edit modal | Captures `updatedAt` baseline; sends **changed fields only** + `expectedUpdatedAt` |
+| Ventas / storefront | Create/register only — no client edit |
+| Soft-delete | Separate `deleteClient` |
+| Preferences / interactions | Separate endpoints — out of scope |
+| Imports / seeds | Direct Prisma exceptions (offline tools) |
 
-No other `prisma.client.update` in API application code except soft-delete.
+Callers of PATCH: **CRM Admin UI only** (no other app integrations). Domain `ClientUpdateService.update()` still allows omitting `expectedUpdatedAt` for controlled server helpers (`appendNotes` / `addTags` / `removeTags` always supply CAS themselves).
 
 ---
 
@@ -44,8 +47,6 @@ No other `prisma.client.update` in API application code except soft-delete.
 
 ## 3. Editable / immutable fields (V1)
 
-Editable:
-
 | Field | Clearable | Notes |
 |---|---|---|
 | `name` | no (required) | trim + collapse whitespace; accents preserved |
@@ -53,16 +54,13 @@ Editable:
 | `phone` | yes → `null` | MX canonical normalizer |
 | `notes` | yes → `null` | single string; replace or append helpers |
 | `tags` | yes → `[]` | full-array replace; add/remove helpers |
-| `budgetRange` | yes → `null` | free string trimmed (no separate enum column) |
+| `budgetRange` | yes → `null` | free string trimmed |
 
-Immutable via this command:
-
-- `id`, `tenantId`, `registerIdempotencyKey`, `createdAt`, `deletedAt`
-- all relations (deals, account entries, watches as seller, etc.)
+Immutable: `id`, `tenantId`, `registerIdempotencyKey`, `createdAt`, `deletedAt`, relations.
 
 ---
 
-## 4. Patch / clear semantics
+## 4. Patch / clear / changed-fields policy
 
 | Input | Effect |
 |---|---|
@@ -70,103 +68,141 @@ Immutable via this command:
 | optional field `null` or `''` | clear to `null` (tags → `[]` if provided empty array) |
 | provided non-empty | normalize + set if different |
 
-Partial patches must not erase omitted fields. CRM UI currently sends full form (clears blank optional fields intentionally).
+**Manual CRM:** builds a deterministic diff vs edit baseline; sends only changed fields + `expectedUpdatedAt`. No-op form → no PATCH.
+
+**Interactive HTTP:** `expectedUpdatedAt` is required (DTO + service guard). Missing → `400 BadRequest`.
 
 ---
 
 ## 5. Notes policy
 
-Storage: single `Client.notes` string (no history table).
-
-Domain API:
-
 - `update({ notes })` → **replace**
-- `appendNotes(addition)` → append `\n` + trimmed line (uses `updatedAt` CAS)
-- Future AI “agrégale una nota” → `appendNotes`, not blind replace
+- `appendNotes(addition)` → append `\n` + trimmed line with `updatedAt` CAS
+- Future AI “agrégale una nota” → `appendNotes`
+
+Stale form after concurrent append → `CLIENT_STALE` (does not restore old notes).
 
 ---
 
 ## 6. Tags policy
 
-Storage: `String[]` full replace under the hood.
+- `update({ tags })` → full-array replace (manual UI + CAS)
+- `addTags` / `removeTags` → RMW + CAS
 
-Domain API:
-
-- `update({ tags })` → replace
-- `addTags` / `removeTags` → read-modify-write with `updatedAt` CAS
-- Future AI “quita el tag VIP” → `removeTags`
+Stale full-array replacement after concurrent add → `CLIENT_STALE`.
 
 ---
 
 ## 7. Identity collision
 
-When changing email/phone to a new non-null identity:
+1. Active clash → `CLIENT_EXACT_DUPLICATE`
+2. Soft-deleted clash → `CLIENT_DELETED_MATCH`
+3. DB indexes authoritative under concurrency → typed conflict (no raw P2002)
 
-1. Pre-check active clash → `CLIENT_EXACT_DUPLICATE`
-2. Pre-check soft-deleted clash → `CLIENT_DELETED_MATCH` (no reassignment)
-3. DB partial unique indexes remain authoritative under concurrency → typed conflict, not raw P2002
-
-No merge / overwrite of the other Client’s identity.
-
-Formatting-equivalent phones/emails collide (same normalizers as CREATE).
+Error payloads: typed `code` / `matchField` / `existingClientId` only — **no** raw competing email/phone/notes/name.
 
 ---
 
 ## 8. Soft-deleted Client
 
-`update()` loads `deletedAt: null` only → **NotFound**.
-
-No hidden restore. Restore is a future `RESTORE_CLIENT` capability.
+`deletedAt: null` only → soft-deleted target is **NotFound**. No hidden restore.
 
 ---
 
-## 9. Concurrency / lost updates
+## 9. Manual UI CAS architecture
 
-| Scenario | Behavior |
+Proven pre-fix gap (domain without `expectedUpdatedAt`):
+
+1. Editors A & B load Client at `updatedAt=T1` (`notes=OLD`, `phone=A`)
+2. B sets `notes=NEW`
+3. A submits full form `{ phone: B, notes: OLD }` without CAS
+4. **Result:** notes return to `OLD` (lost update)
+
+**Closed for interactive path:**
+
+1. Modal open captures baseline including `updatedAt`
+2. Save sends changed fields + `expectedUpdatedAt`
+3. Backend: `UPDATE ... WHERE tenantId AND id AND deletedAt IS NULL AND updatedAt = expected`
+4. Zero rows → `CLIENT_STALE` (no silent retry / merge)
+
+| Scenario | Interactive (CAS required) |
 |---|---|
-| Concurrent updates of **different** fields | PostgreSQL row updates compose; both columns typically persist |
-| Concurrent / stale updates of **same** field | last-write-wins unless `expectedUpdatedAt` set |
-| Stale preview (AI/manual) | pass `expectedUpdatedAt` → `CLIENT_STALE` if changed |
+| Same-field stale edit | `CLIENT_STALE` |
+| Different-field stale form | `CLIENT_STALE` |
+| Fresh edit with matching token | succeeds |
+| Two fresh reads, first wins | second → `CLIENT_STALE` or identity conflict |
 
-No `version` integer column required for V1. `updatedAt` CAS is sufficient for future AI freshness.
+### CLIENT_STALE UX (Admin)
+
+Message: *“Este cliente cambió mientras lo estabas editando. Recarga la información y vuelve a intentarlo.”*
+
+UI refetches Client and refreshes the edit form baseline — does **not** auto-overwrite.
 
 ---
 
-## 10. Recovery / idempotency (future AI)
+## 10. Conflict precedence
+
+When a save could be both stale and identity-conflicting:
+
+1. **Freshness first** (`expectedUpdatedAt` vs current `updatedAt`) → `CLIENT_STALE`
+2. Then identity pre-check / DB unique → `CLIENT_EXACT_DUPLICATE` / `CLIENT_DELETED_MATCH`
+
+Documented outcome for tests: stale token never proceeds to identity mutation.
+
+---
+
+## 11. No-op semantics
+
+If the normalized patch equals current values → `{ noop: true, changedFields: [] }` without bumping `updatedAt`.
+
+---
+
+## 12. Future AI freshness contract (19B design)
+
+Plan must capture:
+
+- trusted `clientId`
+- `expectedUpdatedAt` at planning/preview time
+- canonical old-state hashes
+- canonical patch
+
+Confirm path: `ClientUpdateService.update(..., { expectedUpdatedAt })` — **always**.
+
+---
+
+## 13. Post-commit recovery limitation (critical for 19B)
 
 CREATE’s `registerIdempotencyKey` does **not** apply to UPDATE.
 
-19A assessment:
+**Safe V1 recovery (no schema):**
 
-- WritePlanRunner ActionRun CAS already prevents double execution for the same ActionRun
-- Identical patch re-apply is naturally idempotent (`noop` when values already match)
-- Crash after Client commit + failed runtime completion: retry can re-read Client, verify expected field values / `updatedAt`, reconstruct receipt — **no second durable marker required**
+| Situation | Policy |
+|---|---|
+| ActionRun EXECUTING → Client commit → runtime fails; **intended fields still equal desired values** | May reconstruct success (A) |
+| Same, but a **later third-party mutation** changed an intended field (e.g. phone B→C) | **Must not** claim AI success from final entity state (B — ambiguous / re-preview) |
+| Durable per-mutation marker | Not in 19A; would be **TYPE C** if required later (C) |
 
-If 19B discovers a gap that needs a Client mutation marker: TYPE C schema gate then.
+Proven: after AI commits phone→B then operator sets phone→C, retry with original plan fingerprint is `CLIENT_STALE` and current phone ≠ intended — recovery must not invent success.
 
----
-
-## 11. Permissions
-
-Same as manual CRM: JWT tenant membership (`JwtAuthGuard`). Cross-tenant id → NotFound. Do not broaden for AI.
+No Client update idempotency column in 19A.
 
 ---
 
-## 12. Privacy / audit (future AI)
+## 14. Permissions
 
-Allowed metadata: `clientId` hash, `changedFields[]`, old/new value hashes, `hasEmail`/`hasPhone`, capability, result hash, recovered, duration.
-
-Do **not** put raw name/phone/email/notes/tags in telemetry/audit. CRM row remains the PII store.
+JWT tenant membership. Cross-tenant → NotFound.
 
 ---
 
-## 13. Future AI contract (design only — not implemented)
+## 15. Privacy / audit
 
-Flow:
+Allowed: `clientId` hash, `changedFields[]`, old/new value hashes, `hasEmail`/`hasPhone`, capability, result hash, recovered, duration, typed error codes.
 
-NL → resolve trusted `clientId` → plan patch → preview (masked old → new) → confirm → `ClientUpdateService.update(..., { expectedUpdatedAt })`.
+Do **not** put raw name/phone/email/notes/tags (or competing Client names) in telemetry or conflict payloads.
 
-Preview sketch:
+---
+
+## 16. Future AI preview (design only)
 
 ```
 Voy a actualizar este cliente:
@@ -181,16 +217,9 @@ Movimientos financieros  Sin cambios
 Primary: Guardar cambios
 ```
 
-Examples (19B+):
-
-- “Cámbiale el teléfono a José…” → phone patch + CAS
-- “Ponle ana@nueva.com” → email collision gate
-- “Agrégale una nota…” → `appendNotes`
-- “Quita el tag VIP” → `removeTags`
-
 ---
 
-## 14. Out of scope
+## 17. Out of scope
 
 - DELETE_CLIENT / RESTORE_CLIENT / MERGE_CLIENT AI
 - Automatic composition with sale/purchase
@@ -200,24 +229,17 @@ Examples (19B+):
 
 ---
 
-## 15. Rollout / blockers before 19B
+## 18. Rollout / blockers before 19B
 
-19A merge: TYPE B (API) (+ docs). No migrate.
+19A merge: **TYPE B** (API + Admin) + docs. No migrate.
 
 Blockers before AI UPDATE_CLIENT:
 
-1. Bind `UPDATE_CLIENT` once in write registry (sixth write)
-2. Entity resolver + probable/unique Client picker
-3. Preview masking + confirmation CTA “Guardar cambios”
-4. Persist `expectedUpdatedAt` in plan fingerprint
-5. Frontend success allowlist + fail-closed
-6. Telemetry funnel for sixth write
-7. Confirm still exactly five writes until 19B ships
-
----
-
-## 16. Create-anyway / delete policy reminder
-
-Exact identity conflicts: **no override**.  
-Deleted identity: **no update reassignment**.  
-Soft-deleted target: **not editable** via UPDATE_CLIENT.
+1. Bind `UPDATE_CLIENT` as sixth write
+2. Entity resolver + Client picker
+3. Preview masking + confirmation CTA
+4. Persist `expectedUpdatedAt` + old-state hashes in plan fingerprint
+5. Recovery policy: success only if intended fields still match; else ambiguous / re-preview
+6. Frontend success allowlist + fail-closed
+7. Telemetry for sixth write
+8. Keep five writes until 19B ships

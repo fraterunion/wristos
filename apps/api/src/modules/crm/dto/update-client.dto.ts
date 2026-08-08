@@ -43,8 +43,11 @@ export class UpdateClientDto {
   @IsString()
   budgetRange?: string | null;
 
-  /** Optional optimistic concurrency token (ISO Client.updatedAt). */
-  @IsOptional()
+  /**
+   * Required for interactive CRM PATCH (optimistic concurrency).
+   * ISO Client.updatedAt captured when the editor loaded the row.
+   */
   @IsDateString()
-  expectedUpdatedAt?: string;
+  @IsNotEmpty()
+  expectedUpdatedAt!: string;
 }
