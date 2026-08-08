@@ -33,6 +33,10 @@ import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto
 import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
 import { isHistoricalDealSourceTag } from './historical-ar-exclusion';
+import {
+  ReceivablePaymentService,
+  toReceivableDestination,
+} from './receivable-payment.service';
 
 type SettlementPaymentLinks = {
   settlementAsReceivablePayment: (AccountSettlement & {
@@ -77,6 +81,7 @@ export class CuentasService {
     private readonly prisma: PrismaService,
     private readonly fxService: FxService,
     private readonly treasuryService: TreasuryService,
+    private readonly receivablePayments: ReceivablePaymentService,
   ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -588,11 +593,41 @@ export class CuentasService {
     actorUserId?: string,
   ) {
     const destination = this.resolvePaymentDestination(dto);
+
+    // RECEIVABLE (received money + APPLY_TO_PAYABLE) → canonical ReceivablePaymentService.
+    // Settlement path is receivable-only; treasury receivable path uses durable registerIdempotencyKey.
     if (destination === AccountPaymentDestination.APPLY_TO_PAYABLE) {
-      return this.createPayableSettlement(entryId, tenantId, dto, actorUserId);
+      const result = await this.receivablePayments.register(tenantId, {
+        receivableEntryId: entryId,
+        amount: dto.amount,
+        destination: 'APPLY_TO_PAYABLE',
+        payableEntryId: dto.payableEntryId,
+        paymentDate: new Date(dto.paidAt),
+        notes: dto.notes,
+        currency: dto.currency,
+        registerIdempotencyKey: dto.registerIdempotencyKey ?? dto.idempotencyKey,
+        actorUserId,
+      });
+      return this.buildSettlementResponse(result.settlement!.id, tenantId);
     }
 
     const entry = await this.findEntryOrThrow(entryId, tenantId);
+    if (entry.type === AccountEntryType.RECEIVABLE) {
+      await this.receivablePayments.register(tenantId, {
+        receivableEntryId: entryId,
+        amount: dto.amount,
+        destination: toReceivableDestination(destination),
+        paymentDate: new Date(dto.paidAt),
+        notes: dto.notes,
+        currency: dto.currency,
+        exchangeRateUsed: dto.exchangeRateUsed,
+        registerIdempotencyKey: dto.registerIdempotencyKey ?? dto.idempotencyKey,
+        actorUserId,
+      });
+      return this.findEntry(entryId, tenantId);
+    }
+
+    // PAYABLE treasury outflow (supplier payment) — atomic AccountPayment + Treasury.
     this.assertManualEntry(entry);
 
     const currency = dto.currency ?? entry.currency;
@@ -612,33 +647,36 @@ export class CuentasService {
       );
     }
 
-    const payment = await this.prisma.accountPayment.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        entry: { connect: { id: entryId } },
-        amount,
-        currency,
-        method,
-        paidAt: new Date(dto.paidAt),
-        notes: dto.notes,
-        cashAccount,
-        exchangeRateUsed:
-          currency === Currency.USD && dto.exchangeRateUsed !== undefined
-            ? new Prisma.Decimal(dto.exchangeRateUsed)
-            : null,
-      },
-    });
+    await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.accountPayment.create({
+        data: {
+          tenantId,
+          entryId,
+          amount,
+          currency,
+          method,
+          paidAt: new Date(dto.paidAt),
+          notes: dto.notes,
+          cashAccount,
+          exchangeRateUsed:
+            currency === Currency.USD && dto.exchangeRateUsed !== undefined
+              ? new Prisma.Decimal(dto.exchangeRateUsed)
+              : null,
+        },
+      });
 
-    await this.treasuryService.createFromAccountPayment({
-      tenantId,
-      accountPaymentId: payment.id,
-      account: cashAccount,
-      direction: this.treasuryDirectionForEntry(entry.type),
-      amount: payment.amount,
-      currency: payment.currency,
-      exchangeRateUsed: payment.exchangeRateUsed,
-      transactionDate: payment.paidAt,
-      description: this.treasuryDescriptionForEntry(entry),
+      await this.treasuryService.createFromAccountPayment({
+        tenantId,
+        accountPaymentId: payment.id,
+        account: cashAccount,
+        direction: this.treasuryDirectionForEntry(entry.type),
+        amount: payment.amount,
+        currency: payment.currency,
+        exchangeRateUsed: payment.exchangeRateUsed,
+        transactionDate: payment.paidAt,
+        description: this.treasuryDescriptionForEntry(entry),
+        tx,
+      });
     });
 
     return this.findEntry(entryId, tenantId);
@@ -757,12 +795,13 @@ export class CuentasService {
       return this.reverseSettlement(linkedSettlement.id, tenantId);
     }
 
-    await this.prisma.accountPayment.update({
-      where: { id: paymentId },
-      data: { deletedAt: new Date() },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.accountPayment.update({
+        where: { id: paymentId },
+        data: { deletedAt: new Date() },
+      });
+      await this.treasuryService.deleteByAccountPaymentId(paymentId, tx);
     });
-
-    await this.treasuryService.deleteByAccountPaymentId(paymentId);
 
     return this.findEntry(entryId, tenantId);
   }

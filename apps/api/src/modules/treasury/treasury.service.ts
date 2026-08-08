@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
 } from '@nestjs/common';
 import {
@@ -25,7 +24,14 @@ export type CreateFromAccountPaymentArgs = {
   exchangeRateUsed?: CoercibleDecimal | null;
   transactionDate: Date;
   description?: string | null;
+  /** Optional transaction client for atomic AccountPayment + Treasury registration. */
+  tx?: Prisma.TransactionClient;
 };
+
+/** Provenance for account-payment treasury inflow/outflow (recovery / audit). */
+export function accountPaymentProvenanceKey(accountPaymentId: string): string {
+  return `account-payment:${accountPaymentId}`;
+}
 
 export type CreateFromDealPaymentArgs = {
   tenantId: string;
@@ -101,14 +107,21 @@ export class TreasuryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createFromAccountPayment(args: CreateFromAccountPaymentArgs) {
-    const existing = await this.prisma.treasuryEntry.findUnique({
-      where: { accountPaymentId: args.accountPaymentId },
+    const db: DbClient = args.tx ?? this.prisma;
+    const provenanceKey = accountPaymentProvenanceKey(args.accountPaymentId);
+
+    const existing = await db.treasuryEntry.findFirst({
+      where: {
+        OR: [
+          { accountPaymentId: args.accountPaymentId },
+          { tenantId: args.tenantId, provenanceKey },
+        ],
+      },
     });
 
     if (existing && existing.deletedAt === null) {
-      throw new ConflictException(
-        'Treasury entry already exists for this account payment',
-      );
+      // Idempotent replay inside an outer register() transaction.
+      return existing;
     }
 
     const { amount, amountMxn, exchangeRate } = this.resolveAmounts(
@@ -128,17 +141,37 @@ export class TreasuryService {
       transactionDate: args.transactionDate,
       description: args.description ?? null,
       accountPaymentId: args.accountPaymentId,
+      provenanceKey,
       deletedAt: null,
     };
 
     if (existing) {
-      return this.prisma.treasuryEntry.update({
+      return db.treasuryEntry.update({
         where: { id: existing.id },
         data,
       });
     }
 
-    return this.prisma.treasuryEntry.create({ data });
+    try {
+      return await db.treasuryEntry.create({ data });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await db.treasuryEntry.findFirst({
+          where: {
+            OR: [
+              { accountPaymentId: args.accountPaymentId },
+              { tenantId: args.tenantId, provenanceKey },
+            ],
+            deletedAt: null,
+          },
+        });
+        if (raced) return raced;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -350,8 +383,12 @@ export class TreasuryService {
     });
   }
 
-  async deleteByAccountPaymentId(accountPaymentId: string) {
-    const existing = await this.prisma.treasuryEntry.findFirst({
+  async deleteByAccountPaymentId(
+    accountPaymentId: string,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db: DbClient = tx ?? this.prisma;
+    const existing = await db.treasuryEntry.findFirst({
       where: { accountPaymentId, deletedAt: null },
     });
 
@@ -359,7 +396,7 @@ export class TreasuryService {
       return null;
     }
 
-    return this.prisma.treasuryEntry.update({
+    return db.treasuryEntry.update({
       where: { id: existing.id },
       data: { deletedAt: new Date() },
     });

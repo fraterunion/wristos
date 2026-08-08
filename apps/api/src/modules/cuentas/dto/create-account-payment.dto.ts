@@ -67,9 +67,22 @@ export class CreateAccountPaymentDto {
   @IsString()
   payableEntryId?: string;
 
+  /**
+   * Settlement idempotency (APPLY_TO_PAYABLE → AccountSettlement.idempotencyKey).
+   * Prefer `registerIdempotencyKey` for new callers; both map to the same settlement key.
+   */
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
+
+  /**
+   * Durable registration idempotency:
+   * - CASH/BANK/CESAR → AccountPayment.registerIdempotencyKey
+   * - APPLY_TO_PAYABLE → AccountSettlement.idempotencyKey (alias of idempotencyKey)
+   */
+  @IsOptional()
+  @IsString()
+  registerIdempotencyKey?: string;
 
   @IsOptional()
   @Type(() => Number)

@@ -38,6 +38,7 @@ describe('CuentasService.syncDealReceivable — historical exclusion', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
     return { service, prisma, accountEntry };
   }

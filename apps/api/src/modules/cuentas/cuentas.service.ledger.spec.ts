@@ -55,6 +55,7 @@ describe('CuentasService — customer ledger + search/pagination', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
 
     await expect(service.getCustomerLedger('t1', 'foreign-client')).rejects.toThrow(
@@ -98,6 +99,7 @@ describe('CuentasService — customer ledger + search/pagination', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
 
     const ledger = await service.getCustomerLedger('t1', 'c1');
@@ -139,6 +141,7 @@ describe('CuentasService — customer ledger + search/pagination', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
 
     const searched = (await service.listEntries('t1', {
@@ -202,6 +205,7 @@ describe('CuentasService — customer ledger + search/pagination', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
 
     const summary = await service.getSummary('t1');

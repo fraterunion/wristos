@@ -128,6 +128,7 @@ describe('CuentasService — top debtors tenant scope', () => {
         updateFromAccountPayment: jest.fn(),
         deleteByAccountPaymentId: jest.fn(),
       } as never,
+      { register: jest.fn() } as never,
     );
 
     const top = await service.getTopDebtors('t1', 10);

@@ -1585,6 +1585,10 @@ model AccountPayment {
   notes            String?
   cashAccount      TreasuryAccount?
   exchangeRateUsed Decimal?         @db.Decimal(12, 6)
+  /// Durable registration idempotency for received-money payments (CASH/BANK/CESAR).
+  /// Not used for APPLY_TO_PAYABLE settlement legs — those use AccountSettlement.idempotencyKey.
+  /// Future AI ActionRun recovery marker: e.g. `ai-action-run:<actionRunId>`.
+  registerIdempotencyKey String?
   deletedAt        DateTime?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -1595,6 +1599,7 @@ model AccountPayment {
   settlementAsReceivablePayment AccountSettlement? @relation("AccountSettlementReceivablePayment")
   settlementAsPayablePayment    AccountSettlement? @relation("AccountSettlementPayablePayment")
 
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([entryId])
   @@index([tenantId, entryId])
