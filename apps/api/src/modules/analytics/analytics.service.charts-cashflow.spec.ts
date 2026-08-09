@@ -247,6 +247,9 @@ describe('AnalyticsService — Treasury cash flow', () => {
     expect(where.account).toEqual({ in: ['CASH', 'BANK', 'CESAR'] });
     expect(where.transactionDate.gte.toISOString()).toBe('2026-07-01T00:00:00.000Z');
     expect(where.transactionDate.lt.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    expect((where as { NOT?: unknown }).NOT).toEqual({
+      provenanceKey: { startsWith: 'treasury-transfer:' },
+    });
     // Does not query balances or operating expenses
     expect(prisma.operatingExpense.aggregate).not.toHaveBeenCalled();
   });

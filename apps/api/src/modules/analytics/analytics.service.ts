@@ -223,6 +223,10 @@ export class AnalyticsService {
    * Period Treasury cash flow (CASH + BANK + CESAR).
    * Uses amountMxn only — commission is already embedded in OUTFLOW amounts and
    * is informational on INFLOW (gross deposit); never added separately.
+   *
+   * Internal treasury transfers (provenance `treasury-transfer:*`) are excluded:
+   * they move liquidity between accounts with net Δ0 and must not inflate
+   * period inflow/outflow as if they were business cash events.
    */
   async getCashFlow(tenantId: string, period: AnalyticsPeriod) {
     const { start, endExclusive, periodLabel } = buildCalendarPeriodWindow(period);
@@ -234,6 +238,7 @@ export class AnalyticsService {
         deletedAt: null,
         account: { in: ['CASH', 'BANK', 'CESAR'] },
         transactionDate: { gte: start, lt: endExclusive },
+        NOT: { provenanceKey: { startsWith: 'treasury-transfer:' } },
       },
       _sum: { amountMxn: true },
     });
