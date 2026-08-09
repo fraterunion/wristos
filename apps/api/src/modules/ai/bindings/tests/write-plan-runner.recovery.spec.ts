@@ -1016,6 +1016,11 @@ describe('WritePlanRunner REGISTER_TREASURY_TRANSFER dual-leg recovery', () => {
       expect.anything(),
     );
     expect(result.receipt).toBeNull();
+    expect(result.message).toMatch(/transferencia/);
+    expect(result.message).toMatch(/estado interno quedó incompleto/);
+    expect(result.message).not.toMatch(/venta/);
+    expect(result.message).not.toMatch(/compra/);
+    expect(result.message).not.toMatch(/pago/);
   });
 
   it('EXECUTING + neither leg → IN_PROGRESS', async () => {

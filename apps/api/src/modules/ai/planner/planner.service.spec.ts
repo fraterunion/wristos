@@ -179,4 +179,64 @@ describe('PlannerService', () => {
     expect(overpay.missingEntities.some((m) => m.entity === 'amount')).toBe(true);
     expect(planner.plan({ intent: 'REGISTER_PURCHASE', entities: { watch: 'Rolex', cost: '1.00', currency: 'MXN', duplicateSerial: true } }, context).warnings[0]?.code).toBe('DUPLICATE_SERIAL');
   });
+
+  it('REGISTER_TREASURY_TRANSFER rejects zero and negative amounts as non-executable', () => {
+    const base = {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      currency: 'MXN',
+    };
+    for (const amount of [0, -1000, '0', '-1000', '0.00'] as const) {
+      const plan = planner.plan(
+        { intent: 'REGISTER_TREASURY_TRANSFER', entities: { ...base, amount } },
+        context,
+      );
+      expect(plan.state).toBe('NEEDS_CLARIFICATION');
+      expect(plan.preview).toBeNull();
+      expect(plan.executionSteps).toEqual([]);
+      expect(plan.missingEntities.some((m) => m.entity === 'amount')).toBe(true);
+      expect(plan.clarificationQuestions.join(' ')).toMatch(/mayor que cero/);
+    }
+  });
+
+  it('REGISTER_TREASURY_TRANSFER keeps positive amounts executable', () => {
+    const plan = planner.plan(
+      {
+        intent: 'REGISTER_TREASURY_TRANSFER',
+        entities: {
+          sourceAccount: 'BANK',
+          destinationAccount: 'CASH',
+          amount: '200000',
+          currency: 'MXN',
+        },
+      },
+      context,
+    );
+    expect(plan.state).toBe('READY_FOR_CONFIRMATION');
+    expect(plan.preview).not.toBeNull();
+    expect(plan.executionSteps).toHaveLength(1);
+    expect(plan.preview?.estimatedEffects.map((e) => e.description).join(' ')).toMatch(
+      /Sin cambio/,
+    );
+    expect(plan.preview?.estimatedEffects.map((e) => e.description).join(' ')).not.toMatch(
+      /Ingreso|Gasto/,
+    );
+  });
+
+  it('REGISTER_TREASURY_TRANSFER same-account remains non-executable', () => {
+    const plan = planner.plan(
+      {
+        intent: 'REGISTER_TREASURY_TRANSFER',
+        entities: {
+          sourceAccount: 'BANK',
+          destinationAccount: 'BANK',
+          amount: '100000',
+          currency: 'MXN',
+        },
+      },
+      context,
+    );
+    expect(plan.state).toBe('NEEDS_CLARIFICATION');
+    expect(plan.preview).toBeNull();
+  });
 });
