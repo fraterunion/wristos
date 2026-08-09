@@ -1,6 +1,6 @@
 # REGISTER_PAYABLE_PAYMENT — Write Binding (Commit 21B)
 
-Status: **AI write execution implemented locally (Commit 21B)**
+Status: **AI write execution production + Commit 21C hardening (resolver trust + reversed recovery)**
 Domain prerequisite: **Commit 21A deployed** (`PayablePaymentService.register()` / `reverse()`)
 
 ## Product goal
@@ -71,15 +71,17 @@ Server-only: `registerIdempotencyKey = ai-action-run:<actionRunId>`.
 
 ## Resolver / picker
 
-`PayablePaymentEntityResolver`:
+`PayablePaymentEntityResolver` (Commit 21C trust hardening):
 
-- Counterparty → open MANUAL / PURCHASE_AUTO PAYABLE
-- Unique → bind + surface selection
-- Multiple → ENTITY_PICKER (no silent oldest/largest/first)
-- Ordinal / selected ACCOUNT_ENTRY from working context
+- Provider/user `payableEntryId` / `accountId` / aliases are stripped unless they re-validate as an eligible open MANUAL/PURCHASE_AUTO PAYABLE in the actor tenant
+- Trusted sources only: server revalidation, unique open resolution, picker/ordinal after re-check
+- Unique → bind + surface selection (`payableTrustSource`)
+- Multiple → ENTITY_PICKER (no silent oldest/largest/first; no untrusted IDs carried)
+- Stale presented candidates (paid/deleted) → strip → clarify / non-executable
 - Full-payment language (`liquídalo`) → `amount = outstanding` (backend math)
 - Overpay → clarify; no silent cap
 - No CREATE_CLIENT composition
+- Confirm-time freshness remains defense in depth
 
 ## Preview / confirmation
 
@@ -95,8 +97,15 @@ Same ActionRun double/triple confirm → one payment + one OUTFLOW via `AccountP
 ## Recovery
 
 Marker: `AccountPayment.registerIdempotencyKey = ai-action-run:<actionRunId>`.
-Verify payable/amount/source + live Treasury OUTFLOW.
-If payment later soft-deleted/reversed before recovery → `STALE_PAYABLE_PAYMENT_REVERSED` (no false success, no recreate).
+
+Before `IN_PROGRESS`, classify durable marker (Commit 21C):
+
+1. Active payment + Treasury OUTFLOW → recover COMPLETED
+2. Marker exists but payment reversed/deleted → `STALE_PAYABLE_PAYMENT_REVERSED` (ActionRun FAILED/STALE; no re-apply)
+3. Active payment missing Treasury → invariant failure / needs review
+4. No marker → `IN_PROGRESS` only
+
+Copy on reverse: “El pago se registró anteriormente, pero después fue revertido en Cuentas…”
 
 ## Receipt / correction
 

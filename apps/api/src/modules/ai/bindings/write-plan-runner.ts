@@ -58,7 +58,15 @@ type ClaimResult =
   | { kind: 'REPLAY'; run: AIActionRun }
   | { kind: 'OWNED'; run: AIActionRun }
   | { kind: 'RECOVER'; run: AIActionRun; priorStatus: AIActionRunStatus }
-  | { kind: 'IN_PROGRESS'; run: AIActionRun };
+  | { kind: 'IN_PROGRESS'; run: AIActionRun }
+  | { kind: 'PAYABLE_REVERSED'; run: AIActionRun }
+  | { kind: 'PAYABLE_INVARIANT'; run: AIActionRun; code: string };
+
+type PayableMarkerClassification =
+  | { kind: 'ACTIVE' }
+  | { kind: 'REVERSED' }
+  | { kind: 'MISSING_TREASURY' }
+  | { kind: 'NONE' };
 
 export function registerSaleIdempotencyKey(actionRunId: string): string {
   return `ai-action-run:${actionRunId}`;
@@ -162,6 +170,46 @@ export class WritePlanRunner {
         totalLatencyMs: Date.now() - totalStarted,
       });
       return envelope;
+    }
+
+    if (claim.kind === 'PAYABLE_REVERSED') {
+      if (claim.run.status === AIActionRunStatus.EXECUTING) {
+        await this.runtime.failExecution(
+          args.tenantId,
+          args.userId,
+          claim.run.id,
+          'STALE_PAYABLE_PAYMENT_REVERSED',
+          { planFingerprint: args.expectedFingerprint },
+        );
+      }
+      return {
+        actionRun: claim.run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'El pago se registró anteriormente, pero después fue revertido en Cuentas. No voy a volver a aplicarlo automáticamente.',
+        receipt: null,
+        planFingerprint: claim.run.planFingerprint,
+        executableWrite: true,
+        capability: claim.run.intent,
+      };
+    }
+
+    if (claim.kind === 'PAYABLE_INVARIANT') {
+      if (claim.run.status === AIActionRunStatus.EXECUTING) {
+        await this.runtime.failExecution(
+          args.tenantId,
+          args.userId,
+          claim.run.id,
+          claim.code,
+          { planFingerprint: args.expectedFingerprint },
+        );
+      }
+      return this.failureEnvelope(claim.run, claim.code);
     }
 
     if (claim.kind === 'IN_PROGRESS') {
@@ -490,6 +538,60 @@ export class WritePlanRunner {
     }
   }
 
+  /**
+   * REGISTER_PAYABLE_PAYMENT recovery must classify durable markers before IN_PROGRESS.
+   * Active → recover; reversed → typed stale (never re-apply); missing treasury → invariant;
+   * none → caller may return IN_PROGRESS.
+   */
+  private async classifyPayableRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    if (run.intent !== 'REGISTER_PAYABLE_PAYMENT') return null;
+    const marker = await this.inspectPayablePaymentMarker(tenantId, run.id, db);
+    if (marker.kind === 'ACTIVE') {
+      return { kind: 'RECOVER', run, priorStatus: run.status };
+    }
+    if (marker.kind === 'REVERSED') {
+      return { kind: 'PAYABLE_REVERSED', run };
+    }
+    if (marker.kind === 'MISSING_TREASURY') {
+      return {
+        kind: 'PAYABLE_INVARIANT',
+        run,
+        code: 'STALE_PAYABLE_PAYMENT_MISSING_TREASURY',
+      };
+    }
+    return null;
+  }
+
+  private async inspectPayablePaymentMarker(
+    tenantId: string,
+    actionRunId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<PayableMarkerClassification> {
+    const key = registerPayablePaymentIdempotencyKey(actionRunId);
+    const payment = await db.accountPayment.findFirst({
+      where: { tenantId, registerIdempotencyKey: key },
+      select: { id: true, deletedAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!payment) return { kind: 'NONE' };
+    if (payment.deletedAt) return { kind: 'REVERSED' };
+    const treasury = await db.treasuryEntry.findFirst({
+      where: {
+        tenantId,
+        accountPaymentId: payment.id,
+        deletedAt: null,
+        direction: 'OUTFLOW',
+      },
+      select: { id: true },
+    });
+    if (!treasury) return { kind: 'MISSING_TREASURY' };
+    return { kind: 'ACTIVE' };
+  }
+
   private async findCommittedWriteMarker(
     tenantId: string,
     intent: string,
@@ -572,6 +674,12 @@ export class WritePlanRunner {
       }
 
       if (current.status === AIActionRunStatus.EXECUTING) {
+        const payableClaim = await this.classifyPayableRecoveryClaim(
+          args.tenantId,
+          current,
+          tx,
+        );
+        if (payableClaim) return payableClaim;
         if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
@@ -579,6 +687,12 @@ export class WritePlanRunner {
       }
 
       if (current.status === AIActionRunStatus.FAILED) {
+        const payableClaim = await this.classifyPayableRecoveryClaim(
+          args.tenantId,
+          current,
+          tx,
+        );
+        if (payableClaim) return payableClaim;
         if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
@@ -589,6 +703,12 @@ export class WritePlanRunner {
         throw new ConflictException('AI action run is not ready for confirmation');
       }
       if (current.confirmedAt) {
+        const payableClaim = await this.classifyPayableRecoveryClaim(
+          args.tenantId,
+          current,
+          tx,
+        );
+        if (payableClaim) return payableClaim;
         if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
@@ -620,6 +740,12 @@ export class WritePlanRunner {
           return { kind: 'REPLAY' as const, run: again };
         }
         if (again?.status === AIActionRunStatus.EXECUTING) {
+          const payableClaim = await this.classifyPayableRecoveryClaim(
+            args.tenantId,
+            again,
+            tx,
+          );
+          if (payableClaim) return payableClaim;
           if (await this.findCommittedWriteMarker(args.tenantId, again.intent, again.id, tx)) {
             return { kind: 'RECOVER' as const, run: again, priorStatus: again.status };
           }
@@ -900,6 +1026,42 @@ export class WritePlanRunner {
       };
     }
 
+    if (failureType === 'STALE_PAYABLE_PAYMENT_REVERSED') {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'El pago se registró anteriormente, pero después fue revertido en Cuentas. No voy a volver a aplicarlo automáticamente.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
+    if (failureType === 'STALE_PAYABLE_PAYMENT_MISSING_TREASURY') {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'FAILED',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'Encontré un pago incompleto que necesita revisión en Cuentas. No voy a volver a aplicarlo automáticamente.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
     const message =
       label === 'pago'
         ? stale
@@ -985,6 +1147,12 @@ export class WritePlanRunner {
       if (msg.includes('STALE_RECEIVABLE')) return msg.includes('OUTSTANDING')
         ? 'STALE_RECEIVABLE_OUTSTANDING'
         : 'STALE_RECEIVABLE';
+      if (msg.includes('STALE_PAYABLE_PAYMENT_REVERSED')) {
+        return 'STALE_PAYABLE_PAYMENT_REVERSED';
+      }
+      if (msg.includes('STALE_PAYABLE_PAYMENT_MISSING_TREASURY')) {
+        return 'STALE_PAYABLE_PAYMENT_MISSING_TREASURY';
+      }
       if (msg.includes('STALE_PAYABLE')) return 'STALE_PAYABLE';
       if (msg.includes('STALE_CURRENCY')) return 'STALE_CURRENCY';
       if (msg.includes('WORKSPACE_ACTIVE_RUN_CHANGED')) return 'STALE_WORKSPACE';

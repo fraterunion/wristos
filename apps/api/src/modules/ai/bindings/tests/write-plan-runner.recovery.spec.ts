@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { AIActionRunStatus } from '@prisma/client';
 import { WritePlanRunner, registerSaleIdempotencyKey } from '../write-plan-runner';
+import { registerPayablePaymentIdempotencyKey } from '../write/register-payable-payment.binding';
 
 /**
  * Pre-fix crash window (Commit 12B @ 52b253b) — documented by code audit:
@@ -475,5 +476,303 @@ describe('WritePlanRunner post-commit recovery', () => {
     expect(recovered.interactionState).toBe('COMPLETED');
     expect(bindingB.execute).toHaveBeenCalledTimes(1);
     expect(runtime.completeExecution).toHaveBeenCalled();
+  });
+});
+
+const payableFingerprint = 'b'.repeat(64);
+const payablePlan = {
+  businessAction: 'REGISTER_PAYABLE_PAYMENT',
+  state: 'READY_FOR_CONFIRMATION',
+  missingEntities: [],
+  clarificationQuestions: [],
+  warnings: [],
+  confirmationTier: 'HIGH',
+  executionSteps: [
+    {
+      stepId: 'register-payable-payment-1',
+      capability: 'REGISTER_PAYABLE_PAYMENT',
+      arguments: {
+        payableEntryId: 'ap-1',
+        amount: 15000,
+        sourceAccount: 'BANK',
+      },
+      dependsOn: [],
+      estimatedEffects: [],
+      reversibility: 'NONE',
+    },
+  ],
+  preview: {
+    title: 'Register Payable Payment',
+    fields: [],
+    warnings: [],
+    estimatedEffects: [],
+    confirmationTier: 'HIGH',
+    category: 'ACCOUNTS',
+  },
+  workspaceVersion: 1,
+  entityVersions: {},
+  fingerprint: payableFingerprint,
+};
+
+const payableResult = {
+  actionId: 'REGISTER_PAYABLE_PAYMENT',
+  executionState: 'EXECUTED',
+  success: true,
+  affectedEntities: [],
+  generatedEvents: [],
+  receipt: {
+    kind: 'PAYABLE_CASH_PAYMENT',
+    paymentId: 'pay-1',
+    payableEntryId: 'ap-1',
+    amount: '15000.00',
+    sourceAccount: 'BANK',
+  },
+  warnings: [],
+  rollbackPossible: false,
+};
+
+function makePayableRunner(overrides: {
+  status?: AIActionRunStatus;
+  payment?: { id: string; deletedAt: Date | null } | null;
+  treasury?: { id: string } | null;
+  bindingExecute?: jest.Mock;
+}) {
+  const run = {
+    id: 'run-pay-1',
+    tenantId: 't1',
+    conversationId: 'c1',
+    intent: 'REGISTER_PAYABLE_PAYMENT',
+    status: overrides.status ?? AIActionRunStatus.EXECUTING,
+    planFingerprint: payableFingerprint,
+    confirmedAt: new Date(),
+    proposedPlan: payablePlan,
+    result: null,
+  };
+
+  const prisma = {
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        aIActionRun: {
+          findFirst: jest.fn(async () => ({ ...run })),
+          findFirstOrThrow: jest.fn(async () => ({ ...run })),
+          updateMany: jest.fn(async () => ({ count: 0 })),
+        },
+        accountPayment: {
+          findFirst: jest.fn(async () => overrides.payment ?? null),
+        },
+        treasuryEntry: {
+          findFirst: jest.fn(async () => {
+            if (!overrides.payment || overrides.payment.deletedAt) return null;
+            return overrides.treasury === undefined ? { id: 'tre-1' } : overrides.treasury;
+          }),
+        },
+        aIAuditEvent: { create: jest.fn(async () => ({})) },
+      };
+      return fn(tx);
+    }),
+    aIActionRun: {
+      findFirst: jest.fn(async () => ({ ...run })),
+    },
+    aIRequest: { findFirst: jest.fn(async () => null) },
+    accountPayment: {
+      findFirst: jest.fn(async () => overrides.payment ?? null),
+    },
+    treasuryEntry: {
+      findFirst: jest.fn(async () => {
+        if (!overrides.payment || overrides.payment.deletedAt) return null;
+        return overrides.treasury === undefined ? { id: 'tre-1' } : overrides.treasury;
+      }),
+    },
+  };
+
+  const runtime = {
+    completeExecution: jest.fn(async () => ({
+      ...run,
+      status: AIActionRunStatus.COMPLETED,
+      result: { businessActionResult: payableResult, recovered: true },
+    })),
+    failExecution: jest.fn(async () => ({})),
+  };
+
+  const planner = {
+    validatePlanStillCurrent: jest.fn(() => ({ current: true, reasons: [] })),
+  };
+
+  const binding = {
+    capability: 'REGISTER_PAYABLE_PAYMENT',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'register_payable_payment_canonical@1.0.0',
+    mapInput: jest.fn(() => ({
+      payableEntryId: 'ap-1',
+      amount: 15000,
+      sourceAccount: 'BANK',
+      registerIdempotencyKey: registerPayablePaymentIdempotencyKey('run-pay-1'),
+    })),
+    inputSchema: { parse: jest.fn((v) => v) },
+    execute: overrides.bindingExecute ?? jest.fn(async () => payableResult),
+  };
+
+  const writeRegistry = {
+    hasBinding: jest.fn((c: string) => c === 'REGISTER_PAYABLE_PAYMENT'),
+    getBinding: jest.fn(() => binding),
+    listBindings: jest.fn(() => [binding]),
+  };
+
+  const runner = new WritePlanRunner(
+    prisma as never,
+    runtime as never,
+    planner as never,
+    writeRegistry as never,
+  );
+
+  return { runner, runtime, binding, prisma };
+}
+
+describe('WritePlanRunner REGISTER_PAYABLE_PAYMENT reversed recovery', () => {
+  it('EXECUTING + active payment + Treasury recovers COMPLETED', async () => {
+    const { runner, runtime, binding } = makePayableRunner({
+      status: AIActionRunStatus.EXECUTING,
+      payment: { id: 'pay-1', deletedAt: null },
+      treasury: { id: 'tre-1' },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).toHaveBeenCalledTimes(1);
+    expect(runtime.completeExecution).toHaveBeenCalled();
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+    expect(result.interactionState).toBe('COMPLETED');
+    expect(result.recovered).toBe(true);
+  });
+
+  it('FAILED + active payment + Treasury recovers COMPLETED', async () => {
+    const { runner, runtime, binding } = makePayableRunner({
+      status: AIActionRunStatus.FAILED,
+      payment: { id: 'pay-1', deletedAt: null },
+      treasury: { id: 'tre-1' },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).toHaveBeenCalledTimes(1);
+    expect(result.interactionState).toBe('COMPLETED');
+    expect(result.recovered).toBe(true);
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+  });
+
+  it('EXECUTING + reversed payment → STALE_PAYABLE_PAYMENT_REVERSED (no re-apply)', async () => {
+    const { runner, runtime, binding } = makePayableRunner({
+      status: AIActionRunStatus.EXECUTING,
+      payment: { id: 'pay-1', deletedAt: new Date() },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.completeExecution).not.toHaveBeenCalled();
+    expect(runtime.failExecution).toHaveBeenCalledWith(
+      't1',
+      'u1',
+      'run-pay-1',
+      'STALE_PAYABLE_PAYMENT_REVERSED',
+      expect.anything(),
+    );
+    expect(result.executionState).toBe('FAILED');
+    expect(result.interactionState).toBe('STALE_PLAN');
+    expect(result.message).toMatch(/revertido en Cuentas/);
+    expect(result.message).not.toMatch(/se está registrando/);
+    expect(result.receipt).toBeNull();
+  });
+
+  it('FAILED + reversed payment → same typed stale (no re-apply)', async () => {
+    const { runner, runtime, binding } = makePayableRunner({
+      status: AIActionRunStatus.FAILED,
+      payment: { id: 'pay-1', deletedAt: new Date() },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+    expect(result.interactionState).toBe('STALE_PLAN');
+    expect(result.message).toMatch(/revertido en Cuentas/);
+  });
+
+  it('EXECUTING + no marker → IN_PROGRESS', async () => {
+    const { runner, runtime, binding } = makePayableRunner({
+      status: AIActionRunStatus.EXECUTING,
+      payment: null,
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+    expect(result.executionState).toBe('IN_PROGRESS');
+    expect(result.interactionState).toBe('EXECUTING');
+  });
+
+  it('EXECUTING + active payment missing Treasury → invariant failure, no success', async () => {
+    const { runner, runtime, binding } = makePayableRunner({
+      status: AIActionRunStatus.EXECUTING,
+      payment: { id: 'pay-1', deletedAt: null },
+      treasury: null,
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.completeExecution).not.toHaveBeenCalled();
+    expect(runtime.failExecution).toHaveBeenCalledWith(
+      't1',
+      'u1',
+      'run-pay-1',
+      'STALE_PAYABLE_PAYMENT_MISSING_TREASURY',
+      expect.anything(),
+    );
+    expect(result.interactionState).toBe('FAILED');
+    expect(result.receipt).toBeNull();
+  });
+
+  it('reversed payment retry is stable non-success', async () => {
+    const { runner, binding } = makePayableRunner({
+      status: AIActionRunStatus.FAILED,
+      payment: { id: 'pay-1', deletedAt: new Date() },
+    });
+    const a = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    const b = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-pay-1',
+      expectedFingerprint: payableFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(a.message).toBe(b.message);
+    expect(a.interactionState).toBe('STALE_PLAN');
+    expect(b.interactionState).toBe('STALE_PLAN');
   });
 });
