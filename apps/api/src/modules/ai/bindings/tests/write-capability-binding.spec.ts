@@ -90,6 +90,7 @@ describe('WriteCapabilityBindingRegistry', () => {
 
   it.each([
     'REGISTER_SETTLEMENT',
+    'REGISTER_TREASURY_TRANSFER',
     'REGISTER_CRYPTO_POSITION',
     'REGISTER_CRYPTO_PRICE',
     'DELETE_CLIENT',
