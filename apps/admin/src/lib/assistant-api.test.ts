@@ -23,7 +23,7 @@ describe('assistant surface contracts', () => {
       'GET_ATTENTION_ITEMS',
       'GET_BUSINESS_SUMMARY',
     ]);
-    assert.equal(WRITE_PREVIEW_ACTIONS.length, 10);
+    assert.equal(WRITE_PREVIEW_ACTIONS.length, 11);
     assert.equal(WRITE_PREVIEW_ACTIONS[0], 'REGISTER_SALE');
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('CREATE_CLIENT'));
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('UPDATE_CLIENT'));

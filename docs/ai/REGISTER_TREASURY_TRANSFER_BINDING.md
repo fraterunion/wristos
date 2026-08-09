@@ -1,202 +1,243 @@
-# REGISTER_TREASURY_TRANSFER — Domain Binding (Commit 22A)
+# REGISTER_TREASURY_TRANSFER — AI Write Binding (Commit 22B)
 
-Status: **DOMAIN ONLY — AI unbound**  
-Prerequisite for Commit 22B (AI write binding).
+Status: **AI WRITE EXECUTION READY**
+Prerequisite: Commit 22A domain (`TreasuryTransferService`) deployed and production-verified.
 
 ## Product goal
 
-Internal liquidity movement between Treasury accounts. Conversational examples (future 22B):
+César can say:
 
-- “Pasa 200 mil de Bancos a Efectivo.” → `BANK → CASH`
-- “Manda 100 mil de Efectivo a Cuenta César.” → `CASH → CESAR`
-- “Transfiere 50 mil de César a Bancos.” → `CESAR → BANK`
+- “Pasa 200 mil de Bancos a Efectivo.”
+- “Mueve 50 mil de Cuenta César a Bancos.”
+- “Transfiere 100 mil de Efectivo a Cuenta César.”
 
-Hard invariant: **total liquidity Δ0**. Not income. Not OpEx. Not Capital distribution.
+WristOS deterministically interprets source/destination/amount, shows liquidity-neutral preview, requires explicit confirmation, then executes `TreasuryTransferService.register()` and returns a truthful receipt.
 
-## Current Treasury audit (pre-22A / still true)
+**No confirmation → no transfer.** Claude does not calculate balances or accounting.
 
-| # | Finding |
-|---|---|
-| 1 | Endpoints were `GET /treasury/balances`, `POST /treasury/cash/physical-balance` only. **22A adds** `POST /treasury/transfers`, `GET /treasury/transfers/:id`, `POST /treasury/transfers/:id/reverse`. |
-| 2 | Admin had **no** Treasury page; dashboard/analytics consume balances. **22A adds** `/treasury` with one-call transfer form. |
-| 3 | **No transfer concept** existed (no API, model, or UI orchestration). |
-| 4 | Source/destination = `TreasuryAccount` enum on `TreasuryEntry` (`CASH` \| `BANK` \| `CESAR`) + `INFLOW` / `OUTFLOW`. |
-| 5 | Manual “transfers” were not supported; other domains create single legs (sale inflow, expense outflow, payable payment outflow, etc.). |
-| 6 | Prior multi-leg patterns (sale + bank fee) are atomic in their domain services; no transfer pair existed. |
-| 7 | Ordinary Treasury legs do **not** affect P&L (except `commission` on bank-fee OUTFLOWs). Transfer legs set `commission: null`. |
-| 8 | Capital profit uses revenue − COGS − bank commissions; distributions are `InvestorDistribution` / Capital module — **not** Treasury CESAR movements. |
-| 9 | Balances: BANK/CESAR = Σ INFLOW − Σ OUTFLOW (`amountMxn`); CASH = latest physical adjustment + subsequent MXN CASH movements. |
-| 10 | Correction pattern = **soft-delete** (`deletedAt`), not compensating entries. |
-| 11 | No frontend created two legs for transfers (none existed). |
-| 12 | `TreasuryEntry.provenanceKey` is `@@unique([tenantId, provenanceKey])` — sufficient for paired idempotent legs. |
-| 13 | Direct Prisma treasury writes exist inside domain services; AI bindings must not call Prisma for treasury. |
+## Deployed 22A domain (frozen)
 
-## Canonical definition
+- `TreasuryTransferService.register()` / `reverse()`
+- Accounts: `CASH` | `BANK` | `CESAR` — all six directional pairs; `source ≠ destination`
+- MXN only; negative balances intentionally allowed
+- Two atomic `TreasuryEntry` legs with provenance:
+  - `treasury-transfer:<logicalKey>:outflow`
+  - `treasury-transfer:<logicalKey>:inflow`
+- Total liquidity Δ0; P&L Δ0; Capital Δ0; no commission / OpEx / AccountEntry / Payment / Watch / Deal
+- Soft-delete both legs on reverse; cashflow excludes transfer provenance
+- CESAR is internal Treasury — **not** InvestorDistribution / Capital
 
-`TreasuryTransferService.register()` moves MXN liquidity:
+## Executable writes after 22B
+
+Exactly **eight**:
+
+1. REGISTER_SALE
+2. REGISTER_RECEIVABLE_PAYMENT
+3. REGISTER_EXPENSE
+4. REGISTER_PURCHASE
+5. CREATE_CLIENT
+6. UPDATE_CLIENT
+7. REGISTER_PAYABLE_PAYMENT
+8. REGISTER_TREASURY_TRANSFER
+
+Still unbound: settlement, crypto position/price, client delete/restore/merge, Capital contribution/distribution, all future writes.
+
+Controlled Action Composition V1 graph **unchanged**:
 
 ```
-sourceAccount ≠ destinationAccount
-amount > 0
-currency = MXN (V1)
+PURCHASE_SELLER → CREATE_CLIENT
+SALE_CUSTOMER → CREATE_CLIENT
 ```
 
-Creates **exactly two** `TreasuryEntry` rows in one Serializable transaction:
+Transfers have no composition dependency.
 
-| Leg | direction | account | provenance |
-|---|---|---|---|
-| A | OUTFLOW | source | `treasury-transfer:<logicalKey>:outflow` |
-| B | INFLOW | destination | `treasury-transfer:<logicalKey>:inflow` |
+## Write binding
 
-`logicalKey` = `registerIdempotencyKey` when provided, else generated `tt_<uuid>`.
+`RegisterTreasuryTransferWriteBinding`
 
-Return: `{ transferId, outflowEntry, inflowEntry, replayed }`.
-
-## Account matrix (V1)
-
-| From / To | CASH | BANK | CESAR |
-|---|---|---|---|
-| **CASH** | no | yes | yes |
-| **BANK** | yes | no | yes |
-| **CESAR** | yes | yes | no |
-
-No CRYPTO. No arbitrary strings.
-
-## Cuenta César semantics (frozen)
-
-`TreasuryAccount.CESAR` / “Cuenta César” is an **internal liquidity bucket**.
-
-- `BANK → CESAR` via transfer = internal liquidity move.
-- Partner / owner payout economics live in **Capital** (`InvestorDistribution`, account `CESAR_ACCOUNT` in Capital UI) and must **not** be disguised as treasury transfer.
-- Transfer must never create `InvestorDistribution` / `CapitalDistribution`.
-- Capital must never treat Treasury CESAR balance as a distribution event.
-
-## Currency / date
-
-- V1: **MXN only** (`amount` = `amountMxn`, `exchangeRate` null).
-- Optional `transferDate` (defaults to now). Material date is part of idempotency conflict when explicitly supplied.
-- Optional `notes` → `description` (or default “Transferencia X → Y”).
-
-## Source balance policy (frozen)
-
-**Allow negative Treasury account balances.**
-
-Matches existing Treasury OUTFLOW behavior (expenses, payable payments, purchases): no insufficient-funds rejection.
-
-Concurrency overspend of a source account is therefore **not** a correctness violation for V1. Documented explicitly; do not invent a balance gate in 22A/22B without product change.
-
-## Atomicity
-
-One `$transaction` (Serializable): create outflow then inflow. Failure after first leg rolls back. Never leave a single live leg.
-
-## Total-liquidity invariant
-
-For every allowed pair and amount X:
-
-- source `amountMxn` −X (OUTFLOW)
-- destination `amountMxn` +X (INFLOW)
-- `CASH + BANK + CESAR` Δ0 (crypto portfolio excluded / unchanged)
-
-## P&L / Capital proof
-
-| Metric | Effect |
+| Field | Value |
 |---|---|
-| Revenue / COGS | Δ0 |
-| Treasury commissions | Δ0 (`commission` null) |
-| OperatingExpense | Δ0 (no row) |
-| netProfit | Δ0 |
-| Capital totalBusinessProfit / ROI / distributions | Δ0 |
-| AccountEntry / AccountPayment / Payment / Deal / Watch | Δ0 |
+| Capability | `REGISTER_TREASURY_TRANSFER` |
+| Mode | WRITE |
+| Version | `1.0.0` |
+| Binding | `register_treasury_transfer_canonical@1.0.0` |
 
-Cash-flow chart: `getCashFlow` **excludes** `provenanceKey startsWith 'treasury-transfer:'` so period inflows/outflows are not inflated by internal moves. Net liquidity KPIs still use balances (which include transfer legs correctly).
+Maps trusted plan args → `TreasuryTransferService.register()`. No Prisma treasury writes, no accounting math in the binding.
 
-## Durable idempotency (no schema migration)
+### Canonical args
 
-Schema gate: **NO migration** — `@@unique([tenantId, provenanceKey])` is enough.
+```json
+{
+  "sourceAccount": "CASH|BANK|CESAR",
+  "destinationAccount": "CASH|BANK|CESAR",
+  "amount": 200000,
+  "transferDate?": "ISO date",
+  "notes?": "optional"
+}
+```
 
-Future AI key:
+Server-only idempotency:
 
 ```
 registerIdempotencyKey = ai-action-run:<actionRunId>
 ```
 
-Legs:
+Never accepted from Claude, user, frontend, or planner args.
+
+## Intent aliases / account normalization
+
+Closed enum only — no fuzzy arbitrary names, no CRYPTO, no DB IDs.
+
+| Canonical | Aliases |
+|---|---|
+| CASH | efectivo, caja, cash |
+| BANK | banco, bancos, cuenta bancaria |
+| CESAR | César, Cuenta César, cuenta de César |
+
+## Source / destination direction
+
+Spanish word order is material:
+
+| Phrase | Source → Dest |
+|---|---|
+| “Pasa 100 mil de Bancos a Efectivo.” | BANK → CASH |
+| “Pasa 100 mil a Bancos desde Efectivo.” | CASH → BANK |
+| “De César manda 50 mil a Efectivo.” | CESAR → CASH |
+
+Never silently swap direction. Same account → clarify/reject (“No puedo registrar una transferencia entre la misma cuenta.”) with zero mutation.
+
+## Semantic boundaries
+
+| Phrase | Intent |
+|---|---|
+| “Pasa 50 mil de Bancos a Efectivo.” | `REGISTER_TREASURY_TRANSFER` |
+| “Gasté 50 mil de Bancos en marketing.” | `REGISTER_EXPENSE` |
+| “Págale 50 mil a Pepe desde Bancos.” | `REGISTER_PAYABLE_PAYMENT` |
+| “José me depositó 50 mil a bancos.” | `REGISTER_RECEIVABLE_PAYMENT` |
+| “Pasa 100 mil de Bancos a Cuenta César.” | `REGISTER_TREASURY_TRANSFER` (internal) |
+| “Retírale 100 mil de utilidad a César.” | **NOT** transfer — Capital (unbound) |
+| “Págale la utilidad a César.” | **NOT** transfer — Capital (unbound) |
+| “César aportó 100 mil al negocio.” | **NOT** transfer — Capital (unbound) |
+| “Compra 200 mil de USDT.” | crypto / unbound write |
+
+## Amount / currency
+
+- Amount > 0; reuse existing money normalization (“200 mil” → 200000)
+- V1 MXN only; explicit USD/USDT/crypto → clarify/reject
+- No FX
+
+## Negative-balance policy (intentional V1)
+
+AI planner must **not** invent insufficient-funds rejection, blocking balance warnings, or auto-adjusted amounts. Source balance changes do **not** stale the plan. Freshness revalidates membership, tenant, ActionRun, fingerprint, closed enums, `source ≠ destination`, amount, and material date — never balance-based stale.
+
+## Preview
+
+Example:
 
 ```
-treasury-transfer:ai-action-run:<actionRunId>:outflow
-treasury-transfer:ai-action-run:<actionRunId>:inflow
+Voy a registrar esta transferencia:
+
+Desde: Bancos
+Hacia: Efectivo
+Monto: $200,000 MXN
+
+Efectos:
+Bancos −$200,000
+Efectivo +$200,000
+Liquidez total: Sin cambio
+Utilidad: Sin cambio
+Capital: Sin cambio
+
+Primary: Confirmar transferencia
+Secondary: Editar / Cancelar
 ```
 
-Replay: same key + same source/destination/amount/(explicit date) → return existing pair `replayed: true`.  
-Conflict: same key + different material payload.  
-Reversed: same key → `STALE_TREASURY_TRANSFER_REVERSED` (no re-apply).  
-Concurrent same key: P2002 / Serializable → converge to exactly two live legs.
+Do **not** use Ingreso / Gasto / Ganancia / Pérdida for the paired transfer itself. Optional balance display only if backend-derived; omit if it complicates V1.
 
-## Recovery design (for 22B)
+## Confirmation lifecycle
 
-After EXECUTING crash, inspect both provenance keys:
+```
+READY_FOR_CONFIRMATION
+  → Confirmar transferencia
+  → POST /api/ai/action-runs/:id/confirm
+  → WritePlanRunner
+  → RegisterTreasuryTransferWriteBinding
+  → TreasuryTransferService.register()
+  → BusinessActionResult
+```
+
+Before confirmation: **0** new transfer legs.
+Frontend must **not** call `POST /treasury/transfers` from Assistant.
+
+## Idempotency / concurrency
+
+- Same ActionRun → one logical transfer → exactly two legs
+- Double / 3× confirm / network retry → same pair
+- Different ActionRuns = independent transfers (even if source goes negative)
+
+## Recovery
+
+Inspect both provenance legs for `ai-action-run:<actionRunId>`:
 
 | Case | Outcome |
 |---|---|
-| Both active legs | recover COMPLETED |
-| Neither | still running / not executed |
-| Only one | invariant failure (must not auto-heal by creating the missing leg blindly) |
-| Both soft-deleted | reversed — do not re-apply |
+| Both active | recover COMPLETED |
+| Neither | IN_PROGRESS / not committed |
+| Only one | `CANONICAL_TREASURY_TRANSFER_INVARIANT` — no auto-heal |
+| Both soft-deleted | `STALE_TREASURY_TRANSFER_REVERSED` — no success, no re-create |
 
-## Reversal
+Never infer transfer from amount/date alone. Reversed-before-recovery must not recreate.
 
-`TreasuryTransferService.reverse(transferId)` soft-deletes **both** legs atomically. Second reverse is idempotent (`alreadyReversed`). No partial reverse in V1. Correct by reverse + new transfer. No independent single-leg delete/edit API for transfer provenance.
+## Receipt / success UX
 
-## History / read models
+```json
+{
+  "executionState": "EXECUTED",
+  "success": true,
+  "receipt": {
+    "kind": "TREASURY_TRANSFER",
+    "transferId": "...",
+    "sourceAccount": "BANK",
+    "destinationAccount": "CASH",
+    "amount": "200000.00",
+    "currency": "MXN",
+    "totalLiquidity": "Sin cambio",
+    "profit": "Sin cambio",
+    "capital": "Sin cambio"
+  },
+  "rollbackPossible": false
+}
+```
 
-- History (sold watches / P&L summary) does not treat treasury legs as revenue/expense.
-- Dashboard liquidity = sum of account balances (transfer-neutral).
-- Admin Tesorería shows one logical transfer form (one API call).
-
-## Permissions
-
-Same as existing Treasury mutations: **`JwtAuthGuard` + tenant membership** (no extra role gate today). Future AI must inherit same or stricter.
-
-## API
+UI after COMPLETED:
 
 ```
-POST   /treasury/transfers
-GET    /treasury/transfers/:transferId
-POST   /treasury/transfers/:transferId/reverse
+Listo. La transferencia quedó registrada.
+Bancos −$200,000
+Efectivo +$200,000
+Liquidez total: Sin cambio
+[Ver Tesorería] [Corregir en Tesorería]
 ```
 
-Manual UI: `apps/admin` → `/treasury` → `registerTreasuryTransfer()`.
+Correction path: Tesorería only — no conversational reverse.
 
-## Future AI contract (22B — not implemented)
+## Context / follow-ups
 
-Capability: `REGISTER_TREASURY_TRANSFER` (still **unbound** after 22A).
+After success, a new explicit transfer (“Ahora pasa 50 mil de Efectivo a César.”) is planned independently. No hidden chained transfer; do not reuse prior amount unless context policy safely supports an explicit reference.
 
-Args: `sourceAccount`, `destinationAccount`, `amount`, optional `transferDate` / `notes`.  
-Server-only: `registerIdempotencyKey = ai-action-run:<actionRunId>`.
+## Audit / privacy / telemetry
 
-Preview language must say transferencia / liquidez — never ingreso/gasto. Optional balances from `GET /treasury/balances` (server), no frontend math for authoritative after-balance.
+Safe audit fields: capability, bindingVersion, actionRun hash, transfer logical hash, source/destination, amount, currency, recovered, result hash, failure type, duration. No provider prompt/secrets. No normal counterparty PII.
 
-## Executable writes after 22A
-
-Still exactly **seven**:
-
-1. REGISTER_SALE  
-2. REGISTER_RECEIVABLE_PAYMENT  
-3. REGISTER_EXPENSE  
-4. REGISTER_PURCHASE  
-5. CREATE_CLIENT  
-6. UPDATE_CLIENT  
-7. REGISTER_PAYABLE_PAYMENT  
-
-Controlled Action Composition V1 graph **unchanged**.
+Telemetry (passive): Assistant Health eighth write funnel — attempts, source/destination distribution, confirmation rate, validation/same-account failures, success, recovery, reversed recovery, invariant failures.
 
 ## Schema gate
 
-**No TYPE C migration required** for 22A.
+**NO migration.** 22A provenance semantics are sufficient. If durable ambiguity appears that cannot be solved with paired provenance keys: STOP — do not add in-memory tracking or schema without approval.
 
-## Production rollout
+## Rollout
 
-- Domain + Admin UI: TYPE A+B (backend + frontend).  
-- Railway auto-deploy on merge (backend).  
-- No Prisma migrate.  
-- AI execution deferred to 22B.
+- TYPE A+B (API + Admin); no TYPE C
+- Local commit → PR → merge deploys Railway (backend) + Vercel (admin)
+- No `prisma migrate deploy`
+- Do not push/deploy until explicitly approved

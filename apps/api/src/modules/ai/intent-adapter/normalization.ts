@@ -208,6 +208,7 @@ export function normalizeEntities(
     REGISTER_SALE: ['price'],
     REGISTER_RECEIVABLE_PAYMENT: ['amount'],
     REGISTER_PAYABLE_PAYMENT: ['amount', 'exchangeRateUsed'],
+    REGISTER_TREASURY_TRANSFER: ['amount'],
     REGISTER_PURCHASE: ['cost'],
     REGISTER_EXPENSE: ['amount'],
     REGISTER_SETTLEMENT: ['amount'],

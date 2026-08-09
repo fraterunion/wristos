@@ -6,6 +6,7 @@ import { DealsModule } from '../deals/deals.module';
 import { ExpensesModule } from '../expenses/expenses.module';
 import { HistoryModule } from '../history/history.module';
 import { InventoryModule } from '../inventory/inventory.module';
+import { TreasuryModule } from '../treasury/treasury.module';
 import { AIController } from './ai.controller';
 import { AuditService } from './audit/audit.service';
 import { ConversationService } from './conversation/conversation.service';
@@ -23,6 +24,7 @@ import { ReadPlanRunner } from './bindings/read-plan-runner';
 import { PayablePaymentEntityResolver } from './bindings/write/payable-payment-entity-resolver.service';
 import { ReceivablePaymentEntityResolver } from './bindings/write/receivable-payment-entity-resolver.service';
 import { RegisterPayablePaymentWriteBinding } from './bindings/write/register-payable-payment.binding';
+import { RegisterTreasuryTransferWriteBinding } from './bindings/write/register-treasury-transfer.binding';
 import { CreateClientEntityResolver } from './bindings/write/create-client-entity-resolver.service';
 import { CreateClientWriteBinding } from './bindings/write/create-client.binding';
 import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
@@ -58,6 +60,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     HistoryModule,
     DealsModule,
     ExpensesModule,
+    TreasuryModule,
     TelemetryModule,
   ],
   controllers: [AIController],
@@ -78,6 +81,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     RegisterSaleWriteBinding,
     RegisterReceivablePaymentWriteBinding,
     RegisterPayablePaymentWriteBinding,
+    RegisterTreasuryTransferWriteBinding,
     RegisterExpenseWriteBinding,
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,

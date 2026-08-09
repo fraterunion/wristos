@@ -24,6 +24,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_PAYABLE_PAYMENT',
+  'REGISTER_TREASURY_TRANSFER',
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
@@ -695,47 +696,54 @@ export class StructuredAssistantService {
     const isPayment =
       plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT' ||
       plan.businessAction === 'REGISTER_PAYABLE_PAYMENT';
+    const isTransfer = plan.businessAction === 'REGISTER_TREASURY_TRANSFER';
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     const isCreateClient = plan.businessAction === 'CREATE_CLIENT';
     const isUpdateClient = plan.businessAction === 'UPDATE_CLIENT';
     const correctionPolicy = !executable
       ? null
-      : isPayment
-        ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
-        : isExpense
-          ? 'Después de registrarlo, cualquier corrección se realiza desde Gastos.'
-          : isPurchase
-            ? 'Después de registrarla, cualquier corrección se realiza desde Inventario.'
-            : isCreateClient || isUpdateClient
-              ? 'Después de guardarlo, cualquier corrección se realiza desde CRM.'
-              : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
+      : isTransfer
+        ? 'Después de registrarla, cualquier corrección se realiza desde Tesorería.'
+        : isPayment
+          ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
+          : isExpense
+            ? 'Después de registrarlo, cualquier corrección se realiza desde Gastos.'
+            : isPurchase
+              ? 'Después de registrarla, cualquier corrección se realiza desde Inventario.'
+              : isCreateClient || isUpdateClient
+                ? 'Después de guardarlo, cualquier corrección se realiza desde CRM.'
+                : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
     const message = !executable
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
-      : isPayment
-        ? 'Revisa el resumen y confirma para registrar el pago.'
-        : isExpense
-          ? 'Revisa el resumen y confirma para registrar el gasto.'
-          : isPurchase
-            ? 'Revisa el resumen y confirma para registrar la compra.'
-            : isCreateClient
-              ? 'Voy a crear este cliente. Revisa el resumen y confirma.'
-              : isUpdateClient
-                ? 'Voy a actualizar este cliente. Revisa el resumen y confirma.'
-                : 'Revisa el resumen y confirma para registrar la venta.';
+      : isTransfer
+        ? 'Revisa el resumen y confirma para registrar la transferencia.'
+        : isPayment
+          ? 'Revisa el resumen y confirma para registrar el pago.'
+          : isExpense
+            ? 'Revisa el resumen y confirma para registrar el gasto.'
+            : isPurchase
+              ? 'Revisa el resumen y confirma para registrar la compra.'
+              : isCreateClient
+                ? 'Voy a crear este cliente. Revisa el resumen y confirma.'
+                : isUpdateClient
+                  ? 'Voy a actualizar este cliente. Revisa el resumen y confirma.'
+                  : 'Revisa el resumen y confirma para registrar la venta.';
     const nextAction = !executable
       ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
-      : isPayment
-        ? 'Confirma el pago para ejecutar el registro canónico.'
-        : isExpense
-          ? 'Confirma el gasto para ejecutar el registro canónico.'
-          : isPurchase
-            ? 'Confirma la compra para ejecutar el registro canónico.'
-            : isCreateClient
-              ? 'Confirma para crear el cliente canónico.'
-              : isUpdateClient
-                ? 'Confirma para guardar los cambios del cliente.'
-                : 'Confirma la venta para ejecutar el registro canónico.';
+      : isTransfer
+        ? 'Confirma la transferencia para ejecutar el registro canónico.'
+        : isPayment
+          ? 'Confirma el pago para ejecutar el registro canónico.'
+          : isExpense
+            ? 'Confirma el gasto para ejecutar el registro canónico.'
+            : isPurchase
+              ? 'Confirma la compra para ejecutar el registro canónico.'
+              : isCreateClient
+                ? 'Confirma para crear el cliente canónico.'
+                : isUpdateClient
+                  ? 'Confirma para guardar los cambios del cliente.'
+                  : 'Confirma la venta para ejecutar el registro canónico.';
     return this.responseBase(requestId, traceId, prepared, actionRunId, 'READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       preview: plan.preview as unknown as JsonValue,
       planFingerprint: plan.fingerprint,

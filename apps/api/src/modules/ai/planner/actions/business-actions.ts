@@ -22,6 +22,7 @@ const questions: Record<string, string> = {
   paymentMode: '¿Cómo lo pagaste? (pagado / a crédito / parcial)',
   acquiredAt: '¿Qué fecha de compra?',
   sourceAccount: '¿Desde dónde lo pagaste? (Efectivo, Bancos o Cuenta César)',
+  destinationAccount: '¿Hacia qué cuenta? (Efectivo, Bancos o Cuenta César)',
   initialPaymentAmount: '¿Cuánto pagaste ahora?',
   seller: '¿A quién le compraste?',
   concept: 'What is the expense for?',
@@ -289,6 +290,134 @@ function registerReceivablePaymentPreviewFields(entities: StructuredEntities): A
   }
   if (present(entities.date)) rows.push({ label: 'Fecha', value: entities.date ?? null });
   return rows;
+}
+
+function registerTreasuryTransferEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
+  const source =
+    typeof entities.sourceAccount === 'string'
+      ? entities.sourceAccount
+      : typeof entities.source === 'string'
+        ? entities.source
+        : null;
+  const dest =
+    typeof entities.destinationAccount === 'string'
+      ? entities.destinationAccount
+      : typeof entities.destination === 'string'
+        ? entities.destination
+        : null;
+  const srcLabel =
+    (typeof entities.sourceAccountLabel === 'string' && entities.sourceAccountLabel) ||
+    (source ? destinationLabel[source] ?? source : 'Origen');
+  const destLabel =
+    (typeof entities.destinationAccountLabel === 'string' && entities.destinationAccountLabel) ||
+    (dest ? destinationLabel[dest] ?? dest : 'Destino');
+  return [
+    {
+      area: 'Treasury',
+      description: `${srcLabel}: −${formatMoneyPreview(entities.amount, entities.currency ?? 'MXN')}`,
+    },
+    {
+      area: 'Treasury',
+      description: `${destLabel}: +${formatMoneyPreview(entities.amount, entities.currency ?? 'MXN')}`,
+    },
+    { area: 'Liquidity', description: 'Liquidez total: Sin cambio' },
+    { area: 'P&L', description: 'Utilidad: Sin cambio' },
+    { area: 'Capital', description: 'Capital: Sin cambio' },
+    {
+      area: 'Correction',
+      description: 'Después de registrarla, cualquier corrección se realiza desde Tesorería.',
+    },
+  ];
+}
+
+function registerTreasuryTransferPreviewFields(
+  entities: StructuredEntities,
+): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  const source =
+    typeof entities.sourceAccount === 'string'
+      ? entities.sourceAccount
+      : typeof entities.source === 'string'
+        ? entities.source
+        : null;
+  const dest =
+    typeof entities.destinationAccount === 'string'
+      ? entities.destinationAccount
+      : typeof entities.destination === 'string'
+        ? entities.destination
+        : null;
+  if (source) {
+    rows.push({
+      label: 'Desde',
+      value:
+        (typeof entities.sourceAccountLabel === 'string' && entities.sourceAccountLabel) ||
+        destinationLabel[source] ||
+        source,
+    });
+  }
+  if (dest) {
+    rows.push({
+      label: 'Hacia',
+      value:
+        (typeof entities.destinationAccountLabel === 'string' && entities.destinationAccountLabel) ||
+        destinationLabel[dest] ||
+        dest,
+    });
+  }
+  if (present(entities.amount)) {
+    rows.push({
+      label: 'Monto',
+      value: formatMoneyPreview(entities.amount, entities.currency ?? 'MXN'),
+    });
+  }
+  if (present(entities.date) || present(entities.transferDate)) {
+    rows.push({
+      label: 'Fecha',
+      value: entities.date ?? entities.transferDate ?? null,
+    });
+  }
+  return rows;
+}
+
+function registerTreasuryTransferConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const source =
+    typeof entities.sourceAccount === 'string'
+      ? entities.sourceAccount
+      : typeof entities.source === 'string'
+        ? entities.source
+        : null;
+  const dest =
+    typeof entities.destinationAccount === 'string'
+      ? entities.destinationAccount
+      : typeof entities.destination === 'string'
+        ? entities.destination
+        : null;
+  if (source && dest && source === dest) {
+    return [
+      {
+        entity: 'destinationAccount',
+        question:
+          'No puedo registrar una transferencia entre la misma cuenta. ¿Cuál es la cuenta destino distinta?',
+      },
+    ];
+  }
+  if (
+    entities.currency === 'USD' ||
+    entities.currency === 'USDT' ||
+    entities.sourceAccount === 'CRYPTO' ||
+    entities.destinationAccount === 'CRYPTO'
+  ) {
+    return [
+      {
+        entity: 'currency',
+        question:
+          'Las transferencias de tesorería V1 son solo en MXN entre Efectivo, Bancos y Cuenta César. ¿Confirmas monto y cuentas en MXN?',
+      },
+    ];
+  }
+  return [];
 }
 
 function registerPayablePaymentEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
@@ -945,6 +1074,47 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
         'UNIQUE_PAYABLE_SELECTED',
         'Se usó la única cuenta por pagar abierta de este contacto.',
         (e) => e.uniquePayableSelected === true || e.uniquePayableSelected === 'true',
+      ),
+    ],
+  }),
+  define({
+    id: 'REGISTER_TREASURY_TRANSFER',
+    name: 'Register Treasury Transfer',
+    category: 'TREASURY',
+    tier: 'HIGH',
+    required: ['sourceAccount', 'destinationAccount', 'amount'],
+    optional: [
+      'currency',
+      'date',
+      'transferDate',
+      'notes',
+      'sourceAccountLabel',
+      'destinationAccountLabel',
+      'source',
+      'destination',
+    ],
+    effectsBuilder: registerTreasuryTransferEffects,
+    previewFields: registerTreasuryTransferPreviewFields,
+    conditionalMissing: registerTreasuryTransferConditionalMissing,
+    reversibility: 'NONE',
+    warnings: [
+      warning(
+        'UNSUPPORTED_ACCOUNT',
+        'CRYPTO and arbitrary accounts are not valid treasury transfer accounts.',
+        (e) =>
+          e.sourceAccount === 'CRYPTO' ||
+          e.destinationAccount === 'CRYPTO' ||
+          e.source === 'CRYPTO' ||
+          e.destination === 'CRYPTO',
+      ),
+      warning(
+        'UNSUPPORTED_CURRENCY',
+        'Treasury transfers are MXN only.',
+        (e) =>
+          typeof e.currency === 'string' &&
+          e.currency !== 'MXN' &&
+          e.currency !== '' &&
+          e.currency !== null,
       ),
     ],
   }),

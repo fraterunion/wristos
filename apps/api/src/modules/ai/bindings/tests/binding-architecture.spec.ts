@@ -14,8 +14,14 @@ describe('Capability binding architecture', () => {
     const intentRoot = join(__dirname, '..', '..', 'intent-adapter');
     const source = files(intentRoot).map((path) => readFileSync(path, 'utf8')).join('\n');
     expect(source).not.toMatch(
-      /WritePlanRunner|WriteCapabilityBinding|SaleRegistrationService|ClientRegistrationService|register-sale\.binding|create-client\.binding/,
+      /WritePlanRunner|WriteCapabilityBinding|SaleRegistrationService|ClientRegistrationService|register-sale\.binding|create-client\.binding|TreasuryTransferService/,
     );
+  });
+
+  it('does not import TreasuryTransferService from planner production source', () => {
+    const plannerRoot = join(__dirname, '..', '..', 'planner');
+    const source = files(plannerRoot).map((path) => readFileSync(path, 'utf8')).join('\n');
+    expect(source).not.toMatch(/TreasuryTransferService|treasury-transfer\.service/);
   });
 
   it('does not import ClientRegistrationService from planner production source', () => {
