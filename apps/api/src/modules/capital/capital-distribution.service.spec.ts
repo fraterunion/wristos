@@ -79,7 +79,7 @@ describe('CapitalDistributionService — canonical partner distribution', () => 
         }),
         update: jest.fn(async ({ where, data }: any) => {
           const row = distributions.get(where.id);
-          Object.assign(row, data);
+          Object.assign(row, data, { updatedAt: new Date(Date.now() + 5_000) });
           return row;
         }),
       },
@@ -159,5 +159,30 @@ describe('CapitalDistributionService — canonical partner distribution', () => 
     const rev = await service.reverse('t1', created.distribution.id);
     expect(rev.alreadyReversed).toBe(false);
     expect(rev.distribution.deletedAt).toBeTruthy();
+  });
+
+  it('notes-only update + material replay after notes change', async () => {
+    const { service } = build();
+    const key = 'ai-action-run:run-d-notes';
+    const created = await service.register('t1', { ...base, registerIdempotencyKey: key });
+    const notes = await service.updateNotes('t1', created.distribution.id, {
+      notes: 'nota dist',
+    });
+    expect(notes.changed).toBe(true);
+    expect(notes.distribution.amount.toFixed(2)).toBe('100000.00');
+    const replay = await service.register('t1', {
+      ...base,
+      notes: 'different notes ok',
+      registerIdempotencyKey: key,
+    });
+    expect(replay.replayed).toBe(true);
+    expect(
+      service.classifyRecovery(created.distribution, {
+        investorId: 'inv-1',
+        amount: d(1),
+        account: CapitalAccount.BANK,
+        paidAt: new Date('2026-08-09T00:00:00.000Z'),
+      }),
+    ).toBe('CANONICAL_CAPITAL_DISTRIBUTION_INVARIANT');
   });
 });

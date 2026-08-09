@@ -31,6 +31,27 @@ export type ReverseCapitalDistributionResult = {
   alreadyReversed: boolean;
 };
 
+export type UpdateCapitalDistributionNotesInput = {
+  notes?: string | null;
+  expectedUpdatedAt?: Date | string | null;
+};
+
+export type UpdateCapitalDistributionNotesResult = {
+  distribution: InvestorDistribution;
+  changed: boolean;
+};
+
+/** Material financial identity for idempotency / future AI recovery (notes excluded). */
+export type CapitalDistributionMaterialPayload = {
+  investorId: string;
+  amount: Prisma.Decimal;
+  account: CapitalAccount;
+  paidAt: Date;
+};
+
+export const CAPITAL_DISTRIBUTION_IMMUTABLE_MESSAGE =
+  'Este movimiento financiero no se puede modificar. Revierte el registro y crea uno nuevo con los datos correctos.';
+
 const ALLOWED_ACCOUNTS: ReadonlySet<CapitalAccount> = new Set([
   CapitalAccount.CASH,
   CapitalAccount.BANK,
@@ -135,7 +156,6 @@ export class CapitalDistributionService {
           amount,
           account: input.account,
           paidAt,
-          notes,
         });
         return { distribution: existing, replayed: true };
       }
@@ -174,7 +194,6 @@ export class CapitalDistributionService {
             amount,
             account: input.account,
             paidAt,
-            notes,
           });
           return { distribution: raced, replayed: true };
         }
@@ -183,6 +202,74 @@ export class CapitalDistributionService {
         );
       }
       throw error;
+    }
+  }
+
+  /**
+   * Notes-only mutation. Economic fields are immutable after creation (Commit 23B).
+   * Applies to ALL active distribution rows (legacy + keyed).
+   */
+  async updateNotes(
+    tenantId: string,
+    distributionId: string,
+    input: UpdateCapitalDistributionNotesInput,
+  ): Promise<UpdateCapitalDistributionNotesResult> {
+    const distribution = await this.prisma.investorDistribution.findFirst({
+      where: { id: distributionId, tenantId },
+    });
+    if (!distribution || distribution.deletedAt) {
+      throw new NotFoundException('Distribution not found');
+    }
+
+    if (input.expectedUpdatedAt != null && String(input.expectedUpdatedAt).trim() !== '') {
+      const expected = new Date(input.expectedUpdatedAt);
+      if (Number.isNaN(expected.getTime())) {
+        throw new BadRequestException('Invalid expectedUpdatedAt');
+      }
+      if (distribution.updatedAt.toISOString() !== expected.toISOString()) {
+        throw new ConflictException({
+          code: 'CAPITAL_DISTRIBUTION_NOTES_STALE',
+          message:
+            'Las notas fueron actualizadas por otro cambio. Recarga e intenta de nuevo.',
+        });
+      }
+    }
+
+    if (input.notes === undefined) {
+      return { distribution, changed: false };
+    }
+
+    const notes = normalizeNotes(input.notes);
+    if (normalizeNotes(distribution.notes) === notes) {
+      return { distribution, changed: false };
+    }
+
+    const updated = await this.prisma.investorDistribution.update({
+      where: { id: distributionId },
+      data: { notes },
+    });
+    return { distribution: updated, changed: true };
+  }
+
+  /**
+   * Future AI / API recovery classification against material payload.
+   * Does not mutate. Not bound to AI in 23B.
+   */
+  classifyRecovery(
+    existing: InvestorDistribution | null,
+    expected: CapitalDistributionMaterialPayload,
+  ):
+    | 'MATCH'
+    | 'STALE_CAPITAL_DISTRIBUTION_REVERSED'
+    | 'CANONICAL_CAPITAL_DISTRIBUTION_INVARIANT'
+    | 'MISSING' {
+    if (!existing) return 'MISSING';
+    if (existing.deletedAt) return 'STALE_CAPITAL_DISTRIBUTION_REVERSED';
+    try {
+      this.assertCompatibleReplay(existing, expected);
+      return 'MATCH';
+    } catch {
+      return 'CANONICAL_CAPITAL_DISTRIBUTION_INVARIANT';
     }
   }
 
@@ -217,23 +304,24 @@ export class CapitalDistributionService {
 
   private assertCompatibleReplay(
     existing: InvestorDistribution,
-    expected: {
-      investorId: string;
-      amount: Prisma.Decimal;
-      account: CapitalAccount;
-      paidAt: Date;
-      notes: string | null;
-    },
+    expected: CapitalDistributionMaterialPayload,
   ) {
+    // Notes are non-material after creation (23B).
     const sameInvestor = existing.investorId === expected.investorId;
     const sameAmount = existing.amount.equals(expected.amount);
     const sameAccount = existing.account === expected.account;
     const sameDate = dateBucket(existing.paidAt) === dateBucket(expected.paidAt);
-    const sameNotes = normalizeNotes(existing.notes) === expected.notes;
-    if (!sameInvestor || !sameAmount || !sameAccount || !sameDate || !sameNotes) {
+    if (!sameInvestor || !sameAmount || !sameAccount || !sameDate) {
       throw new ConflictException(
         'registerIdempotencyKey already used with a conflicting distribution payload',
       );
     }
   }
+}
+
+export function capitalDistributionImmutableConflict(): ConflictException {
+  return new ConflictException({
+    code: 'CAPITAL_DISTRIBUTION_IMMUTABLE',
+    message: CAPITAL_DISTRIBUTION_IMMUTABLE_MESSAGE,
+  });
 }

@@ -91,7 +91,7 @@ describe('CapitalContributionService — canonical partner equity contribution',
         }),
         update: jest.fn(async ({ where, data }: any) => {
           const row = contributions.get(where.id);
-          Object.assign(row, data);
+          Object.assign(row, data, { updatedAt: new Date(Date.now() + 5_000) });
           return row;
         }),
       },
@@ -205,5 +205,71 @@ describe('CapitalContributionService — canonical partner equity contribution',
     await expect(service.reverse('t1', created.contribution.id)).rejects.toBeInstanceOf(
       ConflictException,
     );
+  });
+
+  it('updates notes only and rejects deleted rows', async () => {
+    const { service, contributions } = build();
+    const created = await service.register('t1', base);
+    const originalUpdatedAt = created.contribution.updatedAt.toISOString();
+    const first = await service.updateNotes('t1', created.contribution.id, {
+      notes: 'nota nueva',
+      expectedUpdatedAt: originalUpdatedAt,
+    });
+    expect(first.changed).toBe(true);
+    expect(first.contribution.notes).toBe('nota nueva');
+    expect(first.contribution.amount.toFixed(2)).toBe('300000.00');
+
+    const noop = await service.updateNotes('t1', created.contribution.id, {
+      notes: 'nota nueva',
+    });
+    expect(noop.changed).toBe(false);
+
+    await expect(
+      service.updateNotes('t1', created.contribution.id, {
+        notes: 'otra',
+        expectedUpdatedAt: originalUpdatedAt,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    await service.reverse('t1', created.contribution.id);
+    await expect(
+      service.updateNotes('t1', created.contribution.id, { notes: 'x' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(contributions.get(created.contribution.id).amount.toFixed(2)).toBe('300000.00');
+  });
+
+  it('notes change does not break material idempotency replay', async () => {
+    const { service } = build();
+    const key = 'ai-action-run:run-notes';
+    const first = await service.register('t1', { ...base, registerIdempotencyKey: key });
+    await service.updateNotes('t1', first.contribution.id, { notes: 'edited later' });
+    const replay = await service.register('t1', {
+      ...base,
+      notes: 'original notes ignored for match',
+      registerIdempotencyKey: key,
+    });
+    expect(replay.replayed).toBe(true);
+    expect(replay.contribution.id).toBe(first.contribution.id);
+  });
+
+  it('classifyRecovery covers match / reversed / invariant', async () => {
+    const { service } = build();
+    const created = await service.register('t1', base);
+    const material = {
+      investorId: 'inv-1',
+      amount: d(300000),
+      account: CapitalAccount.BANK,
+      contributedAt: new Date('2026-08-09T00:00:00.000Z'),
+    };
+    expect(service.classifyRecovery(created.contribution, material)).toBe('MATCH');
+    expect(
+      service.classifyRecovery(created.contribution, { ...material, amount: d(1) }),
+    ).toBe('CANONICAL_CAPITAL_CONTRIBUTION_INVARIANT');
+    await service.reverse('t1', created.contribution.id);
+    const reversed = await service.reverse('t1', created.contribution.id);
+    expect(service.classifyRecovery(reversed.contribution, material)).toBe(
+      'STALE_CAPITAL_CONTRIBUTION_REVERSED',
+    );
+    expect(service.classifyRecovery(null, material)).toBe('MISSING');
   });
 });
