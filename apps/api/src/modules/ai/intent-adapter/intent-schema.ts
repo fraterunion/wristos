@@ -29,6 +29,7 @@ export const WRITE_INTENTS = [
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_PAYABLE_PAYMENT',
+  'REGISTER_TREASURY_TRANSFER',
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
   'CREATE_CLIENT',
@@ -246,6 +247,22 @@ export const entitySchemas = {
       payFullOutstanding: z.boolean().optional(),
       exchangeRateUsed: money.optional(),
       effectiveDate: isoDate.optional(),
+    })
+    .strip(),
+
+  REGISTER_TREASURY_TRANSFER: z
+    .object({
+      amount: money.optional(),
+      currency: currency.optional(),
+      sourceAccount: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      destinationAccount: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      destination: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      sourceQuery: query.optional(),
+      destinationQuery: query.optional(),
+      effectiveDate: isoDate.optional(),
+      transferDate: isoDate.optional(),
+      notes: z.string().trim().max(2000).optional(),
     })
     .strip(),
 

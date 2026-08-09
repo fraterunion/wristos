@@ -776,3 +776,288 @@ describe('WritePlanRunner REGISTER_PAYABLE_PAYMENT reversed recovery', () => {
     expect(b.interactionState).toBe('STALE_PLAN');
   });
 });
+
+const transferFingerprint = 'c'.repeat(64);
+const transferPlan = {
+  businessAction: 'REGISTER_TREASURY_TRANSFER',
+  state: 'READY_FOR_CONFIRMATION',
+  missingEntities: [],
+  clarificationQuestions: [],
+  warnings: [],
+  confirmationTier: 'HIGH',
+  executionSteps: [
+    {
+      stepId: 'register-treasury-transfer-1',
+      capability: 'REGISTER_TREASURY_TRANSFER',
+      arguments: {
+        sourceAccount: 'BANK',
+        destinationAccount: 'CASH',
+        amount: 200000,
+      },
+      dependsOn: [],
+      estimatedEffects: [],
+      reversibility: 'NONE',
+    },
+  ],
+  preview: {
+    title: 'Register Treasury Transfer',
+    fields: [],
+    warnings: [],
+    estimatedEffects: [],
+    confirmationTier: 'HIGH',
+    category: 'TREASURY',
+  },
+  workspaceVersion: 1,
+  entityVersions: {},
+  fingerprint: transferFingerprint,
+};
+
+const transferResult = {
+  actionId: 'REGISTER_TREASURY_TRANSFER',
+  executionState: 'EXECUTED',
+  success: true,
+  affectedEntities: [],
+  generatedEvents: [],
+  receipt: {
+    kind: 'TREASURY_TRANSFER',
+    transferId: 'ai-action-run:run-tt-1',
+    sourceAccount: 'BANK',
+    destinationAccount: 'CASH',
+    amount: '200000.00',
+    currency: 'MXN',
+  },
+  warnings: [],
+  rollbackPossible: false,
+};
+
+function makeTransferRunner(overrides: {
+  status?: AIActionRunStatus;
+  outflow?: { id: string; deletedAt: Date | null } | null;
+  inflow?: { id: string; deletedAt: Date | null } | null;
+  bindingExecute?: jest.Mock;
+}) {
+  const run = {
+    id: 'run-tt-1',
+    tenantId: 't1',
+    conversationId: 'c1',
+    intent: 'REGISTER_TREASURY_TRANSFER',
+    status: overrides.status ?? AIActionRunStatus.EXECUTING,
+    planFingerprint: transferFingerprint,
+    confirmedAt: new Date(),
+    proposedPlan: transferPlan,
+    result: null,
+  };
+
+  const outflowKey = 'treasury-transfer:ai-action-run:run-tt-1:outflow';
+  const inflowKey = 'treasury-transfer:ai-action-run:run-tt-1:inflow';
+
+  const findTreasury = async ({ where }: any) => {
+    if (where.provenanceKey === outflowKey) {
+      return overrides.outflow === undefined
+        ? { id: 'out-1', deletedAt: null }
+        : overrides.outflow;
+    }
+    if (where.provenanceKey === inflowKey) {
+      return overrides.inflow === undefined
+        ? { id: 'in-1', deletedAt: null }
+        : overrides.inflow;
+    }
+    return null;
+  };
+
+  const prisma = {
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        aIActionRun: {
+          findFirst: jest.fn(async () => ({ ...run })),
+          findFirstOrThrow: jest.fn(async () => ({ ...run })),
+          updateMany: jest.fn(async () => ({ count: 0 })),
+        },
+        treasuryEntry: { findFirst: jest.fn(findTreasury) },
+        aIAuditEvent: { create: jest.fn(async () => ({})) },
+      };
+      return fn(tx);
+    }),
+    aIActionRun: {
+      findFirst: jest.fn(async () => ({ ...run })),
+    },
+    aIRequest: { findFirst: jest.fn(async () => null) },
+    treasuryEntry: { findFirst: jest.fn(findTreasury) },
+  };
+
+  const runtime = {
+    completeExecution: jest.fn(async () => ({
+      ...run,
+      status: AIActionRunStatus.COMPLETED,
+      result: { businessActionResult: transferResult, recovered: true },
+    })),
+    failExecution: jest.fn(async () => ({})),
+  };
+
+  const planner = {
+    validatePlanStillCurrent: jest.fn(() => ({ current: true, reasons: [] })),
+  };
+
+  const binding = {
+    capability: 'REGISTER_TREASURY_TRANSFER',
+    version: '1.0.0',
+    mode: 'WRITE',
+    bindingName: 'register_treasury_transfer_canonical@1.0.0',
+    mapInput: jest.fn(() => ({
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 200000,
+      registerIdempotencyKey: 'ai-action-run:run-tt-1',
+    })),
+    inputSchema: { parse: jest.fn((v) => v) },
+    execute: overrides.bindingExecute ?? jest.fn(async () => transferResult),
+  };
+
+  const writeRegistry = {
+    hasBinding: jest.fn((c: string) => c === 'REGISTER_TREASURY_TRANSFER'),
+    getBinding: jest.fn(() => binding),
+    listBindings: jest.fn(() => [binding]),
+  };
+
+  const runner = new WritePlanRunner(
+    prisma as never,
+    runtime as never,
+    planner as never,
+    writeRegistry as never,
+  );
+
+  return { runner, runtime, binding, prisma };
+}
+
+describe('WritePlanRunner REGISTER_TREASURY_TRANSFER dual-leg recovery', () => {
+  it('EXECUTING + both active legs recovers COMPLETED', async () => {
+    const { runner, runtime, binding } = makeTransferRunner({
+      status: AIActionRunStatus.EXECUTING,
+      outflow: { id: 'out-1', deletedAt: null },
+      inflow: { id: 'in-1', deletedAt: null },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    expect(binding.execute).toHaveBeenCalledTimes(1);
+    expect(runtime.completeExecution).toHaveBeenCalled();
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+    expect(result.interactionState).toBe('COMPLETED');
+    expect(result.recovered).toBe(true);
+  });
+
+  it('EXECUTING + both reversed → STALE_TREASURY_TRANSFER_REVERSED (no re-apply)', async () => {
+    const deleted = new Date();
+    const { runner, runtime, binding } = makeTransferRunner({
+      status: AIActionRunStatus.EXECUTING,
+      outflow: { id: 'out-1', deletedAt: deleted },
+      inflow: { id: 'in-1', deletedAt: deleted },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.completeExecution).not.toHaveBeenCalled();
+    expect(runtime.failExecution).toHaveBeenCalledWith(
+      't1',
+      'u1',
+      'run-tt-1',
+      'STALE_TREASURY_TRANSFER_REVERSED',
+      expect.anything(),
+    );
+    expect(result.interactionState).toBe('STALE_PLAN');
+    expect(result.message).toMatch(/revertida en Tesorería/);
+    expect(result.receipt).toBeNull();
+  });
+
+  it('FAILED + both reversed → typed stale without re-apply', async () => {
+    const deleted = new Date();
+    const { runner, runtime, binding } = makeTransferRunner({
+      status: AIActionRunStatus.FAILED,
+      outflow: { id: 'out-1', deletedAt: deleted },
+      inflow: { id: 'in-1', deletedAt: deleted },
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+    expect(result.interactionState).toBe('STALE_PLAN');
+  });
+
+  it('EXECUTING + one leg missing → invariant failure', async () => {
+    const { runner, runtime, binding } = makeTransferRunner({
+      status: AIActionRunStatus.EXECUTING,
+      outflow: { id: 'out-1', deletedAt: null },
+      inflow: null,
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.completeExecution).not.toHaveBeenCalled();
+    expect(runtime.failExecution).toHaveBeenCalledWith(
+      't1',
+      'u1',
+      'run-tt-1',
+      'CANONICAL_TREASURY_TRANSFER_INVARIANT',
+      expect.anything(),
+    );
+    expect(result.receipt).toBeNull();
+  });
+
+  it('EXECUTING + neither leg → IN_PROGRESS', async () => {
+    const { runner, runtime, binding } = makeTransferRunner({
+      status: AIActionRunStatus.EXECUTING,
+      outflow: null,
+      inflow: null,
+    });
+    const result = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(runtime.failExecution).not.toHaveBeenCalled();
+    expect(result.executionState).toBe('IN_PROGRESS');
+    expect(result.message).toMatch(/transferencia se está registrando/);
+  });
+
+  it('reversed transfer recovery retry is stable', async () => {
+    const deleted = new Date();
+    const { runner, binding } = makeTransferRunner({
+      status: AIActionRunStatus.FAILED,
+      outflow: { id: 'out-1', deletedAt: deleted },
+      inflow: { id: 'in-1', deletedAt: deleted },
+    });
+    const a = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    const b = await runner.confirmAndExecute({
+      tenantId: 't1',
+      userId: 'u1',
+      actionRunId: 'run-tt-1',
+      expectedFingerprint: transferFingerprint,
+    });
+    expect(binding.execute).not.toHaveBeenCalled();
+    expect(a.message).toBe(b.message);
+    expect(a.interactionState).toBe('STALE_PLAN');
+    expect(b.interactionState).toBe('STALE_PLAN');
+  });
+});

@@ -174,6 +174,36 @@ describe('assistant response safety validation', () => {
     );
   });
 
+  it('accepts canonical REGISTER_TREASURY_TRANSFER SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. La transferencia quedó registrada.',
+      executableWrite: true,
+      capability: 'REGISTER_TREASURY_TRANSFER',
+      receipt: {
+        kind: 'TREASURY_TRANSFER',
+        transferId: 'ai-action-run:run-1',
+        sourceAccount: 'BANK',
+        destinationAccount: 'CASH',
+        amount: '200000.00',
+        currency: 'MXN',
+      },
+    });
+    const result = validateAssistantResponse('REGISTER_TREASURY_TRANSFER', candidate);
+    assert.equal(result.kind, 'VALID');
+  });
+
+  it('blocks malformed REGISTER_TREASURY_TRANSFER success', () => {
+    const result = validateAssistantResponse(
+      'REGISTER_TREASURY_TRANSFER',
+      response('COMPLETED', 'SUCCESS_RECEIPT', {
+        message: 'Listo',
+        executableWrite: true,
+        receipt: { amount: '1' },
+      }),
+    );
+    assert.equal(result.kind, 'FAIL_CLOSED');
+  });
+
   it('still blocks COMPLETED for unbound write intents (settlement/crypto)', () => {
     for (const intent of [
       'REGISTER_SETTLEMENT',

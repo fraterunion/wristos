@@ -6,6 +6,7 @@ import { RegisterPurchaseWriteBinding } from '../write/register-purchase.binding
 import { RegisterPayablePaymentWriteBinding } from '../write/register-payable-payment.binding';
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
+import { RegisterTreasuryTransferWriteBinding } from '../write/register-treasury-transfer.binding';
 import { UpdateClientWriteBinding } from '../write/update-client.binding';
 
 function buildRegistry() {
@@ -57,6 +58,15 @@ function buildRegistry() {
       bindingName: 'register_payable_payment_canonical@1.0.0',
     },
   );
+  const treasuryTransfer = Object.assign(
+    new RegisterTreasuryTransferWriteBinding({} as never, {} as never),
+    {
+      capability: 'REGISTER_TREASURY_TRANSFER',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'register_treasury_transfer_canonical@1.0.0',
+    },
+  );
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
@@ -65,16 +75,17 @@ function buildRegistry() {
     createClient,
     updateClient,
     payablePayment,
+    treasuryTransfer,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly seven WRITE bindings including REGISTER_PAYABLE_PAYMENT', () => {
+  it('contains exactly eight WRITE bindings including REGISTER_TREASURY_TRANSFER', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(7);
+    expect(bindings).toHaveLength(8);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
       'REGISTER_EXPENSE',
@@ -82,6 +93,7 @@ describe('WriteCapabilityBindingRegistry', () => {
       'REGISTER_PURCHASE',
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_SALE',
+      'REGISTER_TREASURY_TRANSFER',
       'UPDATE_CLIENT',
     ]);
     expect(bindings.every((b) => b.mode === 'WRITE')).toBe(true);
@@ -90,7 +102,6 @@ describe('WriteCapabilityBindingRegistry', () => {
 
   it.each([
     'REGISTER_SETTLEMENT',
-    'REGISTER_TREASURY_TRANSFER',
     'REGISTER_CRYPTO_POSITION',
     'REGISTER_CRYPTO_PRICE',
     'DELETE_CLIENT',
@@ -132,6 +143,13 @@ describe('WriteCapabilityBindingRegistry', () => {
         mode: 'WRITE',
       },
     );
+    const treasuryTransfer = Object.assign(
+      new RegisterTreasuryTransferWriteBinding({} as never, {} as never),
+      {
+        capability: 'REGISTER_TREASURY_TRANSFER',
+        mode: 'WRITE',
+      },
+    );
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
@@ -146,9 +164,10 @@ describe('WriteCapabilityBindingRegistry', () => {
       createClient,
       wrong,
       payablePayment,
+      treasuryTransfer,
     );
     expect(() => registry.onModuleInit()).toThrow(
-      /UPDATE_CLIENT, and REGISTER_PAYABLE_PAYMENT/,
+      /REGISTER_TREASURY_TRANSFER/,
     );
   });
 });

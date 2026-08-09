@@ -16,6 +16,136 @@ function match(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function fakeTreasuryAccount(fragment: string): 'CASH' | 'BANK' | 'CESAR' | null {
+  const t = fragment.trim().toLowerCase();
+  if (/efectivo|caja|\bcash\b/.test(t)) return 'CASH';
+  if (/banco|bancos|cuenta bancaria/.test(t)) return 'BANK';
+  if (/c[eé]sar|cuenta de c[eé]sar|cuenta c[eé]sar/.test(t)) return 'CESAR';
+  return null;
+}
+
+function classifyTreasuryTransfer(t: string): FakeOutput | null {
+  // Capital / ownership language must NOT become a treasury transfer.
+  if (
+    /utilidad|socio|aport[oó]|aportaci[oó]n|retir[eé].*utilidad|p[aá]gale? la utilidad|retiro del socio/.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+  // Avoid \\b around accented verbs like "transferí" (í is non-word in JS).
+  if (
+    !/(?:^|\s)(?:pasa|pasar|mueve|mover|transfiere|transferir|transfer[ií]|manda|mandar)(?:\s|$)/.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+  if (!/(?:efectivo|caja|banco|bancos|c[eé]sar|cash|cuenta bancaria)/.test(t)) {
+    return null;
+  }
+
+  let source: 'CASH' | 'BANK' | 'CESAR' | null = null;
+  let destination: 'CASH' | 'BANK' | 'CESAR' | null = null;
+
+  // "de X a Y" / "desde X a Y" — capture full account phrases (e.g. "cuenta césar")
+  const deA = t.match(/(?:de|desde)\s+(.+?)\s+a\s+(.+)$/);
+  if (deA) {
+    source = fakeTreasuryAccount(deA[1]);
+    destination = fakeTreasuryAccount(deA[2]);
+  }
+
+  // "a Y desde X"
+  if (!source || !destination) {
+    const aDesde = t.match(/a\s+(.+?)\s+desde\s+(.+)$/);
+    if (aDesde) {
+      destination = fakeTreasuryAccount(aDesde[1]);
+      source = fakeTreasuryAccount(aDesde[2]);
+    }
+  }
+
+  // "De X manda/pasa … a Y"
+  if (!source || !destination) {
+    const deManda = t.match(
+      /^de\s+(.+?)\s+(?:manda|pasa|mueve|transfiere)\s+.+?\s+a\s+(.+)$/,
+    );
+    if (deManda) {
+      source = fakeTreasuryAccount(deManda[1]);
+      destination = fakeTreasuryAccount(deManda[2]);
+    }
+  }
+
+  // "Transferí / Mueve efectivo a bancos" (no explicit "de")
+  if (!source || !destination) {
+    const bare = t.match(
+      /(?:pasa|pasar|mueve|mover|transfiere|transferir|transfer[ií]|manda|mandar)\s+(?:[\d.,]+\s*(?:mil|k|millones)?\s+(?:de\s+)?)?(.+?)\s+a\s+(.+)$/,
+    );
+    if (bare) {
+      source = fakeTreasuryAccount(bare[1]);
+      destination = fakeTreasuryAccount(bare[2]);
+    }
+  }
+
+  if (/crypto|usdt|bitcoin|btc|d[oó]lares|\busd\b/.test(t)) {
+    return {
+      intent: 'REGISTER_TREASURY_TRANSFER',
+      entities: {},
+      missingEntities: ['sourceAccount', 'destinationAccount', 'amount'],
+      ambiguities: [
+        {
+          field: 'currency',
+          reason: 'Treasury transfers are MXN only between CASH|BANK|CESAR',
+          candidates: [],
+        },
+      ],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
+  const amountMatch = t.match(/([\d.,]+ ?(mil|k|millones)?)/);
+  let amount: string | undefined;
+  if (amountMatch) {
+    const raw = amountMatch[1];
+    if (/millones/.test(raw)) {
+      const n = Number(raw.replace(/millones|,/g, '').trim());
+      amount = String(Math.round(n * 1_000_000));
+    } else {
+      amount = String(parseFakeAmount(raw));
+    }
+  }
+
+  const entities: Record<string, string> = {};
+  if (source) entities.sourceAccount = source;
+  if (destination) entities.destinationAccount = destination;
+  if (amount) entities.amount = amount;
+  entities.currency = 'MXN';
+
+  const missing: string[] = [];
+  if (!source) missing.push('sourceAccount');
+  if (!destination) missing.push('destinationAccount');
+  if (!amount) missing.push('amount');
+  if (source && destination && source === destination) {
+    return {
+      intent: 'REGISTER_TREASURY_TRANSFER',
+      entities: { ...entities, destinationAccount: destination },
+      missingEntities: ['destinationAccount'],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
+  return {
+    intent: 'REGISTER_TREASURY_TRANSFER',
+    entities,
+    missingEntities: missing,
+    ambiguities: [],
+    confidence: missing.length ? 'MEDIUM' : 'HIGH',
+    language: 'es',
+  };
+}
+
 function classify(
   text: string,
   currentDate: string,
@@ -260,6 +390,28 @@ function classify(
     return { intent: 'REGISTER_SALE', entities: { watchQuery: t.replace(/^vend[ií] /, '').replace(/\.$/, '') }, missingEntities: ['watchId', 'customerId', 'price', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
 
+  // Capital / ownership economics stay unbound (before transfer/payable/expense).
+  if (
+    /retir[eé].*(utilidad|para c[eé]sar)|retir[eé] .*c[eé]sar|p[aá]gale? la utilidad|retiro del socio|aport[oó] \d|c[eé]sar aport|aportaci[oó]n/.test(
+      t,
+    )
+  ) {
+    return {
+      intent: 'UNKNOWN',
+      entities: {},
+      missingEntities: [],
+      ambiguities: [{ field: 'intent', reason: 'capital movement is not REGISTER_TREASURY_TRANSFER' }],
+      confidence: 'LOW',
+      language: 'es',
+    };
+  }
+
+  // Internal treasury transfers (before payable/expense) — not capital withdrawals.
+  {
+    const transfer = classifyTreasuryTransfer(t);
+    if (transfer) return transfer;
+  }
+
   // Settlement language must stay REGISTER_SETTLEMENT (unbound) — not cash payable payment.
   if (/compensa|aplica.*(saldo a favor|cuenta a favor)|compensa.*(debe|debemos)/.test(t)) {
     return {
@@ -275,7 +427,9 @@ function classify(
   // Payable cash payment — before "X le pagó a Y" settlement-style receivable path.
   // Expense "paga renta" etc. handled later; exclude common OpEx nouns here.
   if (
-    !/\b(renta|gasolina|estacionamiento|comida|publicidad|n[oó]mina|salario)\b/.test(t) &&
+    !/\b(renta|gasolina|estacionamiento|comida|publicidad|n[oó]mina|salario|utilidad|socio)\b/.test(
+      t,
+    ) &&
     (/\bp[aá]gale?\b/.test(t) ||
       /\babona\b/.test(t) ||
       /\bliquida(?:lo|la|)\b/.test(t) ||
@@ -349,7 +503,9 @@ function classify(
       language: 'es',
     };
   }
-  const paymentMatch = t.match(/([a-záéíóúñ]+) me pag[oó] ([\d.,]+ ?(mil|k)?)(.*)/);
+  const paymentMatch = t.match(
+    /([a-záéíóúñ]+) me (?:pag[oó]|deposit[oó]) ([\d.,]+ ?(mil|k)?)(.*)/,
+  );
   if (paymentMatch) {
     const rest = paymentMatch[4] ?? '';
     let destination: string | undefined;
@@ -509,34 +665,24 @@ function classify(
       language: 'es',
     };
   }
-  if (/compr[eé].*\b(usdt|crypto|bitcoin)\b|\bagrega ([\d.,]+) usdt/.test(t)) {
-    const m = t.match(/([\d.,]+)\s*usdt/) ?? t.match(/agrega ([\d.,]+) usdt/);
+  if (
+    /compr[eéa].*\b(usdt|crypto|bitcoin)\b|\bagrega ([\d.,]+) usdt|\bcompra\s+([\d.,]+ ?(mil|k)?)\s+de\s+usdt/.test(
+      t,
+    )
+  ) {
+    const m =
+      t.match(/([\d.,]+)\s*usdt/) ??
+      t.match(/agrega ([\d.,]+) usdt/) ??
+      t.match(/compra\s+([\d.,]+ ?(mil|k)?)\s+de\s+usdt/);
+    const quantity = m
+      ? String(/mil|k/.test(m[1]) ? parseFakeAmount(m[1]) : m[1].replace(/,/g, ''))
+      : undefined;
     return {
       intent: 'REGISTER_CRYPTO_POSITION',
-      entities: { asset: 'USDT', ...(m ? { quantity: m[1].replace(/,/g, '') } : {}) },
-      missingEntities: m ? ['cost', 'currency'] : ['quantity', 'cost', 'currency'],
+      entities: { asset: 'USDT', ...(quantity ? { quantity } : {}) },
+      missingEntities: quantity ? ['cost', 'currency'] : ['quantity', 'cost', 'currency'],
       ambiguities: [],
       confidence: 'HIGH',
-      language: 'es',
-    };
-  }
-  if (/transfer[ií].*(bancos|efectivo)|de bancos a efectivo|de efectivo a bancos/.test(t)) {
-    return {
-      intent: 'UNKNOWN',
-      entities: {},
-      missingEntities: [],
-      ambiguities: [{ field: 'intent', reason: 'treasury transfer is not REGISTER_EXPENSE' }],
-      confidence: 'LOW',
-      language: 'es',
-    };
-  }
-  if (/retir[eé].*(utilidad|para c[eé]sar)|retir[eé] .*c[eé]sar/.test(t)) {
-    return {
-      intent: 'UNKNOWN',
-      entities: {},
-      missingEntities: [],
-      ambiguities: [{ field: 'intent', reason: 'capital movement is not REGISTER_EXPENSE' }],
-      confidence: 'LOW',
       language: 'es',
     };
   }

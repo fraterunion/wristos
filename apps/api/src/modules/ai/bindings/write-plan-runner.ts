@@ -21,6 +21,13 @@ import { registerExpenseIdempotencyKey } from './write/register-expense.binding'
 import { registerPurchaseIdempotencyKey } from './write/register-purchase.binding';
 import { registerPayablePaymentIdempotencyKey } from './write/register-payable-payment.binding';
 import { registerReceivablePaymentIdempotencyKey } from './write/register-receivable-payment.binding';
+import {
+  registerTreasuryTransferIdempotencyKey,
+} from './write/register-treasury-transfer.binding';
+import {
+  treasuryTransferInflowProvenanceKey,
+  treasuryTransferOutflowProvenanceKey,
+} from '../../treasury/treasury-transfer.service';
 import { WriteExecutionContext } from './write/write-capability-binding-definition';
 
 export type ConfirmWriteResult = {
@@ -60,12 +67,20 @@ type ClaimResult =
   | { kind: 'RECOVER'; run: AIActionRun; priorStatus: AIActionRunStatus }
   | { kind: 'IN_PROGRESS'; run: AIActionRun }
   | { kind: 'PAYABLE_REVERSED'; run: AIActionRun }
-  | { kind: 'PAYABLE_INVARIANT'; run: AIActionRun; code: string };
+  | { kind: 'PAYABLE_INVARIANT'; run: AIActionRun; code: string }
+  | { kind: 'TREASURY_TRANSFER_REVERSED'; run: AIActionRun }
+  | { kind: 'TREASURY_TRANSFER_INVARIANT'; run: AIActionRun; code: string };
 
 type PayableMarkerClassification =
   | { kind: 'ACTIVE' }
   | { kind: 'REVERSED' }
   | { kind: 'MISSING_TREASURY' }
+  | { kind: 'NONE' };
+
+type TreasuryTransferMarkerClassification =
+  | { kind: 'ACTIVE' }
+  | { kind: 'REVERSED' }
+  | { kind: 'INVARIANT' }
   | { kind: 'NONE' };
 
 export function registerSaleIdempotencyKey(actionRunId: string): string {
@@ -78,6 +93,9 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
   }
   if (intent === 'REGISTER_PAYABLE_PAYMENT') {
     return registerPayablePaymentIdempotencyKey(actionRunId);
+  }
+  if (intent === 'REGISTER_TREASURY_TRANSFER') {
+    return registerTreasuryTransferIdempotencyKey(actionRunId);
   }
   if (intent === 'REGISTER_EXPENSE') {
     return registerExpenseIdempotencyKey(actionRunId);
@@ -93,13 +111,14 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
 
 function capabilityLabel(
   capability: string,
-): 'venta' | 'pago' | 'gasto' | 'compra' | 'cliente' | 'actualizacion' {
+): 'venta' | 'pago' | 'gasto' | 'compra' | 'cliente' | 'actualizacion' | 'transferencia' {
   if (
     capability === 'REGISTER_RECEIVABLE_PAYMENT' ||
     capability === 'REGISTER_PAYABLE_PAYMENT'
   ) {
     return 'pago';
   }
+  if (capability === 'REGISTER_TREASURY_TRANSFER') return 'transferencia';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
@@ -125,6 +144,8 @@ export class WritePlanRunner {
  * - REGISTER_RECEIVABLE_PAYMENT → AccountPayment.registerIdempotencyKey
  *   or AccountSettlement.idempotencyKey (APPLY_TO_PAYABLE)
  * - REGISTER_PAYABLE_PAYMENT → AccountPayment.registerIdempotencyKey
+ * - REGISTER_TREASURY_TRANSFER → paired TreasuryEntry provenance
+ *   treasury-transfer:ai-action-run:<id>:outflow|inflow
  * - REGISTER_EXPENSE → OperatingExpense.registerIdempotencyKey
  * - REGISTER_PURCHASE → Watch.registerIdempotencyKey
  * - CREATE_CLIENT → Client.registerIdempotencyKey
@@ -199,7 +220,47 @@ export class WritePlanRunner {
       };
     }
 
+    if (claim.kind === 'TREASURY_TRANSFER_REVERSED') {
+      if (claim.run.status === AIActionRunStatus.EXECUTING) {
+        await this.runtime.failExecution(
+          args.tenantId,
+          args.userId,
+          claim.run.id,
+          'STALE_TREASURY_TRANSFER_REVERSED',
+          { planFingerprint: args.expectedFingerprint },
+        );
+      }
+      return {
+        actionRun: claim.run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'La transferencia se registró anteriormente, pero después fue revertida en Tesorería. No voy a volver a aplicarla automáticamente.',
+        receipt: null,
+        planFingerprint: claim.run.planFingerprint,
+        executableWrite: true,
+        capability: claim.run.intent,
+      };
+    }
+
     if (claim.kind === 'PAYABLE_INVARIANT') {
+      if (claim.run.status === AIActionRunStatus.EXECUTING) {
+        await this.runtime.failExecution(
+          args.tenantId,
+          args.userId,
+          claim.run.id,
+          claim.code,
+          { planFingerprint: args.expectedFingerprint },
+        );
+      }
+      return this.failureEnvelope(claim.run, claim.code);
+    }
+
+    if (claim.kind === 'TREASURY_TRANSFER_INVARIANT') {
       if (claim.run.status === AIActionRunStatus.EXECUTING) {
         await this.runtime.failExecution(
           args.tenantId,
@@ -231,7 +292,9 @@ export class WritePlanRunner {
                 ? 'La compra se está registrando. Reintenta la misma confirmación en un momento. No inicies una compra nueva.'
                 : label === 'cliente'
                   ? 'El cliente se está creando. Reintenta la misma confirmación en un momento. No inicies un alta nueva.'
-                  : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
+                  : label === 'transferencia'
+                    ? 'La transferencia se está registrando. Reintenta la misma confirmación en un momento. No inicies una transferencia nueva.'
+                    : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
         receipt: null,
         planFingerprint: claim.run.planFingerprint,
         executableWrite: true,
@@ -523,13 +586,15 @@ export class WritePlanRunner {
         run.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
         run.intent === 'REGISTER_PAYABLE_PAYMENT'
           ? 'CANONICAL_PAYMENT_COMMITTED_RUNTIME_PENDING'
-          : run.intent === 'REGISTER_EXPENSE'
-            ? 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING'
-            : run.intent === 'REGISTER_PURCHASE'
-              ? 'CANONICAL_PURCHASE_COMMITTED_RUNTIME_PENDING'
-              : run.intent === 'CREATE_CLIENT'
-                ? 'CANONICAL_CLIENT_COMMITTED_RUNTIME_PENDING'
-                : 'CANONICAL_SALE_COMMITTED_RUNTIME_PENDING';
+          : run.intent === 'REGISTER_TREASURY_TRANSFER'
+            ? 'CANONICAL_TREASURY_TRANSFER_COMMITTED_RUNTIME_PENDING'
+            : run.intent === 'REGISTER_EXPENSE'
+              ? 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING'
+              : run.intent === 'REGISTER_PURCHASE'
+                ? 'CANONICAL_PURCHASE_COMMITTED_RUNTIME_PENDING'
+                : run.intent === 'CREATE_CLIENT'
+                  ? 'CANONICAL_CLIENT_COMMITTED_RUNTIME_PENDING'
+                  : 'CANONICAL_SALE_COMMITTED_RUNTIME_PENDING';
       throw new ConflictException(
         `${prefix}: ${
           originalError instanceof Error ? originalError.constructor.name : 'UnknownError'
@@ -566,6 +631,34 @@ export class WritePlanRunner {
     return null;
   }
 
+  /**
+   * REGISTER_TREASURY_TRANSFER recovery inspects both provenance legs.
+   * Both active → recover; both reversed → typed stale; unpaired → invariant;
+   * neither → none (IN_PROGRESS / not committed).
+   */
+  private async classifyTreasuryTransferRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    if (run.intent !== 'REGISTER_TREASURY_TRANSFER') return null;
+    const marker = await this.inspectTreasuryTransferMarker(tenantId, run.id, db);
+    if (marker.kind === 'ACTIVE') {
+      return { kind: 'RECOVER', run, priorStatus: run.status };
+    }
+    if (marker.kind === 'REVERSED') {
+      return { kind: 'TREASURY_TRANSFER_REVERSED', run };
+    }
+    if (marker.kind === 'INVARIANT') {
+      return {
+        kind: 'TREASURY_TRANSFER_INVARIANT',
+        run,
+        code: 'CANONICAL_TREASURY_TRANSFER_INVARIANT',
+      };
+    }
+    return null;
+  }
+
   private async inspectPayablePaymentMarker(
     tenantId: string,
     actionRunId: string,
@@ -590,6 +683,44 @@ export class WritePlanRunner {
     });
     if (!treasury) return { kind: 'MISSING_TREASURY' };
     return { kind: 'ACTIVE' };
+  }
+
+  private async inspectTreasuryTransferMarker(
+    tenantId: string,
+    actionRunId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<TreasuryTransferMarkerClassification> {
+    const logicalKey = registerTreasuryTransferIdempotencyKey(actionRunId);
+    const outflowKey = treasuryTransferOutflowProvenanceKey(logicalKey);
+    const inflowKey = treasuryTransferInflowProvenanceKey(logicalKey);
+    const outflow = await db.treasuryEntry.findFirst({
+      where: { tenantId, provenanceKey: outflowKey },
+      select: { id: true, deletedAt: true },
+    });
+    const inflow = await db.treasuryEntry.findFirst({
+      where: { tenantId, provenanceKey: inflowKey },
+      select: { id: true, deletedAt: true },
+    });
+    if (!outflow && !inflow) return { kind: 'NONE' };
+    if (!outflow || !inflow) return { kind: 'INVARIANT' };
+    if (outflow.deletedAt && inflow.deletedAt) return { kind: 'REVERSED' };
+    if (Boolean(outflow.deletedAt) !== Boolean(inflow.deletedAt)) {
+      return { kind: 'INVARIANT' };
+    }
+    if (!outflow.deletedAt && !inflow.deletedAt) return { kind: 'ACTIVE' };
+    return { kind: 'INVARIANT' };
+  }
+
+  /** Payable + treasury-transfer typed recovery before generic marker / IN_PROGRESS. */
+  private async classifyWriteRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    return (
+      (await this.classifyPayableRecoveryClaim(tenantId, run, db)) ??
+      (await this.classifyTreasuryTransferRecoveryClaim(tenantId, run, db))
+    );
   }
 
   private async findCommittedWriteMarker(
@@ -617,6 +748,10 @@ export class WritePlanRunner {
         select: { id: true },
       });
       return Boolean(payment);
+    }
+    if (intent === 'REGISTER_TREASURY_TRANSFER') {
+      const marker = await this.inspectTreasuryTransferMarker(tenantId, actionRunId, db);
+      return marker.kind === 'ACTIVE';
     }
     if (intent === 'REGISTER_EXPENSE') {
       const expense = await db.operatingExpense.findFirst({
@@ -674,12 +809,12 @@ export class WritePlanRunner {
       }
 
       if (current.status === AIActionRunStatus.EXECUTING) {
-        const payableClaim = await this.classifyPayableRecoveryClaim(
+        const recoveryClaim = await this.classifyWriteRecoveryClaim(
           args.tenantId,
           current,
           tx,
         );
-        if (payableClaim) return payableClaim;
+        if (recoveryClaim) return recoveryClaim;
         if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
@@ -687,12 +822,12 @@ export class WritePlanRunner {
       }
 
       if (current.status === AIActionRunStatus.FAILED) {
-        const payableClaim = await this.classifyPayableRecoveryClaim(
+        const recoveryClaim = await this.classifyWriteRecoveryClaim(
           args.tenantId,
           current,
           tx,
         );
-        if (payableClaim) return payableClaim;
+        if (recoveryClaim) return recoveryClaim;
         if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
@@ -703,12 +838,12 @@ export class WritePlanRunner {
         throw new ConflictException('AI action run is not ready for confirmation');
       }
       if (current.confirmedAt) {
-        const payableClaim = await this.classifyPayableRecoveryClaim(
+        const recoveryClaim = await this.classifyWriteRecoveryClaim(
           args.tenantId,
           current,
           tx,
         );
-        if (payableClaim) return payableClaim;
+        if (recoveryClaim) return recoveryClaim;
         if (await this.findCommittedWriteMarker(args.tenantId, current.intent, current.id, tx)) {
           return { kind: 'RECOVER' as const, run: current, priorStatus: current.status };
         }
@@ -740,12 +875,12 @@ export class WritePlanRunner {
           return { kind: 'REPLAY' as const, run: again };
         }
         if (again?.status === AIActionRunStatus.EXECUTING) {
-          const payableClaim = await this.classifyPayableRecoveryClaim(
+          const recoveryClaim = await this.classifyWriteRecoveryClaim(
             args.tenantId,
             again,
             tx,
           );
-          if (payableClaim) return payableClaim;
+          if (recoveryClaim) return recoveryClaim;
           if (await this.findCommittedWriteMarker(args.tenantId, again.intent, again.id, tx)) {
             return { kind: 'RECOVER' as const, run: again, priorStatus: again.status };
           }
@@ -909,29 +1044,33 @@ export class WritePlanRunner {
       interactionState: 'COMPLETED',
       responseType: 'SUCCESS_RECEIPT',
       message:
-        label === 'pago'
+        label === 'transferencia'
           ? meta.recovered || meta.replayed
-            ? 'Listo. El pago ya estaba registrado.'
-            : 'Listo. El pago quedó registrado.'
-          : label === 'gasto'
+            ? 'Listo. La transferencia ya estaba registrada.'
+            : 'Listo. La transferencia quedó registrada.'
+          : label === 'pago'
             ? meta.recovered || meta.replayed
-              ? 'Listo. El gasto ya estaba registrado.'
-              : 'Listo. El gasto quedó registrado.'
-            : label === 'compra'
+              ? 'Listo. El pago ya estaba registrado.'
+              : 'Listo. El pago quedó registrado.'
+            : label === 'gasto'
               ? meta.recovered || meta.replayed
-                ? 'Listo. La compra ya estaba registrada.'
-                : 'Listo. La compra quedó registrada.'
-              : label === 'cliente'
+                ? 'Listo. El gasto ya estaba registrado.'
+                : 'Listo. El gasto quedó registrado.'
+              : label === 'compra'
                 ? meta.recovered || meta.replayed
-                  ? 'Listo. El cliente ya estaba creado.'
-                  : 'Listo. El cliente quedó creado.'
-                : label === 'actualizacion'
+                  ? 'Listo. La compra ya estaba registrada.'
+                  : 'Listo. La compra quedó registrada.'
+                : label === 'cliente'
                   ? meta.recovered || meta.replayed
-                    ? 'Listo. El cliente ya estaba actualizado.'
-                    : 'Listo. El cliente quedó actualizado.'
-                  : meta.recovered || meta.replayed
-                    ? 'Listo. La venta ya estaba registrada.'
-                    : 'Listo. La venta quedó registrada.',
+                    ? 'Listo. El cliente ya estaba creado.'
+                    : 'Listo. El cliente quedó creado.'
+                  : label === 'actualizacion'
+                    ? meta.recovered || meta.replayed
+                      ? 'Listo. El cliente ya estaba actualizado.'
+                      : 'Listo. El cliente quedó actualizado.'
+                    : meta.recovered || meta.replayed
+                      ? 'Listo. La venta ya estaba registrada.'
+                      : 'Listo. La venta quedó registrada.',
       receipt: result.receipt,
       planFingerprint: run.planFingerprint,
       executableWrite: true,
@@ -944,6 +1083,7 @@ export class WritePlanRunner {
     if (
       failureType.startsWith('CANONICAL_SALE_COMMITTED') ||
       failureType.startsWith('CANONICAL_PAYMENT_COMMITTED') ||
+      failureType.startsWith('CANONICAL_TREASURY_TRANSFER_COMMITTED') ||
       failureType.startsWith('CANONICAL_EXPENSE_COMMITTED') ||
       failureType.startsWith('CANONICAL_PURCHASE_COMMITTED') ||
       failureType.startsWith('CANONICAL_CLIENT_COMMITTED')
@@ -957,17 +1097,19 @@ export class WritePlanRunner {
         interactionState: 'FAILED',
         responseType: 'ERROR_RECOVERY_CARD',
         message:
-          label === 'pago'
-            ? 'El pago ya quedó registrado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-            : label === 'gasto'
-              ? 'El gasto ya quedó registrado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-              : label === 'compra'
-                ? 'La compra ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-                : label === 'cliente'
-                  ? 'El cliente ya quedó creado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-                  : label === 'actualizacion'
-                    ? 'El cliente ya quedó actualizado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
-                    : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
+          label === 'transferencia'
+            ? 'La transferencia ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+            : label === 'pago'
+              ? 'El pago ya quedó registrado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+              : label === 'gasto'
+                ? 'El gasto ya quedó registrado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+                : label === 'compra'
+                  ? 'La compra ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+                  : label === 'cliente'
+                    ? 'El cliente ya quedó creado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+                    : label === 'actualizacion'
+                      ? 'El cliente ya quedó actualizado en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+                      : 'La venta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.',
         receipt: null,
         planFingerprint: run.planFingerprint,
         executableWrite: true,
