@@ -51,12 +51,14 @@ describe('StructuredAssistantService', () => {
     resumeParentAfterClient: jest.fn(),
     read: jest.fn(() => null),
   };
+  const payablePaymentResolver = { resolve: jest.fn() };
   const service = new StructuredAssistantService(
     requests as never,
     persistence as never,
     planner as never,
     readRunner as never,
     receivablePaymentResolver as never,
+    payablePaymentResolver as never,
     purchaseEntityResolver as never,
     saleCustomerEntityResolver as never,
     createClientEntityResolver as never,

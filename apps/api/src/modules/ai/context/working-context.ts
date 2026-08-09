@@ -136,7 +136,13 @@ export function intentToCandidateEntityType(intent: string | undefined): Context
     return 'WATCH';
   }
   if (intent === 'REGISTER_SALE' || intent === 'REGISTER_PURCHASE') return 'WATCH';
-  if (intent === 'REGISTER_RECEIVABLE_PAYMENT' || intent === 'REGISTER_SETTLEMENT') return 'ACCOUNT_ENTRY';
+  if (
+    intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+    intent === 'REGISTER_PAYABLE_PAYMENT' ||
+    intent === 'REGISTER_SETTLEMENT'
+  ) {
+    return 'ACCOUNT_ENTRY';
+  }
   return null;
 }
 

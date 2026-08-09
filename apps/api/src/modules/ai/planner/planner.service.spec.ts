@@ -25,11 +25,11 @@ describe('BusinessActionCatalog', () => {
       'GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INVENTORY', 'SEARCH_CLIENT', 'GET_CLIENT_ACCOUNTS',
       'GET_INVENTORY_AGING', 'GET_TOP_INVENTORY_CAPITAL', 'GET_TOP_DEBTORS', 'GET_RECEIVABLE_SUMMARY',
       'GET_SALES_MARGIN_SUMMARY', 'GET_PROFIT_BY_BRAND', 'GET_TOP_SALES', 'GET_ATTENTION_ITEMS', 'GET_BUSINESS_SUMMARY',
-      'REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_PURCHASE', 'REGISTER_EXPENSE', 'CREATE_CLIENT',
+      'REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_PAYABLE_PAYMENT', 'REGISTER_PURCHASE', 'REGISTER_EXPENSE', 'CREATE_CLIENT',
       'UPDATE_CLIENT',
       'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
     ]));
-    expect(ids).toHaveLength(23);
+    expect(ids).toHaveLength(24);
   });
 
   it('rejects unknown actions', () => {
@@ -40,7 +40,7 @@ describe('BusinessActionCatalog', () => {
 describe('BusinessCapabilityCatalog', () => {
   it('contains business meaning for V1 capabilities including operational intelligence', () => {
     const entries = new BusinessCapabilityCatalog().list();
-    expect(entries).toHaveLength(23);
+    expect(entries).toHaveLength(24);
     expect(entries.map((entry) => entry.id)).toContain('REGISTER_SALE');
     expect(entries.map((entry) => entry.id)).toContain('CREATE_CLIENT');
     expect(entries.map((entry) => entry.id)).toContain('UPDATE_CLIENT');

@@ -19,6 +19,7 @@ import { WriteCapabilityBindingRegistry } from './write-capability-binding-regis
 import { createClientIdempotencyKey } from './write/create-client.binding';
 import { registerExpenseIdempotencyKey } from './write/register-expense.binding';
 import { registerPurchaseIdempotencyKey } from './write/register-purchase.binding';
+import { registerPayablePaymentIdempotencyKey } from './write/register-payable-payment.binding';
 import { registerReceivablePaymentIdempotencyKey } from './write/register-receivable-payment.binding';
 import { WriteExecutionContext } from './write/write-capability-binding-definition';
 
@@ -67,6 +68,9 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
   if (intent === 'REGISTER_RECEIVABLE_PAYMENT') {
     return registerReceivablePaymentIdempotencyKey(actionRunId);
   }
+  if (intent === 'REGISTER_PAYABLE_PAYMENT') {
+    return registerPayablePaymentIdempotencyKey(actionRunId);
+  }
   if (intent === 'REGISTER_EXPENSE') {
     return registerExpenseIdempotencyKey(actionRunId);
   }
@@ -82,7 +86,12 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
 function capabilityLabel(
   capability: string,
 ): 'venta' | 'pago' | 'gasto' | 'compra' | 'cliente' | 'actualizacion' {
-  if (capability === 'REGISTER_RECEIVABLE_PAYMENT') return 'pago';
+  if (
+    capability === 'REGISTER_RECEIVABLE_PAYMENT' ||
+    capability === 'REGISTER_PAYABLE_PAYMENT'
+  ) {
+    return 'pago';
+  }
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
@@ -107,6 +116,7 @@ export class WritePlanRunner {
  * - REGISTER_SALE → Deal.registerIdempotencyKey
  * - REGISTER_RECEIVABLE_PAYMENT → AccountPayment.registerIdempotencyKey
  *   or AccountSettlement.idempotencyKey (APPLY_TO_PAYABLE)
+ * - REGISTER_PAYABLE_PAYMENT → AccountPayment.registerIdempotencyKey
  * - REGISTER_EXPENSE → OperatingExpense.registerIdempotencyKey
  * - REGISTER_PURCHASE → Watch.registerIdempotencyKey
  * - CREATE_CLIENT → Client.registerIdempotencyKey
@@ -462,7 +472,8 @@ export class WritePlanRunner {
         throw recoveryError;
       }
       const prefix =
-        run.intent === 'REGISTER_RECEIVABLE_PAYMENT'
+        run.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+        run.intent === 'REGISTER_PAYABLE_PAYMENT'
           ? 'CANONICAL_PAYMENT_COMMITTED_RUNTIME_PENDING'
           : run.intent === 'REGISTER_EXPENSE'
             ? 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING'
@@ -497,6 +508,13 @@ export class WritePlanRunner {
         select: { id: true },
       });
       return Boolean(settlement);
+    }
+    if (intent === 'REGISTER_PAYABLE_PAYMENT') {
+      const payment = await db.accountPayment.findFirst({
+        where: { tenantId, registerIdempotencyKey: key, deletedAt: null },
+        select: { id: true },
+      });
+      return Boolean(payment);
     }
     if (intent === 'REGISTER_EXPENSE') {
       const expense = await db.operatingExpense.findFirst({

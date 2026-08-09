@@ -3,6 +3,7 @@ import { WriteCapabilityBindingRegistry } from '../write-capability-binding-regi
 import { CreateClientWriteBinding } from '../write/create-client.binding';
 import { RegisterExpenseWriteBinding } from '../write/register-expense.binding';
 import { RegisterPurchaseWriteBinding } from '../write/register-purchase.binding';
+import { RegisterPayablePaymentWriteBinding } from '../write/register-payable-payment.binding';
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
 import { UpdateClientWriteBinding } from '../write/update-client.binding';
@@ -47,6 +48,15 @@ function buildRegistry() {
     mode: 'WRITE',
     bindingName: 'update_client_canonical@1.0.0',
   });
+  const payablePayment = Object.assign(
+    new RegisterPayablePaymentWriteBinding({} as never, {} as never),
+    {
+      capability: 'REGISTER_PAYABLE_PAYMENT',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'register_payable_payment_canonical@1.0.0',
+    },
+  );
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
@@ -54,19 +64,21 @@ function buildRegistry() {
     purchase,
     createClient,
     updateClient,
+    payablePayment,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly six WRITE bindings including UPDATE_CLIENT', () => {
+  it('contains exactly seven WRITE bindings including REGISTER_PAYABLE_PAYMENT', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(6);
+    expect(bindings).toHaveLength(7);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
       'REGISTER_EXPENSE',
+      'REGISTER_PAYABLE_PAYMENT',
       'REGISTER_PURCHASE',
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_SALE',
@@ -78,7 +90,6 @@ describe('WriteCapabilityBindingRegistry', () => {
 
   it.each([
     'REGISTER_SETTLEMENT',
-    'REGISTER_PAYABLE_PAYMENT',
     'REGISTER_CRYPTO_POSITION',
     'REGISTER_CRYPTO_PRICE',
     'DELETE_CLIENT',
@@ -113,6 +124,13 @@ describe('WriteCapabilityBindingRegistry', () => {
       capability: 'CREATE_CLIENT',
       mode: 'WRITE',
     });
+    const payablePayment = Object.assign(
+      new RegisterPayablePaymentWriteBinding({} as never, {} as never),
+      {
+        capability: 'REGISTER_PAYABLE_PAYMENT',
+        mode: 'WRITE',
+      },
+    );
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
@@ -126,9 +144,10 @@ describe('WriteCapabilityBindingRegistry', () => {
       purchase,
       createClient,
       wrong,
+      payablePayment,
     );
     expect(() => registry.onModuleInit()).toThrow(
-      /CREATE_CLIENT, and UPDATE_CLIENT/,
+      /UPDATE_CLIENT, and REGISTER_PAYABLE_PAYMENT/,
     );
   });
 });

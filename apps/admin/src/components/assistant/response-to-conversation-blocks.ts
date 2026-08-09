@@ -52,6 +52,7 @@ export type ConversationBlock =
 const MANUAL_CTA_LABEL: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_SALE: 'Abrir Ventas',
   REGISTER_RECEIVABLE_PAYMENT: 'Continuar en Cuentas',
+  REGISTER_PAYABLE_PAYMENT: 'Continuar en Cuentas',
   REGISTER_PURCHASE: 'Abrir Inventario',
   REGISTER_EXPENSE: 'Completar en Gastos',
   CREATE_CLIENT: 'Abrir CRM',
@@ -552,7 +553,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
   const executableSale =
     intent === 'REGISTER_SALE' && response.payload.executable === true;
   const executablePayment =
-    intent === 'REGISTER_RECEIVABLE_PAYMENT' && response.payload.executable === true;
+    (intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+      intent === 'REGISTER_PAYABLE_PAYMENT') &&
+    response.payload.executable === true;
   const executableExpense =
     intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
   const executablePurchase =
@@ -833,6 +836,27 @@ function paymentReceiptBlocks(response: StructuredAssistantResponse): Conversati
       const remainingCxp = formatMoney(receipt.remainingPayable, currency);
       if (cxp || remainingCxp) lines.push(`CxP ${[cxp, remainingCxp].filter(Boolean).join(' · ')}`);
       lines.push('Liquidez: Sin cambio');
+    } else if (kind === 'PAYABLE_CASH_PAYMENT') {
+      const party = asString(receipt.counterpartyLabel) ?? asString(receipt.customerName);
+      const amount = formatMoney(receipt.amount, currency);
+      if (party || amount) lines.push([party, amount].filter(Boolean).join(' · '));
+      const src =
+        asString(receipt.sourceAccountLabel) ||
+        (() => {
+          const raw = asString(receipt.sourceAccount);
+          if (raw === 'CASH') return 'Efectivo';
+          if (raw === 'BANK') return 'Bancos';
+          if (raw === 'CESAR') return 'Cuenta César';
+          return raw;
+        })();
+      if (src) lines.push(`Desde: ${src}`);
+      const remaining = formatMoney(receipt.remainingOutstanding, currency);
+      const status = asString(receipt.status);
+      if (status === 'PAID' || remaining === '$0.00' || remaining === '0.00') {
+        lines.push('Cuenta liquidada.');
+      } else if (remaining) {
+        lines.push(`Saldo pendiente: ${remaining}`);
+      }
     } else {
       const customer = asString(receipt.customerName);
       const amount = formatMoney(receipt.amount, currency);
@@ -852,7 +876,11 @@ function paymentReceiptBlocks(response: StructuredAssistantResponse): Conversati
     }
   }
   const entryId =
-    receipt && typeof receipt.receivableEntryId === 'string' ? receipt.receivableEntryId : null;
+    receipt && typeof receipt.payableEntryId === 'string'
+      ? receipt.payableEntryId
+      : receipt && typeof receipt.receivableEntryId === 'string'
+        ? receipt.receivableEntryId
+        : null;
   return [
     {
       kind: 'receipt',
@@ -918,7 +946,10 @@ export function responseToConversationBlocks(
         main = saleReceiptBlocks(response);
         break;
       }
-      if (intent === 'REGISTER_RECEIVABLE_PAYMENT') {
+      if (
+        intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+        intent === 'REGISTER_PAYABLE_PAYMENT'
+      ) {
         main = paymentReceiptBlocks(response);
         break;
       }

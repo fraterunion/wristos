@@ -20,7 +20,9 @@ import { BusinessCapabilityCatalog } from './planner/capabilities/business-capab
 import { CapabilityBindingRegistry } from './bindings/capability-binding-registry';
 import { CapabilityBindingService } from './bindings/capability-binding.service';
 import { ReadPlanRunner } from './bindings/read-plan-runner';
+import { PayablePaymentEntityResolver } from './bindings/write/payable-payment-entity-resolver.service';
 import { ReceivablePaymentEntityResolver } from './bindings/write/receivable-payment-entity-resolver.service';
+import { RegisterPayablePaymentWriteBinding } from './bindings/write/register-payable-payment.binding';
 import { CreateClientEntityResolver } from './bindings/write/create-client-entity-resolver.service';
 import { CreateClientWriteBinding } from './bindings/write/create-client.binding';
 import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
@@ -75,11 +77,13 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     ReadPlanRunner,
     RegisterSaleWriteBinding,
     RegisterReceivablePaymentWriteBinding,
+    RegisterPayablePaymentWriteBinding,
     RegisterExpenseWriteBinding,
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,
     UpdateClientWriteBinding,
     ReceivablePaymentEntityResolver,
+    PayablePaymentEntityResolver,
     PurchaseEntityResolver,
     SaleCustomerEntityResolver,
     CreateClientEntityResolver,
