@@ -74,6 +74,7 @@ export type PreviewCtaKind =
   | 'CONFIRM_PAYMENT'
   | 'CONFIRM_TRANSFER'
   | 'CONFIRM_CONTRIBUTION'
+  | 'CONFIRM_DISTRIBUTION'
   | 'CONFIRM_EXPENSE'
   | 'CONFIRM_CLIENT'
   | 'CONFIRM_CLIENT_UPDATE'
@@ -565,6 +566,8 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'REGISTER_TREASURY_TRANSFER' && response.payload.executable === true;
   const executableContribution =
     intent === 'REGISTER_CAPITAL_CONTRIBUTION' && response.payload.executable === true;
+  const executableDistribution =
+    intent === 'REGISTER_CAPITAL_DISTRIBUTION' && response.payload.executable === true;
   const executableExpense =
     intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
   const executablePurchase =
@@ -582,7 +585,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
         ? 'Voy a registrar esta compra:'
         : executableExpense
           ? 'Voy a registrar este gasto:'
-          : executableContribution
+          : executableDistribution
+            ? 'Voy a registrar esta distribución:'
+            : executableContribution
             ? 'Voy a registrar esta aportación:'
             : executableTransfer
               ? 'Voy a registrar esta transferencia:'
@@ -609,7 +614,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
             ? 'Confirmar compra'
             : executableExpense
               ? 'Confirmar gasto'
-              : executableContribution
+              : executableDistribution
+                ? 'Confirmar distribución'
+                : executableContribution
                 ? 'Confirmar aportación'
                 : executableTransfer
                   ? 'Confirmar transferencia'
@@ -626,7 +633,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
             ? 'CONFIRM_PURCHASE'
             : executableExpense
               ? 'CONFIRM_EXPENSE'
-              : executableContribution
+              : executableDistribution
+                ? 'CONFIRM_DISTRIBUTION'
+                : executableContribution
                 ? 'CONFIRM_CONTRIBUTION'
                 : executableTransfer
                   ? 'CONFIRM_TRANSFER'
@@ -924,6 +933,46 @@ function capitalContributionReceiptBlocks(
   ];
 }
 
+function capitalDistributionReceiptBlocks(
+  response: StructuredAssistantResponse,
+): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. La distribución quedó registrada.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const currency = asString(receipt.currency) ?? 'MXN';
+    const amount = formatMoney(receipt.amount, currency);
+    const investor = asString(receipt.investorLabel);
+    if (investor) lines.push(investor);
+    if (amount) lines.push(`Distribución · ${amount}`);
+    const account =
+      asString(receipt.accountLabel) ||
+      (() => {
+        const raw = asString(receipt.account);
+        if (raw === 'CASH') return 'Efectivo';
+        if (raw === 'BANK') return 'Bancos';
+        if (raw === 'CESAR_ACCOUNT') return 'Cuenta César';
+        return raw;
+      })();
+    if (account) lines.push(`Cuenta de referencia · ${account}`);
+    const pending = formatMoney(receipt.remainingPending, currency);
+    if (pending) lines.push(`Pendiente del socio · ${pending}`);
+    lines.push('Tesorería · Sin cambio');
+    lines.push('Utilidad del negocio · Sin cambio');
+  }
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: '/capital',
+      correctHref: '/capital',
+    },
+  ];
+}
+
 function paymentReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
   const message =
     asString(response.payload.message) ?? 'Listo. El pago quedó registrado.';
@@ -1063,6 +1112,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'REGISTER_CAPITAL_CONTRIBUTION') {
         main = capitalContributionReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REGISTER_CAPITAL_DISTRIBUTION') {
+        main = capitalDistributionReceiptBlocks(response);
         break;
       }
       if (intent === 'REGISTER_EXPENSE') {

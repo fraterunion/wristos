@@ -70,6 +70,7 @@ describe('StructuredAssistantService', () => {
     createClientEntityResolver as never,
     updateClientEntityResolver as never,
     capitalInvestorEntityResolver as never,
+    { getSummary: jest.fn(async () => ({ investors: [] })) } as never,
     compositionOrchestrator as never,
   );
   const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] };

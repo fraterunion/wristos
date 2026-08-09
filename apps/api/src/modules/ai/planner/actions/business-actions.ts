@@ -465,6 +465,112 @@ function registerCapitalContributionConditionalMissing(
   return missing;
 }
 
+function registerCapitalDistributionEffects(
+  entities: StructuredEntities,
+): Array<{ area: string; description: string }> {
+  const amount = formatMoneyPreview(entities.amount, entities.currency ?? 'MXN');
+  const effects: Array<{ area: string; description: string }> = [
+    { area: 'Capital', description: `Distribuciones pagadas: +${amount}` },
+    { area: 'Capital', description: `Pendiente del socio: -${amount}` },
+    { area: 'Capital', description: `Capital neto: -${amount}` },
+    { area: 'Ownership', description: 'Ownership: Sin cambio' },
+    { area: 'P&L', description: 'Utilidad del negocio: Sin cambio' },
+    { area: 'Treasury', description: 'Tesorería: Sin cambio' },
+  ];
+  const currentPending = moneyNumber(entities.currentPending ?? entities.previousPending);
+  const distributionAmount = moneyNumber(entities.amount);
+  if (currentPending !== null && distributionAmount !== null) {
+    const resulting = currentPending - distributionAmount;
+    effects.unshift({
+      area: 'Pending',
+      description: `Pendiente actual: ${formatMoneyPreview(currentPending, 'MXN')} → después: ${formatMoneyPreview(resulting, 'MXN')}`,
+    });
+    if (resulting < 0) {
+      effects.push({
+        area: 'Warning',
+        description: `Esta distribución dejará al socio con un pendiente negativo de ${formatMoneyPreview(Math.abs(resulting), 'MXN')}.`,
+      });
+    }
+  }
+  effects.push({
+    area: 'Correction',
+    description:
+      'Después de registrarla, cualquier corrección se realiza desde Capital (revierte y crea de nuevo).',
+  });
+  return effects;
+}
+
+function registerCapitalDistributionPreviewFields(
+  entities: StructuredEntities,
+): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  const investorLabel =
+    (typeof entities.investorLabel === 'string' && entities.investorLabel) ||
+    (typeof entities.investorName === 'string' && entities.investorName) ||
+    null;
+  if (investorLabel) rows.push({ label: 'Socio', value: investorLabel });
+  if (present(entities.amount)) {
+    rows.push({
+      label: 'Monto',
+      value: formatMoneyPreview(entities.amount, entities.currency ?? 'MXN'),
+    });
+  }
+  const account =
+    typeof entities.account === 'string'
+      ? entities.account
+      : typeof entities.capitalAccount === 'string'
+        ? entities.capitalAccount
+        : null;
+  if (account || typeof entities.accountLabel === 'string') {
+    rows.push({
+      label: 'Cuenta de referencia',
+      value:
+        (typeof entities.accountLabel === 'string' && entities.accountLabel) ||
+        (account ? destinationLabel[account] ?? account : null),
+    });
+  }
+  if (present(entities.paidAt) || present(entities.date)) {
+    rows.push({
+      label: 'Fecha',
+      value: entities.paidAt ?? entities.date ?? null,
+    });
+  }
+  const currentPending = moneyNumber(entities.currentPending ?? entities.previousPending);
+  if (currentPending !== null) {
+    rows.push({
+      label: 'Pendiente actual',
+      value: formatMoneyPreview(currentPending, 'MXN'),
+    });
+  }
+  return rows;
+}
+
+function registerCapitalDistributionConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  const amount = moneyNumber(entities.amount);
+  if (present(entities.amount) && (amount === null || amount <= 0)) {
+    missing.push({
+      entity: 'amount',
+      question: 'El monto de la distribución debe ser mayor que cero.',
+    });
+  }
+  if (
+    entities.currency === 'USD' ||
+    entities.currency === 'USDT' ||
+    entities.currency === 'CRYPTO' ||
+    entities.account === 'CRYPTO'
+  ) {
+    missing.push({
+      entity: 'currency',
+      question:
+        'Las distribuciones de capital V1 son solo en MXN. ¿Confirmas el monto en pesos mexicanos?',
+    });
+  }
+  return missing;
+}
+
 function registerTreasuryTransferConditionalMissing(
   entities: StructuredEntities,
 ): Array<{ entity: string; question: string }> {
@@ -1258,8 +1364,49 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     category: 'CAPITAL',
     tier: 'HIGH',
     required: ['investorId', 'amount', 'account', 'paidAt'],
-    optional: ['currency', 'date', 'notes', 'investorLabel'],
+    optional: [
+      'currency',
+      'date',
+      'notes',
+      'investorLabel',
+      'investorName',
+      'accountLabel',
+      'selectedInvestorId',
+      'investorQuery',
+      'capitalAccount',
+      'currentPending',
+      'previousPending',
+      'resultingPending',
+    ],
+    effectsBuilder: registerCapitalDistributionEffects,
+    previewFields: registerCapitalDistributionPreviewFields,
+    conditionalMissing: registerCapitalDistributionConditionalMissing,
     reversibility: 'NONE',
+    warnings: [
+      warning(
+        'UNSUPPORTED_CURRENCY',
+        'Capital distributions are MXN only.',
+        (e) =>
+          typeof e.currency === 'string' &&
+          e.currency !== 'MXN' &&
+          e.currency !== '' &&
+          e.currency !== null,
+      ),
+      warning(
+        'LEDGER_ONLY',
+        'Esta distribución es solo en el libro de Capital: la Tesorería no se mueve.',
+        () => true,
+      ),
+      warning(
+        'OVER_DISTRIBUTION',
+        'Esta distribución dejará al socio con pendiente negativo. Política V1: over-distribution permitida.',
+        (e) => {
+          const pending = moneyNumber(e.currentPending ?? e.previousPending);
+          const amount = moneyNumber(e.amount);
+          return pending !== null && amount !== null && amount > pending;
+        },
+      ),
+    ],
   }),
   define({
     id: 'REGISTER_PURCHASE',

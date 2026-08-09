@@ -31,6 +31,7 @@ import { CreateClientEntityResolver } from './bindings/write/create-client-entit
 import { CreateClientWriteBinding } from './bindings/write/create-client.binding';
 import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
 import { RegisterCapitalContributionWriteBinding } from './bindings/write/register-capital-contribution.binding';
+import { RegisterCapitalDistributionWriteBinding } from './bindings/write/register-capital-distribution.binding';
 import { RegisterExpenseWriteBinding } from './bindings/write/register-expense.binding';
 import { RegisterPurchaseWriteBinding } from './bindings/write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
@@ -87,6 +88,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     RegisterPayablePaymentWriteBinding,
     RegisterTreasuryTransferWriteBinding,
     RegisterCapitalContributionWriteBinding,
+    RegisterCapitalDistributionWriteBinding,
     RegisterExpenseWriteBinding,
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,

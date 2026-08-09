@@ -167,6 +167,30 @@ function isCanonicalCapitalContributionSuccess(
   return true;
 }
 
+function isCanonicalCapitalDistributionSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'REGISTER_CAPITAL_DISTRIBUTION') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.distributionId !== 'string' || !receipt.distributionId) return false;
+  if (typeof receipt.investorId !== 'string' || !receipt.investorId) return false;
+  if (typeof receipt.account !== 'string' || !receipt.account) return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (receipt.ownershipChanged !== false) return false;
+  if (receipt.treasuryChanged !== false) return false;
+  if (receipt.businessProfitChanged !== false) return false;
+  if (payload.executableWrite !== true && payload.capability !== 'REGISTER_CAPITAL_DISTRIBUTION') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
 function isCanonicalExpenseSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
@@ -258,6 +282,7 @@ function isCanonicalExecutableWriteSuccess(
     isCanonicalPayablePaymentSuccess(intent, response) ||
     isCanonicalTreasuryTransferSuccess(intent, response) ||
     isCanonicalCapitalContributionSuccess(intent, response) ||
+    isCanonicalCapitalDistributionSuccess(intent, response) ||
     isCanonicalExpenseSuccess(intent, response) ||
     isCanonicalPurchaseSuccess(intent, response) ||
     isCanonicalCreateClientSuccess(intent, response) ||
@@ -302,6 +327,7 @@ export function validateAssistantResponse(
           intent === 'REGISTER_PAYABLE_PAYMENT' ||
           intent === 'REGISTER_TREASURY_TRANSFER' ||
           intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+          intent === 'REGISTER_CAPITAL_DISTRIBUTION' ||
           intent === 'REGISTER_EXPENSE' ||
           intent === 'REGISTER_PURCHASE' ||
           intent === 'CREATE_CLIENT' ||

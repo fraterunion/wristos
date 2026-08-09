@@ -113,7 +113,7 @@ function dateBucket(d: Date): string {
  * CapitalAccount is a declared source label — not BANK→CESAR Treasury transfer.
  * CESAR_ACCOUNT ≠ money leaving business liquidity via Treasury.
  *
- * Not AI-bound in 23A.
+ * AI-bound via REGISTER_CAPITAL_DISTRIBUTION (Commit 24B).
  */
 @Injectable()
 export class CapitalDistributionService {
@@ -252,8 +252,8 @@ export class CapitalDistributionService {
   }
 
   /**
-   * Future AI / API recovery classification against material payload.
-   * Does not mutate. Not bound to AI in 23B.
+   * AI / API recovery classification against material payload.
+   * Does not mutate. Used by WritePlanRunner + RegisterCapitalDistributionWriteBinding (24B).
    */
   classifyRecovery(
     existing: InvestorDistribution | null,

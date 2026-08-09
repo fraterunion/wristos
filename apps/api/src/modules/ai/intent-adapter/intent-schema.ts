@@ -295,10 +295,18 @@ export const entitySchemas = {
       currency: currency.optional(),
       investorQuery: query.optional(),
       investorName: z.string().trim().min(1).max(160).optional(),
+      partnerQuery: query.optional(),
+      partnerName: z.string().trim().min(1).max(160).optional(),
+      name: z.string().trim().min(1).max(160).optional(),
       account: z.enum(['CASH', 'BANK', 'CESAR_ACCOUNT']).optional(),
+      capitalAccount: z.enum(['CASH', 'BANK', 'CESAR_ACCOUNT']).optional(),
+      accountQuery: query.optional(),
       paidAt: isoDate.optional(),
       effectiveDate: isoDate.optional(),
       notes: z.string().trim().max(2000).optional(),
+      // Never trust provider IDs — stripped before resolution; kept optional for schema parse only.
+      investorId: z.string().trim().min(1).max(64).optional(),
+      selectedInvestorId: z.string().trim().min(1).max(64).optional(),
     })
     .strip(),
 

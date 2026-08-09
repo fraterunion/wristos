@@ -237,11 +237,13 @@ export class NaturalLanguageAssistantService {
         };
       }
 
-      // REGISTER_CAPITAL_CONTRIBUTION investor picker: continue with trusted id + prior entities.
+      // Capital contribution/distribution investor picker: continue with trusted id + prior entities.
       if (
-        loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' &&
+        (loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+          loaded.working?.lastIntent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
         resolution.entityType === 'INVESTOR'
       ) {
+        const capitalIntent = loaded.working.lastIntent;
         const prior = dto.conversationId
           ? await this.prisma.aIRequest.findFirst({
               where: {
@@ -250,7 +252,7 @@ export class NaturalLanguageAssistantService {
                 id: { not: request.id },
                 requestPayload: {
                   path: ['resolvedIntent'],
-                  equals: 'REGISTER_CAPITAL_CONTRIBUTION',
+                  equals: capitalIntent,
                 },
               },
               orderBy: { createdAt: 'desc' },
@@ -272,23 +274,23 @@ export class NaturalLanguageAssistantService {
                 ),
               )
             : {};
-        const contributionEntities: Record<string, string | number | boolean> = {
+        const capitalEntities: Record<string, string | number | boolean> = {
           ...priorEntities,
           selectedInvestorId: resolution.id,
           investorId: resolution.id,
           investorLabel: resolution.label,
         };
-        delete (contributionEntities as Record<string, unknown>).investorQuery;
+        delete (capitalEntities as Record<string, unknown>).investorQuery;
         await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'REGISTER_CAPITAL_CONTRIBUTION',
-          entities: contributionEntities,
+          intent: capitalIntent,
+          entities: capitalEntities,
           candidateHash: resolution.resolvedEntityHash,
         });
         const continued = await this.assistant.executeClaimed(
           actor,
           {
-            intent: 'REGISTER_CAPITAL_CONTRIBUTION',
-            entities: contributionEntities,
+            intent: capitalIntent,
+            entities: capitalEntities,
             surface: dto.surface ?? 'DESKTOP',
             clientRequestId: dto.clientRequestId,
             conversationId: dto.conversationId,
@@ -298,9 +300,9 @@ export class NaturalLanguageAssistantService {
           request,
         );
         return {
-          resolvedIntent: 'REGISTER_CAPITAL_CONTRIBUTION',
+          resolvedIntent: capitalIntent,
           response: continued,
-          resolvedEntities: contributionEntities,
+          resolvedEntities: capitalEntities,
         };
       }
 
@@ -553,7 +555,8 @@ export class NaturalLanguageAssistantService {
         });
       }
       if (
-        outcome.candidate.intent === 'REGISTER_CAPITAL_CONTRIBUTION' &&
+        (outcome.candidate.intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+          outcome.candidate.intent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
         resolution.entityType === 'INVESTOR'
       ) {
         entities = mergeTrustedIds(entities, {
@@ -616,7 +619,8 @@ export class NaturalLanguageAssistantService {
         selectedClientId: loaded.working.lastResolvedEntities.clientId,
       });
     } else if (
-      outcome.candidate.intent === 'REGISTER_CAPITAL_CONTRIBUTION' &&
+      (outcome.candidate.intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+        outcome.candidate.intent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
       loaded.working?.lastResolvedEntities?.investorId
     ) {
       entities = mergeTrustedIds(entities, {

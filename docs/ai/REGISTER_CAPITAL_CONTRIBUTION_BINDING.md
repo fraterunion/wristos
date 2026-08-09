@@ -31,7 +31,7 @@ Exactly **nine**:
 8. REGISTER_TREASURY_TRANSFER  
 9. REGISTER_CAPITAL_CONTRIBUTION  
 
-Still unbound: `REGISTER_CAPITAL_DISTRIBUTION`, settlement, crypto, client delete/restore/merge.
+Still unbound after 24A: `REGISTER_CAPITAL_DISTRIBUTION` (bound in 24B), settlement, crypto, client delete/restore/merge.
 
 Composition V1 unchanged:
 
@@ -82,7 +82,7 @@ Preview label: **Cuenta de referencia** (never “Entrará a Bancos”).
 |---|---|
 | César aportó 300 mil | REGISTER_CAPITAL_CONTRIBUTION |
 | Pasa 300 mil de Cuenta César a Bancos | REGISTER_TREASURY_TRANSFER |
-| Págale 100 mil de utilidad a César | REGISTER_CAPITAL_DISTRIBUTION (unbound) |
+| Págale 100 mil de utilidad a César | REGISTER_CAPITAL_DISTRIBUTION (bound in 24B) |
 | Compramos un Rolex… | REGISTER_PURCHASE |
 | Gasté 20 mil que puso César | expense / clarify — not auto contribution |
 

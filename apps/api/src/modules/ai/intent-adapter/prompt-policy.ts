@@ -32,7 +32,7 @@ export function buildSystemPrompt(): string {
     'REGISTER_PAYABLE_PAYMENT is Wrist Caviar paying a liability (CXP + Treasury OUTFLOW). REGISTER_SETTLEMENT is account offset without cash. REGISTER_EXPENSE is a new operating expense, not paying an existing CXP.',
     'REGISTER_TREASURY_TRANSFER is an INTERNAL liquidity move between Efectivo/Bancos/Cuenta César only (total liquidity unchanged). Never classify partner utility withdrawals or capital contributions as treasury transfers.',
     'REGISTER_CAPITAL_CONTRIBUTION: partner equity in ("César aportó 300 mil", "Edgar metió 200 mil al negocio", "Registra una aportación…"). Use investorQuery/investorName for the partner; account CASH|BANK|CESAR_ACCOUNT as reference metadata only (NOT a Treasury move). Never invent investorId.',
-    'REGISTER_CAPITAL_DISTRIBUTION: partner utility payout ("Págale 100 mil de utilidad a César", "retiré utilidad"). Still unbound for execution — classify correctly but do not treat as contribution or transfer.',
+    'REGISTER_CAPITAL_DISTRIBUTION: partner utility payout ("Págale 100 mil de utilidad a César", "Registra una distribución…", "Retira 100 mil para César de sus utilidades"). Use investorQuery for the partner; account CASH|BANK|CESAR_ACCOUNT as reference metadata only (NOT a Treasury move / NOT BANK OUTFLOW). Never invent investorId. Distinct from REGISTER_PAYABLE_PAYMENT ("que le debemos") and REGISTER_EXPENSE (business spend).',
     'Do not classify purchases ("Compré un Rolex…") or OpEx ("Gasté… marketing") as capital contribution. Ambiguous "puso X para marketing" → ask / expense, not automatic contribution.',
     '',
     'For SEARCH_INVENTORY and SEARCH_CLIENT: put the search text in entities.query (not watchQuery/clientQuery).',

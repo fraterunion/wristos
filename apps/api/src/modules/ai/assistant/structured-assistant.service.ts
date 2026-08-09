@@ -1,8 +1,10 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, PayloadTooLargeException } from '@nestjs/common';
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
+import { CapitalService } from '../../capital/capital.service';
 import { CapitalInvestorEntityResolver } from '../bindings/write/capital-investor-entity-resolver.service';
 import { enrichCapitalContributionEntities } from '../bindings/write/capital-contribution-entity-enricher';
+import { enrichCapitalDistributionEntities } from '../bindings/write/capital-distribution-entity-enricher';
 import { CreateClientEntityResolver } from '../bindings/write/create-client-entity-resolver.service';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
@@ -28,6 +30,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_PAYABLE_PAYMENT',
   'REGISTER_TREASURY_TRANSFER',
   'REGISTER_CAPITAL_CONTRIBUTION',
+  'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
@@ -48,6 +51,7 @@ export class StructuredAssistantService {
     private readonly createClientEntityResolver: CreateClientEntityResolver,
     private readonly updateClientEntityResolver: UpdateClientEntityResolver,
     private readonly capitalInvestorEntityResolver: CapitalInvestorEntityResolver,
+    private readonly capital: CapitalService,
     private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
@@ -529,11 +533,20 @@ export class StructuredAssistantService {
           );
         }
       }
-      if (input.intent === 'REGISTER_CAPITAL_CONTRIBUTION') {
-        entities = enrichCapitalContributionEntities(
-          entities as Record<string, unknown>,
-          request.receivedAt,
-        ) as typeof entities;
+      if (
+        input.intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+        input.intent === 'REGISTER_CAPITAL_DISTRIBUTION'
+      ) {
+        entities =
+          input.intent === 'REGISTER_CAPITAL_CONTRIBUTION'
+            ? (enrichCapitalContributionEntities(
+                entities as Record<string, unknown>,
+                request.receivedAt,
+              ) as typeof entities)
+            : (enrichCapitalDistributionEntities(
+                entities as Record<string, unknown>,
+                request.receivedAt,
+              ) as typeof entities);
         const resolved = await this.capitalInvestorEntityResolver.resolve(
           actor.tenantId,
           entities as Record<string, JsonValue>,
@@ -599,6 +612,15 @@ export class StructuredAssistantService {
             AIRequestStatus.NEEDS_CLARIFICATION,
             { intent: input.intent, entities },
           );
+        }
+        if (
+          input.intent === 'REGISTER_CAPITAL_DISTRIBUTION' &&
+          typeof entities.investorId === 'string'
+        ) {
+          entities = (await this.attachDistributionPending(
+            actor.tenantId,
+            entities as Record<string, JsonValue>,
+          )) as typeof entities;
         }
       }
 
@@ -915,6 +937,44 @@ export class StructuredAssistantService {
     if (error instanceof ForbiddenException) return 'PERMISSION_DENIED';
     if (error instanceof NotFoundException) return 'NOT_FOUND';
     return error instanceof Error ? error.constructor.name : 'UNKNOWN_ERROR';
+  }
+
+  /** Backend-derived pending for distribution preview (omit on failure — never invent). */
+  private async attachDistributionPending(
+    tenantId: string,
+    entities: Record<string, JsonValue>,
+  ): Promise<Record<string, JsonValue>> {
+    const investorId =
+      typeof entities.investorId === 'string'
+        ? entities.investorId
+        : typeof entities.selectedInvestorId === 'string'
+          ? entities.selectedInvestorId
+          : null;
+    if (!investorId) return entities;
+    try {
+      const summary = await this.capital.getSummary(tenantId);
+      const row = summary.investors.find((i) => i.id === investorId);
+      if (!row) return entities;
+      const currentPending = Number(row.pendingProfit);
+      if (!Number.isFinite(currentPending)) return entities;
+      const next: Record<string, JsonValue> = {
+        ...entities,
+        currentPending,
+        previousPending: currentPending,
+      };
+      const amount =
+        typeof entities.amount === 'number'
+          ? entities.amount
+          : typeof entities.amount === 'string'
+            ? Number(entities.amount)
+            : NaN;
+      if (Number.isFinite(amount) && amount > 0) {
+        next.resultingPending = currentPending - amount;
+      }
+      return next;
+    } catch {
+      return entities;
+    }
   }
 
   private toJson(value: unknown): JsonValue { return JSON.parse(JSON.stringify(value)) as JsonValue; }

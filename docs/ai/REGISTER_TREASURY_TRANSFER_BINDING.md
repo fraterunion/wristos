@@ -115,9 +115,9 @@ Never silently swap direction. Same account → clarify/reject (“No puedo regi
 | “Págale 50 mil a Pepe desde Bancos.” | `REGISTER_PAYABLE_PAYMENT` |
 | “José me depositó 50 mil a bancos.” | `REGISTER_RECEIVABLE_PAYMENT` |
 | “Pasa 100 mil de Bancos a Cuenta César.” | `REGISTER_TREASURY_TRANSFER` (internal) |
-| “Retírale 100 mil de utilidad a César.” | **NOT** transfer — Capital (unbound) |
-| “Págale la utilidad a César.” | **NOT** transfer — Capital (unbound) |
-| “César aportó 100 mil al negocio.” | **NOT** transfer — Capital (unbound) |
+| “Retírale 100 mil de utilidad a César.” | **NOT** transfer — Capital distribution |
+| “Págale la utilidad a César.” | **NOT** transfer — Capital distribution |
+| “César aportó 100 mil al negocio.” | **NOT** transfer — Capital contribution |
 | “Compra 200 mil de USDT.” | crypto / unbound write |
 
 ## Amount / currency

@@ -30,7 +30,8 @@ function asString(value: unknown): string | null {
 }
 
 /**
- * Trusted investor resolution for REGISTER_CAPITAL_CONTRIBUTION.
+ * Trusted investor resolution for REGISTER_CAPITAL_CONTRIBUTION /
+ * REGISTER_CAPITAL_DISTRIBUTION.
  * Provider-supplied investorId is never trusted — only selectedInvestorId /
  * useExistingInvestorId from picker/ordinal/context, or unique name match.
  */
@@ -64,7 +65,7 @@ export class CapitalInvestorEntityResolver {
           entityType: 'INVESTOR',
           code: 'UNSUPPORTED_CURRENCY',
           message:
-            'Las aportaciones de capital V1 son solo en MXN. No registro FX ni crypto desde aquí.',
+            'Las operaciones de capital V1 son solo en MXN. No registro FX ni crypto desde aquí.',
           candidates: [],
           items: [],
         },
@@ -122,7 +123,7 @@ export class CapitalInvestorEntityResolver {
               entityType: 'INVESTOR',
               code: 'INVESTOR_NOT_FOUND',
               message:
-                'No hay socios activos en Capital. Crea el socio en Capital antes de registrar una aportación.',
+                'No hay socios activos en Capital. Crea el socio en Capital antes de registrar el movimiento.',
               candidates: [],
               items: [],
             },
@@ -135,7 +136,7 @@ export class CapitalInvestorEntityResolver {
             field: 'investor',
             entityType: 'INVESTOR',
             code: 'AMBIGUOUS_INVESTOR',
-            message: '¿De qué socio es la aportación?',
+            message: '¿De qué socio es el movimiento de Capital?',
             candidates: all.map((inv, i) => ({
               id: inv.id,
               label: inv.name.slice(0, 160),
@@ -200,7 +201,7 @@ export class CapitalInvestorEntityResolver {
             field: 'investor',
             entityType: 'INVESTOR',
             code: 'AMBIGUOUS_INVESTOR',
-            message: `Encontré ${pool.length} socios. ¿Cuál aportó?`,
+            message: `Encontré ${pool.length} socios. ¿Cuál corresponde?`,
             candidates: pool.map((inv, i) => ({
               id: inv.id,
               label: inv.name.slice(0, 160),
