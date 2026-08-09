@@ -1204,6 +1204,24 @@ export class WritePlanRunner {
       };
     }
 
+    if (failureType === 'CANONICAL_TREASURY_TRANSFER_INVARIANT') {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'FAILED',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'No pude confirmar la transferencia porque su estado interno quedó incompleto. No voy a registrar otro movimiento automáticamente.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
     const message =
       label === 'pago'
         ? stale
@@ -1235,13 +1253,19 @@ export class WritePlanRunner {
                   : permission
                     ? 'Ya no tienes permiso para actualizar este cliente. No se realizó ningún cambio.'
                     : 'No pude actualizar el cliente. No se realizó ningún cambio.'
-                : stale
-                  ? failureType === 'STALE_WATCH_SOLD'
-                    ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-                    : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
-                  : permission
-                    ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
-                    : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
+                : label === 'transferencia'
+                  ? stale
+                    ? 'El plan de la transferencia cambió o el espacio de trabajo ya no es válido. No se realizó ningún cambio.'
+                    : permission
+                      ? 'Ya no tienes permiso para registrar esta transferencia. No se realizó ningún cambio.'
+                      : 'No pude registrar la transferencia. La operación se revirtió y no se realizó ningún cambio.'
+                  : stale
+                    ? failureType === 'STALE_WATCH_SOLD'
+                      ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+                      : 'El reloj o el cliente cambió desde que preparaste esta venta. No se realizó ningún cambio.'
+                    : permission
+                      ? 'Ya no tienes permiso para registrar esta venta. No se realizó ningún cambio.'
+                      : 'No pude registrar la venta. La operación se revirtió y no se realizó ningún cambio.';
     return {
       actionRun: run,
       executionState: 'FAILED',

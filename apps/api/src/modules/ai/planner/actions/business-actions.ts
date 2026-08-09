@@ -382,6 +382,7 @@ function registerTreasuryTransferPreviewFields(
 function registerTreasuryTransferConditionalMissing(
   entities: StructuredEntities,
 ): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
   const source =
     typeof entities.sourceAccount === 'string'
       ? entities.sourceAccount
@@ -394,30 +395,39 @@ function registerTreasuryTransferConditionalMissing(
       : typeof entities.destination === 'string'
         ? entities.destination
         : null;
+  // amount is required (syntactically present) for READY, but 0 / negative /
+  // non-numeric values must never become an executable transfer preview.
+  // Negative ACCOUNT BALANCE remains allowed at domain execution; negative
+  // TRANSFER AMOUNT is invalid input (not reverse direction).
+  const amount = moneyNumber(entities.amount);
+  if (present(entities.amount) && (amount === null || amount <= 0)) {
+    missing.push({
+      entity: 'amount',
+      question: 'El monto de la transferencia debe ser mayor que cero.',
+    });
+  }
   if (source && dest && source === dest) {
-    return [
-      {
-        entity: 'destinationAccount',
-        question:
-          'No puedo registrar una transferencia entre la misma cuenta. ¿Cuál es la cuenta destino distinta?',
-      },
-    ];
+    missing.push({
+      entity: 'destinationAccount',
+      question:
+        'No puedo registrar una transferencia entre la misma cuenta. ¿Cuál es la cuenta destino distinta?',
+    });
   }
   if (
     entities.currency === 'USD' ||
     entities.currency === 'USDT' ||
     entities.sourceAccount === 'CRYPTO' ||
-    entities.destinationAccount === 'CRYPTO'
+    entities.destinationAccount === 'CRYPTO' ||
+    entities.source === 'CRYPTO' ||
+    entities.destination === 'CRYPTO'
   ) {
-    return [
-      {
-        entity: 'currency',
-        question:
-          'Las transferencias de tesorería V1 son solo en MXN entre Efectivo, Bancos y Cuenta César. ¿Confirmas monto y cuentas en MXN?',
-      },
-    ];
+    missing.push({
+      entity: 'currency',
+      question:
+        'Las transferencias de tesorería V1 son solo en MXN entre Efectivo, Bancos y Cuenta César. ¿Confirmas monto y cuentas en MXN?',
+    });
   }
-  return [];
+  return missing;
 }
 
 function registerPayablePaymentEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
