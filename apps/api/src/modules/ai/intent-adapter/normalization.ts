@@ -207,6 +207,7 @@ export function normalizeEntities(
   const moneyFields: Record<string, string[]> = {
     REGISTER_SALE: ['price'],
     REGISTER_RECEIVABLE_PAYMENT: ['amount'],
+    REGISTER_PAYABLE_PAYMENT: ['amount', 'exchangeRateUsed'],
     REGISTER_PURCHASE: ['cost'],
     REGISTER_EXPENSE: ['amount'],
     REGISTER_SETTLEMENT: ['amount'],

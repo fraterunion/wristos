@@ -30,6 +30,7 @@ const writeCompatibility: Readonly<
 const manualRoutes: Readonly<Record<WritePreviewAction, string>> = {
   REGISTER_SALE: '/ventas',
   REGISTER_RECEIVABLE_PAYMENT: '/cuentas',
+  REGISTER_PAYABLE_PAYMENT: '/cuentas',
   REGISTER_PURCHASE: '/inventory',
   REGISTER_EXPENSE: '/expenses',
   CREATE_CLIENT: '/crm',
@@ -93,6 +94,27 @@ function isCanonicalReceivablePaymentSuccess(
   if (typeof receipt.destination !== 'string') return false;
   if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
   if (payload.executableWrite !== true && payload.capability !== 'REGISTER_RECEIVABLE_PAYMENT') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
+function isCanonicalPayablePaymentSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'REGISTER_PAYABLE_PAYMENT') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.paymentId !== 'string' || !receipt.paymentId) return false;
+  if (typeof receipt.payableEntryId !== 'string' || !receipt.payableEntryId) return false;
+  if (typeof receipt.sourceAccount !== 'string') return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (payload.executableWrite !== true && payload.capability !== 'REGISTER_PAYABLE_PAYMENT') {
     if (typeof payload.message !== 'string') return false;
   }
   return true;
@@ -186,6 +208,7 @@ function isCanonicalExecutableWriteSuccess(
   return (
     isCanonicalRegisterSaleSuccess(intent, response) ||
     isCanonicalReceivablePaymentSuccess(intent, response) ||
+    isCanonicalPayablePaymentSuccess(intent, response) ||
     isCanonicalExpenseSuccess(intent, response) ||
     isCanonicalPurchaseSuccess(intent, response) ||
     isCanonicalCreateClientSuccess(intent, response) ||
@@ -227,6 +250,7 @@ export function validateAssistantResponse(
         message:
           intent === 'REGISTER_SALE' ||
           intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+          intent === 'REGISTER_PAYABLE_PAYMENT' ||
           intent === 'REGISTER_EXPENSE' ||
           intent === 'REGISTER_PURCHASE' ||
           intent === 'CREATE_CLIENT' ||

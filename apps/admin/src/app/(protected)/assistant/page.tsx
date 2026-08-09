@@ -53,6 +53,7 @@ const readCards: Array<{ id: ReadAction; label: string; detail: string; icon: ty
 const writeCards: Array<{ id: WritePreviewAction; label: string; href: string; icon: typeof Landmark }> = [
   { id: 'REGISTER_SALE', label: 'Preparar venta', href: '/ventas', icon: ReceiptText },
   { id: 'REGISTER_RECEIVABLE_PAYMENT', label: 'Preparar cobro CxC', href: '/cuentas', icon: CircleDollarSign },
+  { id: 'REGISTER_PAYABLE_PAYMENT', label: 'Preparar pago CxP', href: '/cuentas', icon: CircleDollarSign },
   { id: 'REGISTER_PURCHASE', label: 'Preparar compra', href: '/inventory', icon: ShoppingCart },
   { id: 'REGISTER_EXPENSE', label: 'Preparar gasto', href: '/expenses', icon: WalletCards },
   { id: 'CREATE_CLIENT', label: 'Crear cliente', href: '/crm', icon: UserPlus },
@@ -75,6 +76,7 @@ const mobileSuggestionLabels: Partial<Record<ReadAction, string>> = {
 const mobileWriteLabels: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_SALE: 'Registrar venta',
   REGISTER_RECEIVABLE_PAYMENT: 'Registrar cobro',
+  REGISTER_PAYABLE_PAYMENT: 'Registrar pago CxP',
   REGISTER_PURCHASE: 'Registrar compra',
   REGISTER_EXPENSE: 'Registrar gasto',
   CREATE_CLIENT: 'Crear cliente',
@@ -318,7 +320,8 @@ export default function AssistantPage() {
         latest.intent === 'REGISTER_SALE' ||
         latest.intent === 'CREATE_CLIENT' ||
         latest.intent === 'UPDATE_CLIENT' ||
-        latest.intent === 'REGISTER_RECEIVABLE_PAYMENT');
+        latest.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+        latest.intent === 'REGISTER_PAYABLE_PAYMENT');
     if (pickerWrite) {
       const action = createAssistantMessageAction({
         text: label,
@@ -355,12 +358,15 @@ export default function AssistantPage() {
     const executableIntent =
       item.intent === 'REGISTER_SALE' ||
       item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+      item.intent === 'REGISTER_PAYABLE_PAYMENT' ||
       item.intent === 'REGISTER_EXPENSE' ||
       item.intent === 'REGISTER_PURCHASE' ||
       item.intent === 'CREATE_CLIENT' ||
       item.intent === 'UPDATE_CLIENT';
     if (pending || messagePending || confirmingSale || !executableIntent) return;
-    const isPayment = item.intent === 'REGISTER_RECEIVABLE_PAYMENT';
+    const isPayment =
+      item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+      item.intent === 'REGISTER_PAYABLE_PAYMENT';
     const isExpense = item.intent === 'REGISTER_EXPENSE';
     const isPurchase = item.intent === 'REGISTER_PURCHASE';
     const isCreateClient = item.intent === 'CREATE_CLIENT';

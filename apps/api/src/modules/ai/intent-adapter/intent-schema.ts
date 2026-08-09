@@ -28,6 +28,7 @@ export const READ_INTENTS = [
 export const WRITE_INTENTS = [
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
+  'REGISTER_PAYABLE_PAYMENT',
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
   'CREATE_CLIENT',
@@ -229,6 +230,21 @@ export const entitySchemas = {
       // Frozen to canonical payment destinations — CRYPTO has no CXC payment command.
       destination: z.enum(['CASH', 'BANK', 'CESAR', 'APPLY_TO_PAYABLE']).optional(),
       payableQuery: query.optional(),
+      effectiveDate: isoDate.optional(),
+    })
+    .strip(),
+
+  REGISTER_PAYABLE_PAYMENT: z
+    .object({
+      customerQuery: query.optional(),
+      counterpartyQuery: query.optional(),
+      supplierQuery: query.optional(),
+      amount: money.optional(),
+      currency: currency.optional(),
+      sourceAccount: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      payFullOutstanding: z.boolean().optional(),
+      exchangeRateUsed: money.optional(),
       effectiveDate: isoDate.optional(),
     })
     .strip(),

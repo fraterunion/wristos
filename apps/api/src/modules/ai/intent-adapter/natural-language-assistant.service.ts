@@ -457,7 +457,9 @@ export class NaturalLanguageAssistantService {
         });
       }
       if (
-        (outcome.candidate.intent === 'REGISTER_SALE' || outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT') &&
+        (outcome.candidate.intent === 'REGISTER_SALE' ||
+          outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+          outcome.candidate.intent === 'REGISTER_PAYABLE_PAYMENT') &&
         resolution.entityType === 'CLIENT'
       ) {
         const paymentNeedsPayableTarget =
@@ -502,6 +504,17 @@ export class NaturalLanguageAssistantService {
           });
         }
       }
+      if (
+        outcome.candidate.intent === 'REGISTER_PAYABLE_PAYMENT' &&
+        resolution.entityType === 'ACCOUNT_ENTRY'
+      ) {
+        entities = mergeTrustedIds(entities, {
+          accountId: resolution.id,
+          accountEntryId: resolution.id,
+          payableEntryId: resolution.id,
+          payableAccountId: resolution.id,
+        });
+      }
     } else if (
       outcome.candidate.intent === 'GET_CLIENT_ACCOUNTS' &&
       loaded.working?.lastResolvedEntities?.clientId
@@ -511,7 +524,9 @@ export class NaturalLanguageAssistantService {
       // Prior trusted watch selection may prepare a write preview — never execute.
       entities = mergeTrustedIds(entities, { watchId: loaded.working.lastResolvedEntities.watchId });
     } else if (
-      (outcome.candidate.intent === 'REGISTER_SALE' || outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT') &&
+      (outcome.candidate.intent === 'REGISTER_SALE' ||
+        outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
+        outcome.candidate.intent === 'REGISTER_PAYABLE_PAYMENT') &&
       loaded.working?.lastResolvedEntities?.clientId
     ) {
       entities = mergeTrustedIds(entities, { customerId: loaded.working.lastResolvedEntities.clientId });
@@ -533,6 +548,17 @@ export class NaturalLanguageAssistantService {
       entities = mergeTrustedIds(entities, {
         accountId: loaded.working.lastResolvedEntities.accountEntryId,
         accountEntryId: loaded.working.lastResolvedEntities.accountEntryId,
+      });
+    }
+    if (
+      outcome.candidate.intent === 'REGISTER_PAYABLE_PAYMENT' &&
+      loaded.working?.lastResolvedEntities?.accountEntryId &&
+      !('accountId' in entities)
+    ) {
+      entities = mergeTrustedIds(entities, {
+        accountId: loaded.working.lastResolvedEntities.accountEntryId,
+        accountEntryId: loaded.working.lastResolvedEntities.accountEntryId,
+        payableEntryId: loaded.working.lastResolvedEntities.accountEntryId,
       });
     }
 

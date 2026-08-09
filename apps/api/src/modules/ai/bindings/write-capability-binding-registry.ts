@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { BusinessCapability } from '../planner/planner.types';
 import { CreateClientWriteBinding } from './write/create-client.binding';
 import { RegisterExpenseWriteBinding } from './write/register-expense.binding';
+import { RegisterPayablePaymentWriteBinding } from './write/register-payable-payment.binding';
 import { RegisterPurchaseWriteBinding } from './write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './write/register-sale.binding';
@@ -10,9 +11,9 @@ import { WriteCapabilityBindingDefinition } from './write/write-capability-bindi
 
 /**
  * Construction-time allowlist for WRITE capability bindings.
- * Commit 19B: exactly six bindings —
+ * Commit 21B: exactly seven bindings —
  * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE + REGISTER_PURCHASE
- * + CREATE_CLIENT + UPDATE_CLIENT.
+ * + CREATE_CLIENT + UPDATE_CLIENT + REGISTER_PAYABLE_PAYMENT.
  * No dynamic registration API. No user-supplied binding names.
  */
 @Injectable()
@@ -26,6 +27,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
     private readonly registerPurchase: RegisterPurchaseWriteBinding,
     private readonly createClient: CreateClientWriteBinding,
     private readonly updateClient: UpdateClientWriteBinding,
+    private readonly registerPayablePayment: RegisterPayablePaymentWriteBinding,
   ) {}
 
   onModuleInit() {
@@ -36,6 +38,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.registerPurchase,
       this.createClient,
       this.updateClient,
+      this.registerPayablePayment,
     ];
     if (new Set(bindings.map((b) => b.capability)).size !== bindings.length) {
       throw new Error('Duplicate write capability binding');
@@ -49,16 +52,17 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.bindings.set(binding.capability, binding);
     }
     if (
-      this.bindings.size !== 6 ||
+      this.bindings.size !== 7 ||
       !this.bindings.has('REGISTER_SALE') ||
       !this.bindings.has('REGISTER_RECEIVABLE_PAYMENT') ||
       !this.bindings.has('REGISTER_EXPENSE') ||
       !this.bindings.has('REGISTER_PURCHASE') ||
       !this.bindings.has('CREATE_CLIENT') ||
-      !this.bindings.has('UPDATE_CLIENT')
+      !this.bindings.has('UPDATE_CLIENT') ||
+      !this.bindings.has('REGISTER_PAYABLE_PAYMENT')
     ) {
       throw new Error(
-        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, CREATE_CLIENT, and UPDATE_CLIENT',
+        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, CREATE_CLIENT, UPDATE_CLIENT, and REGISTER_PAYABLE_PAYMENT',
       );
     }
   }

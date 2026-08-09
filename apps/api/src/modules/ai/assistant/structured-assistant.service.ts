@@ -5,6 +5,7 @@ import { CreateClientEntityResolver } from '../bindings/write/create-client-enti
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
 import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
+import { PayablePaymentEntityResolver } from '../bindings/write/payable-payment-entity-resolver.service';
 import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-payment-entity-resolver.service';
 import { SaleCustomerEntityResolver } from '../bindings/write/sale-customer-entity-resolver.service';
 import { UpdateClientEntityResolver } from '../bindings/write/update-client-entity-resolver.service';
@@ -22,6 +23,7 @@ const READ_ACTIONS = new Set(['GET_LIQUIDITY', 'GET_MONTHLY_PROFIT', 'SEARCH_INV
 const EXECUTABLE_WRITES = new Set([
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
+  'REGISTER_PAYABLE_PAYMENT',
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
@@ -36,6 +38,7 @@ export class StructuredAssistantService {
     private readonly planner: PlannerService,
     private readonly readRunner: ReadPlanRunner,
     private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
+    private readonly payablePaymentResolver: PayablePaymentEntityResolver,
     private readonly purchaseEntityResolver: PurchaseEntityResolver,
     private readonly saleCustomerEntityResolver: SaleCustomerEntityResolver,
     private readonly createClientEntityResolver: CreateClientEntityResolver,
@@ -126,6 +129,49 @@ export class StructuredAssistantService {
           capability: input.intent,
           uniqueResolution: resolved.uniqueReceivableSelected === true,
           candidateCount: resolved.uniqueReceivableSelected ? 1 : undefined,
+        });
+      }
+      if (input.intent === 'REGISTER_PAYABLE_PAYMENT') {
+        const resolved = await this.payablePaymentResolver.resolve(actor.tenantId, entities);
+        entities = resolved.entities;
+        if (resolved.clarify) {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: 'payable_disambiguation',
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: true,
+          });
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            resolved.clarify.message,
+            resolved.clarify.items,
+            resolved.clarify.entityType,
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+        telem(this.telemetry, {
+          event: 'PlannerCompleted',
+          tenantId: actor.tenantId,
+          requestId: request.id,
+          capability: input.intent,
+          uniqueResolution: resolved.uniquePayableSelected === true,
+          candidateCount: resolved.uniquePayableSelected ? 1 : undefined,
         });
       }
       if (input.intent === 'REGISTER_EXPENSE') {
@@ -646,7 +692,9 @@ export class StructuredAssistantService {
 
   private writePreviewResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, plan: BusinessExecutionPlan): StructuredAssistantResponse {
     const executable = EXECUTABLE_WRITES.has(plan.businessAction);
-    const isPayment = plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT';
+    const isPayment =
+      plan.businessAction === 'REGISTER_RECEIVABLE_PAYMENT' ||
+      plan.businessAction === 'REGISTER_PAYABLE_PAYMENT';
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     const isCreateClient = plan.businessAction === 'CREATE_CLIENT';

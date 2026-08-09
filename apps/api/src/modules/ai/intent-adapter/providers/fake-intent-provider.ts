@@ -259,6 +259,80 @@ function classify(
   if (/^vend[ií] ([a-z0-9 ]+)\.?$/.test(t)) {
     return { intent: 'REGISTER_SALE', entities: { watchQuery: t.replace(/^vend[ií] /, '').replace(/\.$/, '') }, missingEntities: ['watchId', 'customerId', 'price', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
+
+  // Settlement language must stay REGISTER_SETTLEMENT (unbound) — not cash payable payment.
+  if (/compensa|aplica.*(saldo a favor|cuenta a favor)|compensa.*(debe|debemos)/.test(t)) {
+    return {
+      intent: 'REGISTER_SETTLEMENT',
+      entities: {},
+      missingEntities: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
+  // Payable cash payment — before "X le pagó a Y" settlement-style receivable path.
+  // Expense "paga renta" etc. handled later; exclude common OpEx nouns here.
+  if (
+    !/\b(renta|gasolina|estacionamiento|comida|publicidad|n[oó]mina|salario)\b/.test(t) &&
+    (/\bp[aá]gale?\b/.test(t) ||
+      /\babona\b/.test(t) ||
+      /\bliquida(?:lo|la|)\b/.test(t) ||
+      /\bpaga\b.*\b(cuenta|cxp|pendiente)\b/.test(t))
+  ) {
+    let sourceAccount: string | undefined;
+    if (/efectivo|cash/i.test(t)) sourceAccount = 'CASH';
+    else if (/banco|bancos|transfer/i.test(t)) sourceAccount = 'BANK';
+    else if (/c[eé]sar|cuenta de c[eé]sar/i.test(t)) sourceAccount = 'CESAR';
+    if (/crypto|usdt|bitcoin|btc/i.test(t)) {
+      return {
+        intent: 'REGISTER_PAYABLE_PAYMENT',
+        entities: {},
+        missingEntities: ['accountId', 'amount', 'sourceAccount'],
+        ambiguities: [
+          {
+            field: 'sourceAccount',
+            reason: 'CRYPTO is unsupported for payable payments',
+            candidates: [],
+          },
+        ],
+        confidence: 'MEDIUM',
+        language: 'es',
+      };
+    }
+    const payFull =
+      /\bliquida(?:lo|la|)\b/.test(t) ||
+      /\bpaga(?:r)?\s+todo\b/.test(t) ||
+      /\bcuenta completa\b/.test(t) ||
+      /\blo pendiente\b/.test(t);
+    const amountMatch = t.match(/([\d.,]+ ?(mil|k)?)/);
+    const whoMatch =
+      t.match(/p[aá]gale?\s+(?:[\d.,]+ ?(?:mil|k)?\s+)?a\s+([a-záéíóúñ ]+?)(?:\s+desde|\s+de|\s+en|\s*$)/) ||
+      t.match(/(?:cuenta|cxp|pendiente)\s+(?:de|del|de la)\s+([a-záéíóúñ ]+)/) ||
+      t.match(/a\s+([a-záéíóúñ]+)\s+(?:desde|de|en)\s+/);
+    const counterpartyQuery = whoMatch?.[1]?.trim().replace(/\s+/g, ' ');
+    const entities: Record<string, string | boolean> = {};
+    if (counterpartyQuery) entities.customerQuery = counterpartyQuery;
+    if (sourceAccount) entities.sourceAccount = sourceAccount;
+    if (payFull) entities.payFullOutstanding = true;
+    else if (amountMatch) entities.amount = String(parseFakeAmount(amountMatch[1]));
+    if (/d[oó]lares|usd/i.test(t)) entities.currency = 'USD';
+    const missing: string[] = [];
+    if (!entities.customerQuery && !payFull) missing.push('accountId');
+    else missing.push('accountId');
+    if (!payFull && !entities.amount) missing.push('amount');
+    if (!sourceAccount) missing.push('sourceAccount');
+    return {
+      intent: 'REGISTER_PAYABLE_PAYMENT',
+      entities,
+      missingEntities: missing,
+      ambiguities: [],
+      confidence: 'HIGH',
+      language: 'es',
+    };
+  }
+
   const settlementMatch = t.match(/([a-záéíóúñ]+) le pag[oó] ([\d.,]+ ?(mil|k)?) a ([a-záéíóúñ]+)/);
   if (settlementMatch) {
     return {

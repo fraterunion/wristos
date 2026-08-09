@@ -14,6 +14,7 @@ const questions: Record<string, string> = {
   watchId: 'Which watch should be used?', customerId: 'Who is the customer?', price: 'What is the price?', currency: 'What currency applies?',
   date: 'What date applies?', accountId: 'Which account should be used?', amount: 'What amount should be applied?', destination: 'Where should the payment be received?',
   payableAccountId: 'Which payable account should receive the settlement?',
+  exchangeRateUsed: '¿Cuál tipo de cambio MXN aplica para este pago en USD?',
   watch: '¿Qué reloj compraste? (marca y modelo)',
   brand: '¿Qué marca?',
   model: '¿Qué modelo?',
@@ -288,6 +289,119 @@ function registerReceivablePaymentPreviewFields(entities: StructuredEntities): A
   }
   if (present(entities.date)) rows.push({ label: 'Fecha', value: entities.date ?? null });
   return rows;
+}
+
+function registerPayablePaymentEffects(entities: StructuredEntities): Array<{ area: string; description: string }> {
+  const source =
+    typeof entities.sourceAccount === 'string'
+      ? entities.sourceAccount
+      : typeof entities.source === 'string'
+        ? entities.source
+        : null;
+  const srcLabel =
+    (typeof entities.sourceAccountLabel === 'string' && entities.sourceAccountLabel) ||
+    (source ? destinationLabel[source] ?? source : null);
+  const before = entities.outstandingBefore ?? entities.outstandingAmount;
+  const after = entities.outstandingAfter;
+  const cxp =
+    present(before) && present(after)
+      ? `CxP ${formatMoneyPreview(before, entities.currency)} → ${formatMoneyPreview(after, entities.currency)}`
+      : 'CxP: el saldo pendiente disminuye por el monto del pago.';
+  return [
+    { area: 'CxP', description: cxp },
+    {
+      area: 'Treasury',
+      description: srcLabel
+        ? `${srcLabel}: −${formatMoneyPreview(entities.amount, entities.currency)}`
+        : 'Fuente de liquidez disminuye por el monto.',
+    },
+    { area: 'P&L', description: 'Utilidad: Sin cambio' },
+    { area: 'Correction', description: 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.' },
+  ];
+}
+
+function registerPayablePaymentPreviewFields(entities: StructuredEntities): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  if (present(entities.counterpartyLabel) || present(entities.customerName)) {
+    rows.push({
+      label: 'A favor de',
+      value: entities.counterpartyLabel ?? entities.customerName ?? null,
+    });
+  }
+  if (present(entities.payableLabel) || present(entities.accountLabel)) {
+    rows.push({
+      label: 'Cuenta por pagar',
+      value: entities.payableLabel ?? entities.accountLabel ?? null,
+    });
+  }
+  if (present(entities.outstandingBefore) || present(entities.outstandingAmount)) {
+    const before = entities.outstandingBefore ?? entities.outstandingAmount;
+    rows.push({ label: 'Saldo actual', value: formatMoneyPreview(before, entities.currency) });
+  }
+  if (present(entities.amount)) {
+    rows.push({
+      label: entities.paymentCompletes === true || entities.paymentCompletes === 'true' ? 'Liquidación' : 'Pago',
+      value: formatMoneyPreview(entities.amount, entities.currency),
+    });
+  }
+  const source =
+    typeof entities.sourceAccount === 'string'
+      ? entities.sourceAccount
+      : typeof entities.source === 'string'
+        ? entities.source
+        : null;
+  if (source) {
+    rows.push({
+      label: 'Desde',
+      value:
+        (typeof entities.sourceAccountLabel === 'string' && entities.sourceAccountLabel) ||
+        destinationLabel[source] ||
+        source,
+    });
+  }
+  if (present(entities.outstandingAfter)) {
+    rows.push({
+      label: 'Saldo después',
+      value:
+        moneyNumber(entities.outstandingAfter) === 0
+          ? 'Liquidada'
+          : formatMoneyPreview(entities.outstandingAfter, entities.currency),
+    });
+  }
+  if (present(entities.date)) rows.push({ label: 'Fecha', value: entities.date ?? null });
+  rows.push({ label: 'Utilidad', value: 'Sin cambio' });
+  return rows;
+}
+
+function registerPayablePaymentConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  const amount = moneyNumber(entities.amount);
+  if (amount !== null && amount <= 0) {
+    missing.push({ entity: 'amount', question: 'El monto del pago debe ser mayor que cero.' });
+  }
+  const outstanding = moneyNumber(entities.outstandingAmount ?? entities.outstandingBefore);
+  if (amount !== null && outstanding !== null && amount > outstanding) {
+    missing.push({
+      entity: 'amount',
+      question: `El saldo pendiente es de ${formatMoneyPreview(outstanding, entities.currency)}. ¿Quieres liquidarlo por ese monto? No se ajusta automáticamente a un sobrepago.`,
+    });
+  }
+  if (entities.sourceAccount === 'CRYPTO' || entities.source === 'CRYPTO') {
+    missing.push({
+      entity: 'sourceAccount',
+      question: 'CRYPTO no es una fuente válida para pagar cuentas por pagar. Usa Efectivo, Bancos o Cuenta César.',
+    });
+  }
+  const currency = typeof entities.currency === 'string' ? entities.currency.toUpperCase() : null;
+  if (currency === 'USD' && !present(entities.exchangeRateUsed)) {
+    missing.push({
+      entity: 'exchangeRateUsed',
+      question: 'Esta cuenta está en USD. ¿Cuál tipo de cambio MXN usamos para el pago?',
+    });
+  }
+  return missing;
 }
 
 function registerReceivablePaymentConditionalMissing(
@@ -788,6 +902,49 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
         'UNIQUE_RECEIVABLE_SELECTED',
         'Se usó la única cuenta por cobrar abierta de este cliente.',
         (e) => e.uniqueReceivableSelected === true || e.uniqueReceivableSelected === 'true',
+      ),
+    ],
+  }),
+  define({
+    id: 'REGISTER_PAYABLE_PAYMENT',
+    name: 'Register Payable Payment',
+    category: 'ACCOUNTS',
+    tier: 'HIGH',
+    required: ['accountId', 'amount', 'sourceAccount'],
+    optional: [
+      'currency',
+      'date',
+      'notes',
+      'outstandingAmount',
+      'outstandingBefore',
+      'outstandingAfter',
+      'payableEntryId',
+      'payableAccountId',
+      'customerId',
+      'customerName',
+      'counterpartyLabel',
+      'payableLabel',
+      'accountLabel',
+      'sourceAccountLabel',
+      'exchangeRateUsed',
+      'payFullOutstanding',
+      'paymentCompletes',
+      'uniquePayableSelected',
+      'payableSource',
+    ],
+    effectsBuilder: registerPayablePaymentEffects,
+    previewFields: registerPayablePaymentPreviewFields,
+    conditionalMissing: registerPayablePaymentConditionalMissing,
+    warnings: [
+      warning(
+        'UNSUPPORTED_SOURCE',
+        'CRYPTO is not a payable-payment funding source.',
+        (e) => e.sourceAccount === 'CRYPTO' || e.source === 'CRYPTO',
+      ),
+      warning(
+        'UNIQUE_PAYABLE_SELECTED',
+        'Se usó la única cuenta por pagar abierta de este contacto.',
+        (e) => e.uniquePayableSelected === true || e.uniquePayableSelected === 'true',
       ),
     ],
   }),
