@@ -217,6 +217,11 @@ function isDealLinked(entry: AccountEntry) {
   return entry.source === 'DEAL_AUTO' || entry.dealId !== null;
 }
 
+/** MANUAL economic identity is immutable after create (Commit 25B). */
+function isManualEconomicLocked(entry: AccountEntry) {
+  return entry.source === 'MANUAL';
+}
+
 /** MANUAL + PURCHASE_AUTO CXP/CXC cash payment (not deal-linked). */
 function canCashPayEntry(entry: AccountEntry) {
   return (
@@ -570,6 +575,8 @@ function EntryModal({
   const [clientsLoading, setClientsLoading] = useState(false);
 
   const dealLinked = editing ? isDealLinked(editing) : false;
+  const manualLocked = editing ? isManualEconomicLocked(editing) : false;
+  const economicLocked = dealLinked || manualLocked;
   const clientOptions = useMemo(() => buildClientOptions(clients), [clients]);
 
   useEffect(() => {
@@ -601,13 +608,13 @@ function EntryModal({
   }, [open, editing, defaultType]);
 
   useEffect(() => {
-    if (!open || dealLinked) return;
+    if (!open || economicLocked) return;
     setClientsLoading(true);
     listClients()
       .then(setClients)
       .catch(() => setClients([]))
       .finally(() => setClientsLoading(false));
-  }, [open, dealLinked]);
+  }, [open, economicLocked]);
 
   function handleClientChange(clientId: string) {
     const client = clients.find((item) => item.id === clientId);
@@ -653,7 +660,7 @@ function EntryModal({
       return;
     }
     const amount = Number(form.totalAmount);
-    if (!dealLinked && (!form.totalAmount || !Number.isFinite(amount) || amount <= 0)) {
+    if (!economicLocked && (!form.totalAmount || !Number.isFinite(amount) || amount <= 0)) {
       setError('Ingresa un monto válido mayor a 0.');
       return;
     }
@@ -687,7 +694,7 @@ function EntryModal({
             </h2>
             {!isEdit && (
               <p className="mt-0.5 text-xs text-white/40">
-                Registra un cobro o pago operativo manual.
+                Registra una cuenta por cobrar o por pagar manual (sin movimiento de tesorería).
               </p>
             )}
           </div>
@@ -708,6 +715,12 @@ function EntryModal({
           {dealLinked && (
             <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/55">
               Esta cuenta está ligada a una venta.
+            </div>
+          )}
+          {manualLocked && (
+            <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/55">
+              Monto, moneda y contraparte no se pueden editar. Cancela la cuenta y crea una nueva si
+              necesitas corregirlos.
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -740,7 +753,7 @@ function EntryModal({
               </select>
             </div>
           </div>
-          {dealLinked ? (
+          {economicLocked ? (
             <div>
               <label className="ui-field-label">Contraparte</label>
               <div className="mt-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5">
@@ -847,7 +860,7 @@ function EntryModal({
                 min="0.01"
                 className="ui-input mt-1.5 w-full"
                 value={form.totalAmount}
-                disabled={dealLinked}
+                disabled={economicLocked}
                 onChange={(e) => setForm({ ...form, totalAmount: e.target.value })}
               />
             </div>
@@ -856,6 +869,7 @@ function EntryModal({
               <select
                 className="ui-input mt-1.5 w-full"
                 value={form.currency}
+                disabled={economicLocked}
                 onChange={(e) => setForm({ ...form, currency: e.target.value as Currency })}
               >
                 <option value="MXN">MXN</option>
@@ -871,6 +885,7 @@ function EntryModal({
               min="0"
               className="ui-input mt-1.5 w-full"
               value={form.exchangeRate}
+              disabled={economicLocked}
               onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })}
               placeholder="Solo si aplica"
             />
@@ -1815,16 +1830,18 @@ export default function CuentasPage() {
 
     if (entryModal.editing) {
       const editing = entryModal.editing;
-      if (isDealLinked(editing)) {
+      if (isDealLinked(editing) || isManualEconomicLocked(editing)) {
         const {
           type: _type,
           totalAmount: _totalAmount,
+          currency: _currency,
+          exchangeRate: _exchangeRate,
           clientId: _clientId,
           counterpartyType: _counterpartyType,
           counterpartyName: _counterpartyName,
-          ...dealSafePayload
+          ...safePayload
         } = payload;
-        await updateAccountEntry(editing.id, dealSafePayload);
+        await updateAccountEntry(editing.id, safePayload);
       } else {
         await updateAccountEntry(editing.id, payload);
       }

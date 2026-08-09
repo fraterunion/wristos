@@ -17,6 +17,8 @@ import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { CuentasService } from './cuentas.service';
 import { CreateAccountEntryDto } from './dto/create-account-entry.dto';
 import { CreateAccountPaymentDto } from './dto/create-account-payment.dto';
+import { CreateManualPayableDto } from './dto/create-manual-payable.dto';
+import { CreateManualReceivableDto } from './dto/create-manual-receivable.dto';
 import { ListAccountEntriesQueryDto } from './dto/list-account-entries-query.dto';
 import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
@@ -59,6 +61,53 @@ export class CuentasController {
     return this.cuentasService.listEntries(user.tenantId, query);
   }
 
+  /** Canonical MANUAL receivable create (Commit 25B). Not AI-bound. */
+  @Post('receivables')
+  createReceivable(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: CreateManualReceivableDto,
+  ) {
+    return this.cuentasService.createManualReceivable(user.tenantId, {
+      counterpartyName: dto.counterpartyName,
+      concept: dto.concept,
+      amount: dto.totalAmount,
+      category: dto.category,
+      counterpartyType: dto.counterpartyType,
+      currency: dto.currency,
+      exchangeRate: dto.exchangeRate,
+      reference: dto.reference,
+      issuedAt: dto.issuedAt,
+      dueDate: dto.dueDate,
+      notes: dto.notes,
+      clientId: dto.clientId,
+      registerIdempotencyKey: dto.registerIdempotencyKey,
+    });
+  }
+
+  /** Canonical MANUAL payable create (Commit 25B). Not AI-bound. */
+  @Post('payables')
+  createPayable(
+    @CurrentUser() user: CurrentUserType,
+    @Body() dto: CreateManualPayableDto,
+  ) {
+    return this.cuentasService.createManualPayable(user.tenantId, {
+      counterpartyName: dto.counterpartyName,
+      concept: dto.concept,
+      amount: dto.totalAmount,
+      category: dto.category,
+      counterpartyType: dto.counterpartyType,
+      currency: dto.currency,
+      exchangeRate: dto.exchangeRate,
+      reference: dto.reference,
+      issuedAt: dto.issuedAt,
+      dueDate: dto.dueDate,
+      notes: dto.notes,
+      clientId: dto.clientId,
+      registerIdempotencyKey: dto.registerIdempotencyKey,
+    });
+  }
+
+  /** @deprecated Prefer POST /cuentas/receivables or /cuentas/payables */
   @Post('entries')
   createEntry(
     @CurrentUser() user: CurrentUserType,

@@ -34,6 +34,11 @@ import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
 import { isHistoricalDealSourceTag } from './historical-ar-exclusion';
 import {
+  MANUAL_ACCOUNT_ECONOMIC_IMMUTABLE_MESSAGE,
+  ManualAccountEntryService,
+  RegisterManualAccountInput,
+} from './manual-account-entry.service';
+import {
   PayablePaymentService,
   toPayableSourceAccount,
 } from './payable-payment.service';
@@ -87,6 +92,7 @@ export class CuentasService {
     private readonly treasuryService: TreasuryService,
     private readonly receivablePayments: ReceivablePaymentService,
     private readonly payablePayments: PayablePaymentService,
+    private readonly manualAccounts: ManualAccountEntryService,
   ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -421,59 +427,85 @@ export class CuentasService {
     return items;
   }
 
+  /**
+   * Canonical MANUAL receivable create (Commit 25B).
+   * Source is always MANUAL. No Treasury / payment / deal / watch side effects.
+   */
+  async createManualReceivable(
+    tenantId: string,
+    input: RegisterManualAccountInput,
+  ) {
+    const { entry, replayed } = await this.manualAccounts.createReceivable(
+      tenantId,
+      input,
+    );
+    const loaded = await this.findEntryOrThrow(entry.id, tenantId);
+    const [serialized] = await this.computeEntries([loaded], tenantId, true);
+    return { ...serialized, replayed };
+  }
+
+  /**
+   * Canonical MANUAL payable create (Commit 25B).
+   * Source is always MANUAL. No Treasury / payment / deal / watch side effects.
+   */
+  async createManualPayable(
+    tenantId: string,
+    input: RegisterManualAccountInput,
+  ) {
+    const { entry, replayed } = await this.manualAccounts.createPayable(
+      tenantId,
+      input,
+    );
+    const loaded = await this.findEntryOrThrow(entry.id, tenantId);
+    const [serialized] = await this.computeEntries([loaded], tenantId, true);
+    return { ...serialized, replayed };
+  }
+
+  /**
+   * Legacy POST /cuentas/entries — standalone MANUAL creates only.
+   * DEAL_AUTO / PURCHASE_AUTO must use sale/purchase domain paths.
+   * Prefer POST /cuentas/receivables and POST /cuentas/payables.
+   */
   async createEntry(tenantId: string, dto: CreateAccountEntryDto) {
-    if (dto.dealId) {
-      await this.ensureDealInTenant(dto.dealId, tenantId);
+    if (
+      dto.source === AccountEntrySource.DEAL_AUTO ||
+      dto.source === AccountEntrySource.PURCHASE_AUTO
+    ) {
+      throw new BadRequestException(
+        'Cannot create DEAL_AUTO or PURCHASE_AUTO entries via manual create; use sale/purchase registration',
+      );
     }
-    if (dto.clientId) {
-      await this.ensureClientInTenant(dto.clientId, tenantId);
+    if (dto.dealId || dto.watchId || dto.expenseId) {
+      throw new BadRequestException(
+        'Manual account create cannot link deal, watch, or expense; use domain-specific registration',
+      );
     }
-    if (dto.watchId) {
-      await this.ensureWatchInTenant(dto.watchId, tenantId);
-    }
-    if (dto.expenseId) {
-      await this.ensureExpenseInTenant(dto.expenseId, tenantId);
+    if (
+      dto.type !== AccountEntryType.RECEIVABLE &&
+      dto.type !== AccountEntryType.PAYABLE
+    ) {
+      throw new BadRequestException('type must be RECEIVABLE or PAYABLE');
     }
 
-    let source = dto.source ?? AccountEntrySource.MANUAL;
-    if (dto.dealId && dto.type === AccountEntryType.RECEIVABLE) {
-      await this.ensureNoDuplicateReceivableForDeal(tenantId, dto.dealId);
-      if (dto.source === undefined) {
-        source = AccountEntrySource.DEAL_AUTO;
-      }
+    const input: RegisterManualAccountInput = {
+      counterpartyName: dto.counterpartyName,
+      concept: dto.concept,
+      amount: dto.totalAmount,
+      category: dto.category,
+      counterpartyType: dto.counterpartyType,
+      currency: dto.currency,
+      exchangeRate: dto.exchangeRate,
+      reference: dto.reference,
+      issuedAt: dto.issuedAt,
+      dueDate: dto.dueDate,
+      notes: dto.notes,
+      clientId: dto.clientId,
+    };
+
+    if (dto.type === AccountEntryType.RECEIVABLE) {
+      return this.createManualReceivable(tenantId, input);
     }
-
-    const entry = await this.prisma.accountEntry.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        type: dto.type,
-        category: dto.category,
-        source,
-        counterpartyName: dto.counterpartyName,
-        counterpartyType: dto.counterpartyType,
-        concept: dto.concept,
-        totalAmount: new Prisma.Decimal(dto.totalAmount),
-        currency: dto.currency,
-        exchangeRate:
-          dto.exchangeRate !== undefined
-            ? new Prisma.Decimal(dto.exchangeRate)
-            : undefined,
-        reference: dto.reference,
-        issuedAt: dto.issuedAt ? new Date(dto.issuedAt) : undefined,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-        notes: dto.notes,
-        client: dto.clientId ? { connect: { id: dto.clientId } } : undefined,
-        deal: dto.dealId ? { connect: { id: dto.dealId } } : undefined,
-        watch: dto.watchId ? { connect: { id: dto.watchId } } : undefined,
-        expense: dto.expenseId ? { connect: { id: dto.expenseId } } : undefined,
-      },
-      include: {
-        payments: { where: { deletedAt: null } },
-      },
-    });
-
-    const [serialized] = await this.computeEntries([entry], tenantId, true);
-    return serialized;
+    return this.createManualPayable(tenantId, input);
   }
 
   async updateEntry(id: string, tenantId: string, dto: UpdateAccountEntryDto) {
@@ -481,6 +513,23 @@ export class CuentasService {
 
     if (this.isDealLinked(existing) && dto.totalAmount !== undefined) {
       throw new BadRequestException('totalAmount cannot be edited for deal-linked entries');
+    }
+
+    // MANUAL economic identity is immutable after create (Commit 25B recovery policy).
+    if (existing.source === AccountEntrySource.MANUAL) {
+      const economicTouched =
+        dto.type !== undefined ||
+        dto.source !== undefined ||
+        dto.totalAmount !== undefined ||
+        dto.currency !== undefined ||
+        dto.exchangeRate !== undefined ||
+        dto.clientId !== undefined ||
+        dto.dealId !== undefined ||
+        dto.watchId !== undefined ||
+        dto.expenseId !== undefined;
+      if (economicTouched) {
+        throw new BadRequestException(MANUAL_ACCOUNT_ECONOMIC_IMMUTABLE_MESSAGE);
+      }
     }
 
     if (dto.dealId !== undefined && dto.dealId !== null) {
@@ -581,6 +630,18 @@ export class CuentasService {
 
     if (status === AccountEntryStatus.PAID) {
       throw new BadRequestException('Cannot delete a PAID entry');
+    }
+
+    // MANUAL: fail closed when any active payment/settlement exists (25B).
+    if (existing.source === AccountEntrySource.MANUAL) {
+      await this.manualAccounts.cancelUnpaidManual(tenantId, id);
+      return;
+    }
+
+    if (paidTotal.gt(0)) {
+      throw new BadRequestException(
+        'Cannot delete an account entry with payments; reverse payments first',
+      );
     }
 
     await this.prisma.accountEntry.update({

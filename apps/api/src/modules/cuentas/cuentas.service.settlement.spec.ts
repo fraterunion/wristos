@@ -258,6 +258,7 @@ describe('CuentasService — account-to-account settlement', () => {
       treasury as never,
       receivablePayments,
       payablePayments,
+      { createReceivable: jest.fn(), createPayable: jest.fn(), cancelUnpaidManual: jest.fn() } as never,
     );
 
     // Patch findEntry to use in-memory compute without full persist complexity

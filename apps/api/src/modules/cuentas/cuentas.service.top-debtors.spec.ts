@@ -130,6 +130,7 @@ describe('CuentasService — top debtors tenant scope', () => {
       } as never,
       { register: jest.fn() } as never,
       { register: jest.fn(), reverse: jest.fn() } as never,
+      { createReceivable: jest.fn(), createPayable: jest.fn(), cancelUnpaidManual: jest.fn() } as never,
     );
 
     const top = await service.getTopDebtors('t1', 10);

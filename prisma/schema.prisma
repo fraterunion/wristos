@@ -1587,6 +1587,10 @@ model AccountEntry {
   dueDate          DateTime?
   closedAt         DateTime?
   notes            String?
+  /// Durable registration idempotency for MANUAL receivable/payable create.
+  /// Not used for DEAL_AUTO / PURCHASE_AUTO legs.
+  /// Future AI ActionRun recovery marker: e.g. `ai-action-run:<actionRunId>`.
+  registerIdempotencyKey String?
 
   clientId  String?
   dealId    String?
@@ -1606,6 +1610,7 @@ model AccountEntry {
   settlementsAsReceivable AccountSettlement[] @relation("AccountSettlementReceivable")
   settlementsAsPayable    AccountSettlement[] @relation("AccountSettlementPayable")
 
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, type])
   @@index([tenantId, status])
