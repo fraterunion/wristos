@@ -14,6 +14,12 @@ import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
+import { CompositionOrchestrator } from '../composition/composition-orchestrator.service';
+import {
+  COMPOSITION_CANCEL_ID,
+  COMPOSITION_SEARCH_ID,
+  parseCompositionCreateSentinel,
+} from '../composition/composition.types';
 import { IntentAdapterService } from './intent-adapter.service';
 import { INTENT_CANDIDATE_VALUES, IntentCandidateIntent } from './intent-schema';
 import { assertWithinTextLimit, decideConfidencePolicy } from './safety';
@@ -56,6 +62,7 @@ export class NaturalLanguageAssistantService {
     private readonly referenceResolver: ReferenceResolverService,
     private readonly workingContext: WorkingContextService,
     private readonly prisma: PrismaService,
+    private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -228,6 +235,20 @@ export class NaturalLanguageAssistantService {
           response: continued,
           resolvedEntities: updateEntities,
         };
+      }
+
+      // Controlled composition V1: dependency CTAs (create / search / cancel) or reuse existing Client.
+      if (dto.workspaceId && resolution.entityType === 'CLIENT') {
+        const compositionHandled = await this.handleCompositionPickerSelection({
+          actor,
+          dto,
+          request,
+          responseCtx,
+          resolutionId: resolution.id,
+          resolutionLabel: resolution.label,
+          workspaceVersion: loaded.version,
+        });
+        if (compositionHandled) return compositionHandled;
       }
 
       // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
@@ -429,6 +450,12 @@ export class NaturalLanguageAssistantService {
       if (outcome.candidate.intent === 'REGISTER_SALE' && resolution.entityType === 'WATCH') {
         entities = mergeTrustedIds(entities, { watchId: resolution.id });
       }
+      if (outcome.candidate.intent === 'REGISTER_PURCHASE' && resolution.entityType === 'CLIENT') {
+        entities = mergeTrustedIds(entities, {
+          sellerClientId: resolution.id,
+          sellerLabel: resolution.label,
+        });
+      }
       if (
         (outcome.candidate.intent === 'REGISTER_SALE' || outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT') &&
         resolution.entityType === 'CLIENT'
@@ -552,5 +579,131 @@ export class NaturalLanguageAssistantService {
     };
     const response = await this.assistant.executeClaimed(actor, structuredRequest, request);
     return { resolvedIntent: intent, response, resolvedEntities: entities };
+  }
+
+  private async handleCompositionPickerSelection(args: {
+    actor: AssistantActorContext;
+    dto: AssistantMessageDto;
+    request: { id: string; traceId: string };
+    responseCtx: { conversationId?: string; workspaceId?: string; traceId: string };
+    resolutionId: string;
+    resolutionLabel: string;
+    workspaceVersion: number | null;
+  }): Promise<NaturalLanguageAssistantResult | null> {
+    if (!args.dto.workspaceId || args.workspaceVersion === null) return null;
+    const active = await this.compositionOrchestrator.loadActive({
+      tenantId: args.actor.tenantId,
+      userId: args.actor.userId,
+      workspaceId: args.dto.workspaceId,
+    });
+    if (!active.composition || active.composition.state === 'CANCELLED') return null;
+
+    const createName = parseCompositionCreateSentinel(args.resolutionId);
+    if (createName || args.resolutionId.startsWith('__COMPOSITION_CREATE_CLIENT__')) {
+      const name = createName ?? active.composition.dependencyQuery;
+      const createEntities: Record<string, string | boolean> = { name };
+      await this.aiRequests.recordInterpretation(args.request.id, {
+        intent: 'CREATE_CLIENT',
+        entities: createEntities,
+        candidateHash: `composition-create:${name}`,
+      });
+      const continued = await this.assistant.executeClaimed(
+        args.actor,
+        {
+          intent: 'CREATE_CLIENT',
+          entities: createEntities,
+          surface: args.dto.surface ?? 'DESKTOP',
+          clientRequestId: args.dto.clientRequestId,
+          conversationId: args.dto.conversationId,
+          workspaceId: args.dto.workspaceId,
+          userDisplayText: args.dto.text,
+        },
+        args.request as never,
+      );
+      return {
+        resolvedIntent: 'CREATE_CLIENT',
+        response: continued,
+        resolvedEntities: createEntities,
+      };
+    }
+
+    if (args.resolutionId === COMPOSITION_SEARCH_ID) {
+      const response = buildReferenceClarificationResponse(
+        'Escribe el nombre del cliente que quieres usar como ' +
+          (active.composition.dependencyReason === 'PURCHASE_SELLER' ? 'vendedor' : 'comprador') +
+          '.',
+        {
+          conversationId: args.dto.conversationId ?? args.responseCtx.conversationId,
+          workspaceId: args.dto.workspaceId,
+          traceId: args.request.traceId,
+        },
+        'COMPOSITION_SEARCH',
+      );
+      await this.aiRequests.failUnattached(args.request as never, args.actor, 'SEARCH_CLIENT', response, 'COMPOSITION_SEARCH');
+      return { resolvedIntent: 'SEARCH_CLIENT', response, resolvedEntities: {} };
+    }
+
+    if (args.resolutionId === COMPOSITION_CANCEL_ID) {
+      await this.compositionOrchestrator.cancelComposition({
+        tenantId: args.actor.tenantId,
+        userId: args.actor.userId,
+        workspaceId: args.dto.workspaceId,
+        expectedVersion: active.version,
+      });
+      const response = buildEntitySelectedResponse('Composición cancelada. No se registró la acción.', {
+        conversationId: args.dto.conversationId ?? args.responseCtx.conversationId,
+        workspaceId: args.dto.workspaceId,
+        traceId: args.request.traceId,
+      });
+      response.payload = {
+        ...response.payload,
+        message: 'Cancelé la operación. No se creó el cliente ni se registró la acción principal.',
+        unchanged: 'No se ejecutó ninguna escritura.',
+        nextAction: 'Puedes iniciar de nuevo cuando quieras.',
+      };
+      await this.aiRequests.failUnattached(args.request as never, args.actor, 'UNKNOWN', response, 'COMPOSITION_CANCELLED');
+      return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+    }
+
+    // Existing Client chosen while composition is parked — no CREATE_CLIENT mutation.
+    // Routes through CREATE_CLIENT USE_EXISTING so StructuredAssistant resumes the parent.
+    if (
+      active.composition.state === 'DEPENDENCY_REQUIRED' &&
+      !args.resolutionId.startsWith('__')
+    ) {
+      const createEntities: Record<string, string | boolean> = {
+        clientId: args.resolutionId,
+        useExistingClientId: args.resolutionId,
+        name: args.resolutionLabel,
+      };
+      await this.aiRequests.recordInterpretation(args.request.id, {
+        intent: 'CREATE_CLIENT',
+        entities: createEntities,
+        candidateHash: `composition-reuse:${args.resolutionId}`,
+      });
+      const continued = await this.assistant.executeClaimed(
+        args.actor,
+        {
+          intent: 'CREATE_CLIENT',
+          entities: createEntities,
+          surface: args.dto.surface ?? 'DESKTOP',
+          clientRequestId: args.dto.clientRequestId,
+          conversationId: args.dto.conversationId,
+          workspaceId: args.dto.workspaceId,
+          userDisplayText: args.dto.text,
+        },
+        args.request as never,
+      );
+      return {
+        resolvedIntent:
+          continued.payload && typeof continued.payload.preview === 'object'
+            ? (active.composition.parentCapability as IntentCandidateIntent)
+            : 'CREATE_CLIENT',
+        response: continued,
+        resolvedEntities: createEntities,
+      };
+    }
+
+    return null;
   }
 }

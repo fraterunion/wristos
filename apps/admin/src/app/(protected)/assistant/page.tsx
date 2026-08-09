@@ -308,6 +308,26 @@ export default function AssistantPage() {
   };
 
   const selectClient = (id: string, label: string) => {
+    // Composition / write pickers: resolve via natural language (ordinals / labels), not accounts.
+    const latest = history[0];
+    const pickerWrite =
+      latest?.response.responseType === 'ENTITY_PICKER' &&
+      (id.startsWith('__COMPOSITION_') ||
+        id.startsWith('__CREATE_NEW_CLIENT__') ||
+        latest.intent === 'REGISTER_PURCHASE' ||
+        latest.intent === 'REGISTER_SALE' ||
+        latest.intent === 'CREATE_CLIENT' ||
+        latest.intent === 'UPDATE_CLIENT' ||
+        latest.intent === 'REGISTER_RECEIVABLE_PAYMENT');
+    if (pickerWrite) {
+      const action = createAssistantMessageAction({
+        text: label,
+        conversationId: workspace.conversationId,
+        workspaceId: workspace.workspaceId,
+      });
+      void runMessageAction(action, label);
+      return;
+    }
     makeAction('GET_CLIENT_ACCOUNTS', { clientId: id }, `Muéstrame las cuentas de ${label}.`);
   };
 
@@ -373,12 +393,22 @@ export default function AssistantPage() {
         workspaceId: item.response.workspaceId || workspace.workspaceId || '',
         traceId: item.response.traceId,
       });
+      const resumedIntent =
+        result.compositionResume && typeof result.capability === 'string'
+          ? (result.capability as BusinessActionId)
+          : item.intent;
+      const historyLabel =
+        result.compositionResume && resumedIntent === 'REGISTER_PURCHASE'
+          ? 'Continuar compra'
+          : result.compositionResume && resumedIntent === 'REGISTER_SALE'
+            ? 'Continuar venta'
+            : confirmLabel;
       const id = crypto.randomUUID();
       setHistory((current) => [
         {
           id,
-          label: confirmLabel,
-          intent: item.intent,
+          label: historyLabel,
+          intent: resumedIntent,
           entities: item.entities,
           response,
         },

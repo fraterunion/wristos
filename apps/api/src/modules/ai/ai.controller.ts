@@ -19,6 +19,8 @@ import { StructuredAssistantService } from './assistant/structured-assistant.ser
 import { structuredAssistantHttpStatus } from './assistant/assistant-http-status';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
 import { WritePlanRunner } from './bindings/write-plan-runner';
+import { CompositionOrchestrator } from './composition/composition-orchestrator.service';
+import { JsonValue } from './domain/canonical-json';
 import { telem } from './telemetry/telemetry-hooks';
 import { TelemetryEmitter } from './telemetry/telemetry-emitter.service';
 
@@ -33,6 +35,7 @@ export class AIController {
     private readonly naturalLanguageAssistant: NaturalLanguageAssistantService,
     private readonly writeRegistry: WriteCapabilityBindingRegistry,
     private readonly writeRunner: WritePlanRunner,
+    private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -93,9 +96,9 @@ export class AIController {
   async confirmActionRun(@CurrentUser() user: CurrentUserType, @Param('id') id: string, @Body() dto: ConfirmActionRunDto) {
     const run = await this.runtime.findOne(user.tenantId, id);
     if (this.writeRegistry.hasBinding(run.intent)) {
-      // Bound WRITE (REGISTER_SALE | REGISTER_RECEIVABLE_PAYMENT | REGISTER_EXPENSE | REGISTER_PURCHASE): atomic confirm + canonical execution.
-      // Client never sets EXECUTING/COMPLETED — server owns the lifecycle.
-      return this.writeRunner.confirmAndExecute({
+      // Bound WRITE: atomic confirm + canonical execution for ONE capability only.
+      // Composition V1 may then resume a parked parent preview (second confirmation still required).
+      const result = await this.writeRunner.confirmAndExecute({
         tenantId: user.tenantId,
         userId: user.userId,
         actionRunId: id,
@@ -103,6 +106,75 @@ export class AIController {
         role: user.role,
         permissions: [],
       });
+      if (
+        run.intent === 'CREATE_CLIENT' &&
+        (result.executionState === 'EXECUTED' || result.executionState === 'REPLAYED')
+      ) {
+        const client = extractCreatedClient(result.receipt);
+        const workspace = client
+          ? await this.workspaces.findForConversation(user.tenantId, user.userId, run.conversationId)
+          : null;
+        if (client && workspace) {
+          const active = await this.compositionOrchestrator.loadActive({
+            tenantId: user.tenantId,
+            userId: user.userId,
+            workspaceId: workspace.id,
+          });
+          if (
+            active.composition &&
+            active.composition.state !== 'CANCELLED' &&
+            (!active.composition.childActionRunId ||
+              active.composition.childActionRunId === id ||
+              Boolean(active.composition.resolvedClientId))
+          ) {
+            const resumed = await this.compositionOrchestrator.resumeParentAfterClient({
+              actor: {
+                tenantId: user.tenantId,
+                userId: user.userId,
+                role: user.role,
+                permissions: [],
+              },
+              requestId: `confirm-resume:${id}`,
+              traceId: `trace:${id}`,
+              workspaceId: workspace.id,
+              conversationId: run.conversationId,
+              expectedVersion: active.version,
+              clientId: client.clientId,
+              clientLabel: client.name,
+              kind: 'CLIENT_CREATED',
+              childActionRunId: id,
+            });
+            if ('parentResponse' in resumed) {
+              return {
+                ...result,
+                message: `${result.message} ${String(resumed.parentResponse.payload.message ?? '')}`.trim(),
+                interactionState: resumed.parentResponse.interactionState,
+                responseType: resumed.parentResponse.responseType,
+                compositionResume: {
+                  ...resumed.parentResponse,
+                  parentCapability: resumed.parentCapability,
+                  compositionIdHash: resumed.compositionIdHash,
+                },
+                actionRun: {
+                  ...result.actionRun,
+                  id: resumed.parentResponse.actionRunId ?? result.actionRun.id,
+                },
+                planFingerprint:
+                  typeof resumed.parentResponse.payload.planFingerprint === 'string'
+                    ? resumed.parentResponse.payload.planFingerprint
+                    : result.planFingerprint,
+                capability: resumed.parentCapability,
+                receipt: result.receipt,
+              };
+            }
+            return {
+              ...result,
+              message: resumed.message,
+            };
+          }
+        }
+      }
+      return result;
     }
     // Unbound write intents fail closed — confirmation must not imply execution.
     if (run.requiresConfirmation) {
@@ -176,4 +248,12 @@ export class AIController {
   deleteWorkspace(@CurrentUser() user: CurrentUserType, @Param('id') id: string, @Body() dto: WorkspaceVersionDto) {
     return this.workspaces.softDelete(user.tenantId, user.userId, id, dto.expectedVersion);
   }
+}
+
+function extractCreatedClient(receipt: JsonValue | null | undefined): { clientId: string; name: string } | null {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null;
+  const clientId = (receipt as Record<string, unknown>).clientId;
+  const name = (receipt as Record<string, unknown>).name;
+  if (typeof clientId !== 'string' || !clientId) return null;
+  return { clientId, name: typeof name === 'string' && name ? name : 'Cliente' };
 }

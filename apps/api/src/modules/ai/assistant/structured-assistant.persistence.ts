@@ -172,6 +172,140 @@ export class StructuredAssistantPersistence {
     });
   }
 
+  /**
+   * Parent ActionRun after composition dependency completes.
+   * Does not require an AIRequest in PLANNING (confirm-time resume safe).
+   * Never mutates a child ActionRun's capability.
+   */
+  checkpointCompositionParent(
+    actor: AssistantActorContext,
+    prepared: PreparedAssistantRequest,
+    input: StructuredAssistantRequest,
+    plan: BusinessExecutionPlan,
+    meta: { compositionIdHash: string; childActionRunId?: string; dependencyReason: string },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const clarification = plan.state === 'NEEDS_CLARIFICATION';
+      const idempotencyKey = `composition-parent:${meta.compositionIdHash}:${plan.fingerprint.slice(0, 24)}`;
+      const existing = await tx.aIActionRun.findFirst({
+        where: { tenantId: actor.tenantId, idempotencyKey },
+      });
+      if (existing) {
+        const workspace = await tx.aIWorkspace.findFirst({
+          where: {
+            id: prepared.workspaceId,
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            deletedAt: null,
+          },
+        });
+        if (!workspace) throw new NotFoundException('AI workspace not found');
+        if (workspace.activeActionRunId !== existing.id) {
+          const linked = await tx.aIWorkspace.updateMany({
+            where: {
+              id: prepared.workspaceId,
+              tenantId: actor.tenantId,
+              userId: actor.userId,
+              version: prepared.workspaceVersion,
+              deletedAt: null,
+            },
+            data: {
+              activeActionRunId: existing.id,
+              interactionState: clarification
+                ? AIInteractionState.COLLECTING_INPUT
+                : AIInteractionState.AWAITING_CONFIRMATION,
+              version: { increment: 1 },
+              lastActivityAt: new Date(),
+            },
+          });
+          if (linked.count !== 1) throw new ConflictException('AI workspace version is stale');
+          const updated = await tx.aIWorkspace.findUniqueOrThrow({ where: { id: prepared.workspaceId } });
+          return { actionRun: existing, workspaceVersion: updated.version };
+        }
+        return { actionRun: existing, workspaceVersion: workspace.version };
+      }
+      const run = await tx.aIActionRun.create({
+        data: {
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          conversationId: prepared.conversationId,
+          intent: input.intent,
+          status: clarification
+            ? AIActionRunStatus.NEEDS_CLARIFICATION
+            : AIActionRunStatus.READY_FOR_CONFIRMATION,
+          planFingerprint: plan.fingerprint,
+          idempotencyKey,
+          proposedPlan: plan as unknown as Prisma.InputJsonObject,
+          resolvedEntities: input.entities as unknown as Prisma.InputJsonObject,
+          warnings: plan.warnings as unknown as Prisma.InputJsonArray,
+          requiresConfirmation: plan.confirmationTier !== 'NONE',
+        },
+      });
+      await tx.aIAuditEvent.create({
+        data: {
+          tenantId: actor.tenantId,
+          actorUserId: actor.userId,
+          conversationId: prepared.conversationId,
+          workspaceId: prepared.workspaceId,
+          actionRunId: run.id,
+          type: clarification
+            ? AIAuditEventType.PLAN_NEEDS_CLARIFICATION
+            : AIAuditEventType.PLAN_READY_FOR_CONFIRMATION,
+          payload: {
+            planFingerprint: plan.fingerprint,
+            compositionIdHash: meta.compositionIdHash,
+            dependencyReason: meta.dependencyReason,
+            ...(meta.childActionRunId ? { childActionRunIdHash: meta.childActionRunId.slice(0, 8) } : {}),
+            compositionResume: true,
+          },
+        },
+      });
+
+      const currentWorkspace = await tx.aIWorkspace.findFirst({
+        where: {
+          id: prepared.workspaceId,
+          tenantId: actor.tenantId,
+          userId: actor.userId,
+          deletedAt: null,
+        },
+        select: { resolvedContext: true },
+      });
+      const resolvedContext = mergePlanCheckpointIntoResolvedContext(currentWorkspace?.resolvedContext, {
+        entityVersions: input.entityVersions ?? {},
+        planFingerprint: plan.fingerprint,
+      });
+      const pendingResponse = (
+        clarification
+          ? { missingFields: plan.missingEntities }
+          : { preview: plan.preview, planFingerprint: plan.fingerprint }
+      ) as unknown as Prisma.InputJsonObject;
+      const workspaceUpdate = await tx.aIWorkspace.updateMany({
+        where: {
+          id: prepared.workspaceId,
+          tenantId: actor.tenantId,
+          userId: actor.userId,
+          version: prepared.workspaceVersion,
+          deletedAt: null,
+        },
+        data: {
+          activeActionRunId: run.id,
+          interactionState: clarification
+            ? AIInteractionState.COLLECTING_INPUT
+            : AIInteractionState.AWAITING_CONFIRMATION,
+          draftPayload: input.entities as unknown as Prisma.InputJsonObject,
+          resolvedContext: resolvedContext as Prisma.InputJsonObject,
+          selectedEntities: input.entities as unknown as Prisma.InputJsonObject,
+          pendingResponse,
+          version: { increment: 1 },
+          lastActivityAt: new Date(),
+        },
+      });
+      if (workspaceUpdate.count !== 1) throw new ConflictException('AI workspace version is stale');
+      const workspace = await tx.aIWorkspace.findUniqueOrThrow({ where: { id: prepared.workspaceId } });
+      return { actionRun: run, workspaceVersion: workspace.version };
+    });
+  }
+
   complete(
     requestId: string,
     actor: AssistantActorContext,

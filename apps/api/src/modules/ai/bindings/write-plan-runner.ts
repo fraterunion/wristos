@@ -28,13 +28,29 @@ export type ConfirmWriteResult = {
   result: BusinessActionResult | null;
   replayed: boolean;
   recovered: boolean;
-  interactionState: 'COMPLETED' | 'FAILED' | 'STALE_PLAN' | 'PERMISSION_BLOCKED' | 'EXECUTING';
-  responseType: 'SUCCESS_RECEIPT' | 'ERROR_RECOVERY_CARD';
+  interactionState: 'COMPLETED' | 'FAILED' | 'STALE_PLAN' | 'PERMISSION_BLOCKED' | 'EXECUTING' | 'READY_FOR_CONFIRMATION' | 'NEEDS_INPUT';
+  responseType: 'SUCCESS_RECEIPT' | 'ERROR_RECOVERY_CARD' | 'ACTION_PREVIEW_CARD' | 'MISSING_FIELDS_CARD';
   message: string;
   receipt: JsonValue | null;
   planFingerprint: string;
   executableWrite: true;
   capability: string;
+  /** Controlled composition V1: parent preview after CREATE_CLIENT (no second mutation). */
+  compositionResume?: {
+    requestId: string;
+    conversationId: string;
+    workspaceId: string;
+    actionRunId?: string;
+    interactionState: string;
+    responseType: string;
+    payload: Record<string, JsonValue>;
+    warnings: unknown[];
+    suggestedActions: unknown[];
+    traceId: string;
+    createdAt: string;
+    parentCapability: string;
+    compositionIdHash: string;
+  };
 };
 
 type ClaimResult =

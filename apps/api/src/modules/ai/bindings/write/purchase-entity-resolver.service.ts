@@ -12,9 +12,17 @@ export type PurchaseEntityClarify = {
   items: Array<Record<string, JsonValue>>;
 };
 
+export type PurchaseSellerDependency = {
+  reason: 'PURCHASE_SELLER';
+  query: string;
+  message: string;
+};
+
 export type PurchaseEntityResolution = {
   entities: Record<string, JsonValue>;
   clarify: PurchaseEntityClarify | null;
+  /** Closed composition V1: missing seller Client — do not free-text unlinked. */
+  dependencyRequired: PurchaseSellerDependency | null;
 };
 
 function asString(value: unknown): string | null {
@@ -95,16 +103,22 @@ export class PurchaseEntityResolver {
                 name: c.name,
               })),
             },
+            dependencyRequired: null,
           };
         } else {
-          // Free-text fallback — canonical domain supports sellerCounterpartyName.
-          next = {
-            ...next,
-            sellerCounterpartyName: sellerQuery,
-            sellerLabel: sellerQuery,
-            sellerUnlinked: true,
-            sellerFallbackNote:
-              `No encontré a «${sellerQuery}» como cliente. Puedo registrar «${sellerQuery}» como vendedor sin vincularlo a un cliente, o puedes crear el cliente primero.`,
+          // Controlled composition V1: offer CREATE_CLIENT dependency (no silent unlinked seller).
+          return {
+            entities: {
+              ...next,
+              sellerQuery: sellerQuery,
+              sellerLabel: sellerQuery,
+            },
+            clarify: null,
+            dependencyRequired: {
+              reason: 'PURCHASE_SELLER',
+              query: sellerQuery,
+              message: `No encuentro a «${sellerQuery}» en Clientes. Necesito identificar al vendedor antes de registrar la compra.`,
+            },
           };
         }
       }
@@ -125,6 +139,6 @@ export class PurchaseEntityResolver {
       }
     }
 
-    return { entities: next, clarify: null };
+    return { entities: next, clarify: null, dependencyRequired: null };
   }
 }

@@ -32,6 +32,9 @@ import { UpdateClientEntityResolver } from './bindings/write/update-client-entit
 import { UpdateClientWriteBinding } from './bindings/write/update-client.binding';
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
 import { WritePlanRunner } from './bindings/write-plan-runner';
+import { SaleCustomerEntityResolver } from './bindings/write/sale-customer-entity-resolver.service';
+import { CompositionOrchestrator } from './composition/composition-orchestrator.service';
+import { CompositionService } from './composition/composition.service';
 import { AIRequestService } from './assistant/ai-request.service';
 import { StructuredAssistantPersistence } from './assistant/structured-assistant.persistence';
 import { StructuredAssistantService } from './assistant/structured-assistant.service';
@@ -78,8 +81,11 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     UpdateClientWriteBinding,
     ReceivablePaymentEntityResolver,
     PurchaseEntityResolver,
+    SaleCustomerEntityResolver,
     CreateClientEntityResolver,
     UpdateClientEntityResolver,
+    CompositionService,
+    CompositionOrchestrator,
     WriteCapabilityBindingRegistry,
     WritePlanRunner,
     AIRequestService,
