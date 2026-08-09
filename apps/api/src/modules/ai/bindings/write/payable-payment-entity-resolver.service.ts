@@ -23,11 +23,24 @@ export type PayablePaymentEntityClarify = {
   items: Array<Record<string, JsonValue>>;
 };
 
+export type PayableTrustSource =
+  | 'UNIQUE_OPEN'
+  | 'SERVER_REVALIDATED'
+  | 'COUNTERPARTY_UNIQUE';
+
 export type PayablePaymentEntityResolution = {
   entities: Record<string, JsonValue>;
   clarify: PayablePaymentEntityClarify | null;
   uniquePayableSelected: boolean;
 };
+
+const PAYABLE_ID_ALIASES = [
+  'payableEntryId',
+  'payableAccountId',
+  'accountId',
+  'accountEntryId',
+  'entryId',
+] as const;
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -53,11 +66,33 @@ function sourceLabel(source: string): string {
   return source;
 }
 
+function stripPayableIdAliases(
+  entities: Record<string, JsonValue>,
+): Record<string, JsonValue> {
+  const next: Record<string, JsonValue> = { ...entities };
+  for (const key of PAYABLE_ID_ALIASES) {
+    delete next[key];
+  }
+  // Provider-supplied trust flags are never authoritative.
+  delete next.payableTrustSource;
+  delete next.uniquePayableSelected;
+  return next;
+}
+
+function claimedPayableId(entities: Record<string, JsonValue>): string | null {
+  for (const key of PAYABLE_ID_ALIASES) {
+    const id = asString(entities[key]);
+    if (id) return id;
+  }
+  return null;
+}
+
 /**
  * Trusted PAYABLE resolution for REGISTER_PAYABLE_PAYMENT preview.
- * Never trusts LLM-supplied account IDs. Unique open payable may be selected
- * deterministically and surfaced; multiples must clarify via ENTITY_PICKER.
- * No CREATE_CLIENT composition.
+ *
+ * Provider/user-supplied payable IDs are never trusted. An ID may only survive
+ * when it re-validates as an eligible open PAYABLE in the actor tenant
+ * (resolver / picker / ordinal / working-context selection all go through this gate).
  */
 @Injectable()
 export class PayablePaymentEntityResolver {
@@ -70,13 +105,9 @@ export class PayablePaymentEntityResolver {
     tenantId: string,
     entities: Record<string, JsonValue>,
   ): Promise<PayablePaymentEntityResolution> {
-    let next: Record<string, JsonValue> = { ...entities };
+    const claimedId = claimedPayableId(entities);
+    let next = stripPayableIdAliases(entities);
     let uniquePayableSelected = false;
-
-    const accountEntryId = asString(next.accountEntryId);
-    if (accountEntryId && !asString(next.accountId) && !asString(next.payableEntryId)) {
-      next = { ...next, accountId: accountEntryId, payableEntryId: accountEntryId };
-    }
 
     // Normalize sourceAccount aliases (destination is receivable vocabulary — map if cash-like).
     const sourceRaw =
@@ -91,6 +122,16 @@ export class PayablePaymentEntityResolver {
       };
     } else if (sourceRaw === 'CRYPTO') {
       next = { ...next, sourceAccount: 'CRYPTO' };
+    }
+
+    // Re-bind claimed ID only after tenant-scoped eligibility revalidation.
+    if (claimedId) {
+      const open = await this.loadEligiblePayables(tenantId);
+      const row = open.find((r) => r.id === claimedId);
+      if (row) {
+        next = this.bindPayable(next, row, false, 'SERVER_REVALIDATED');
+      }
+      // else: already stripped — no existence leak, continue semantic resolution
     }
 
     if (!asString(next.customerId) && !asString(next.clientId) && !asString(next.supplierClientId)) {
@@ -110,7 +151,7 @@ export class PayablePaymentEntityResolver {
           };
         } else if (clients.length > 1) {
           return {
-            entities: next,
+            entities: stripPayableIdAliases(next),
             clarify: {
               field: 'customerId',
               entityType: 'CLIENT',
@@ -130,17 +171,16 @@ export class PayablePaymentEntityResolver {
             uniquePayableSelected,
           };
         } else {
-          // Also try open payables by counterparty name substring when no Client match.
           const byName = await this.loadEligiblePayables(tenantId);
           const q = counterpartyQuery.toLowerCase();
           const matches = byName.filter((p) =>
             p.counterpartyName.toLowerCase().includes(q),
           );
           if (matches.length === 1) {
-            next = this.bindPayable(next, matches[0]!, true);
+            next = this.bindPayable(next, matches[0]!, true, 'COUNTERPARTY_UNIQUE');
             uniquePayableSelected = true;
           } else if (matches.length > 1) {
-            return this.payablePicker(next, matches, uniquePayableSelected);
+            return this.payablePicker(stripPayableIdAliases(next), matches, uniquePayableSelected);
           }
         }
       }
@@ -150,31 +190,13 @@ export class PayablePaymentEntityResolver {
       asString(next.customerId) ??
       asString(next.clientId) ??
       asString(next.supplierClientId);
-    if (
-      customerId &&
-      !asString(next.accountId) &&
-      !asString(next.payableEntryId) &&
-      !asString(next.payableAccountId)
-    ) {
+    if (customerId && !asString(next.accountId) && !asString(next.payableEntryId)) {
       const open = await this.loadEligiblePayables(tenantId, customerId);
       if (open.length === 1) {
-        next = this.bindPayable(next, open[0]!, true);
+        next = this.bindPayable(next, open[0]!, true, 'UNIQUE_OPEN');
         uniquePayableSelected = true;
       } else if (open.length > 1) {
-        return this.payablePicker(next, open, uniquePayableSelected);
-      }
-    }
-
-    const accountId =
-      asString(next.payableEntryId) ??
-      asString(next.payableAccountId) ??
-      asString(next.accountId);
-    if (accountId) {
-      const open = await this.loadEligiblePayables(tenantId);
-      const row = open.find((r) => r.id === accountId);
-      if (row) {
-        next = this.bindPayable(next, row, asBool(next.uniquePayableSelected));
-        if (asBool(next.uniquePayableSelected)) uniquePayableSelected = true;
+        return this.payablePicker(stripPayableIdAliases(next), open, uniquePayableSelected);
       }
     }
 
@@ -201,6 +223,11 @@ export class PayablePaymentEntityResolver {
       };
     }
 
+    // Final executability identity gate: only trusted bound IDs may remain.
+    if (!asString(next.payableEntryId) || !asString(next.accountId)) {
+      next = stripPayableIdAliases(next);
+    }
+
     return {
       entities: next,
       clarify: null,
@@ -212,6 +239,7 @@ export class PayablePaymentEntityResolver {
     next: Record<string, JsonValue>,
     row: OpenPayableRow,
     unique: boolean,
+    trustSource: PayableTrustSource,
   ): Record<string, JsonValue> {
     return {
       ...next,
@@ -227,6 +255,7 @@ export class PayablePaymentEntityResolver {
       outstandingBefore: row.balance,
       payableSource: row.source,
       uniquePayableSelected: unique,
+      payableTrustSource: trustSource,
     };
   }
 
@@ -275,7 +304,6 @@ export class PayablePaymentEntityResolver {
       .filter((row) => {
         const source = String((row as { source?: string }).source ?? '');
         const dealId = (row as { dealId?: string | null }).dealId;
-        // Prefer MANUAL + PURCHASE_AUTO; exclude deal-linked if surfaced.
         if (source === AccountEntrySource.DEAL_AUTO) return false;
         if (dealId) return false;
         if (
