@@ -24,10 +24,159 @@ function fakeTreasuryAccount(fragment: string): 'CASH' | 'BANK' | 'CESAR' | null
   return null;
 }
 
+function fakeCapitalAccount(fragment: string): 'CASH' | 'BANK' | 'CESAR_ACCOUNT' | null {
+  const s = fragment.trim().toLowerCase();
+  if (/efectivo|caja|\bcash\b/.test(s)) return 'CASH';
+  if (/banco|bancos|cuenta bancaria/.test(s)) return 'BANK';
+  if (/c[eé]sar|cuenta de c[eé]sar|cuenta c[eé]sar/.test(s)) return 'CESAR_ACCOUNT';
+  return null;
+}
+
+function classifyCapitalDistribution(t: string): FakeOutput | null {
+  if (
+    !/(?:utilidad|retiro del socio|retir[eé].*(?:utilidad|para)|p[aá]gale?\s+(?:[\d.,]+\s*(?:mil|k|millones)?\s+)?(?:de\s+)?utilidad)/.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+  // Keep purchase/expense language out.
+  if (/\b(?:compr[eé]|gast[eé]|renta|gasolina|marketing|publicidad)\b/.test(t)) return null;
+
+  const amountMatch = t.match(/([\d.,]+ ?(mil|k|millones)?)/);
+  let amount: string | undefined;
+  if (amountMatch) {
+    const raw = amountMatch[1];
+    if (/millones/.test(raw)) {
+      const n = Number(raw.replace(/millones|,/g, '').trim());
+      amount = String(Math.round(n * 1_000_000));
+    } else {
+      amount = String(parseFakeAmount(raw));
+    }
+  }
+  const nameMatch = t.match(
+    /(?:para|a)\s+([a-záéíóúñü][a-záéíóúñü\s]{1,40}?)(?:\s|$)/i,
+  );
+  const entities: Record<string, string> = { currency: 'MXN' };
+  if (amount) entities.amount = amount;
+  if (nameMatch?.[1]) entities.investorQuery = nameMatch[1].trim();
+  const missing: string[] = [];
+  if (!amount) missing.push('amount');
+  if (!entities.investorQuery) missing.push('investorQuery');
+  return {
+    intent: 'REGISTER_CAPITAL_DISTRIBUTION',
+    entities,
+    missingEntities: missing,
+    ambiguities: [],
+    confidence: missing.length ? 'MEDIUM' : 'HIGH',
+    language: 'es',
+  };
+}
+
+function classifyCapitalContribution(t: string): FakeOutput | null {
+  // Distribution / payout language is not a contribution.
+  if (
+    /utilidad|retiro del socio|retir[eé].*(?:utilidad|para)|p[aá]gale?\s+.*utilidad/.test(t)
+  ) {
+    return null;
+  }
+  // Purchase / OpEx / transfer boundaries.
+  if (
+    /\b(?:compr[eé]|compramos|gast[eé]|pasa|pasar|mueve|mover|transfiere|transferir)\b/.test(t)
+  ) {
+    return null;
+  }
+  // Ambiguous "puso X para marketing" — do not auto-classify as contribution.
+  if (/\bpuso\b.*\b(?:para|de)\b.*\b(?:marketing|publicidad|renta|gasolina)\b/.test(t)) {
+    return null;
+  }
+  if (
+    !/(?:aport[oó]|aportaci[oó]n|meti[oó]|met[ií]|puso\b|registra.*aport)/.test(t)
+  ) {
+    return null;
+  }
+
+  const amountMatch = t.match(/([\d.,]+ ?(mil|k|millones)?)/);
+  let amount: string | undefined;
+  if (amountMatch) {
+    const raw = amountMatch[1];
+    if (/millones/.test(raw)) {
+      const n = Number(raw.replace(/millones|,/g, '').trim());
+      amount = String(Math.round(n * 1_000_000));
+    } else {
+      amount = String(parseFakeAmount(raw));
+    }
+  }
+
+  let investorQuery: string | undefined;
+  // Avoid \\b after accented verbs (ó is non-word in JS).
+  const nameFirst = t.match(
+    /^([a-záéíóúñü][a-záéíóúñü]+)\s+(?:aport[oó]|meti[oó]|puso)(?:\s|$)/i,
+  );
+  if (nameFirst?.[1]) investorQuery = nameFirst[1];
+  if (!investorQuery) {
+    const para = t.match(
+      /(?:para|de)\s+([a-záéíóúñü][a-záéíóúñü]+)(?:\s+(?:en|al|a)\b|\s*$)/i,
+    );
+    if (para?.[1] && !/^(efectivo|bancos|banco|caja|negocio|capital)$/i.test(para[1])) {
+      investorQuery = para[1];
+    }
+  }
+
+  let account: 'CASH' | 'BANK' | 'CESAR_ACCOUNT' | null = null;
+  const enAccount = t.match(
+    /\b(?:en|como|m[aá]rcalos?\s+como|cuenta)\s+(.+?)(?:\s*$)/i,
+  );
+  if (enAccount) account = fakeCapitalAccount(enAccount[1]);
+  if (!account) {
+    if (/\bbancos?\b|\bbanco\b/.test(t)) account = 'BANK';
+    else if (/\befectivo\b|\bcaja\b/.test(t)) account = 'CASH';
+    else if (/cuenta\s+c[eé]sar|c[eé]sar/.test(t) && /m[aá]rca|cuenta|como/.test(t)) {
+      account = 'CESAR_ACCOUNT';
+    }
+  }
+
+  if (/crypto|usdt|bitcoin|btc|d[oó]lares|\busd\b/.test(t)) {
+    return {
+      intent: 'REGISTER_CAPITAL_CONTRIBUTION',
+      entities: {},
+      missingEntities: ['amount', 'investorQuery', 'account'],
+      ambiguities: [
+        {
+          field: 'currency',
+          reason: 'Capital contributions are MXN only',
+          candidates: [],
+        },
+      ],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
+  const entities: Record<string, string> = { currency: 'MXN' };
+  if (amount) entities.amount = amount;
+  if (investorQuery) entities.investorQuery = investorQuery;
+  if (account) entities.account = account;
+
+  const missing: string[] = [];
+  if (!amount) missing.push('amount');
+  if (!investorQuery) missing.push('investorQuery');
+  if (!account) missing.push('account');
+
+  return {
+    intent: 'REGISTER_CAPITAL_CONTRIBUTION',
+    entities,
+    missingEntities: missing,
+    ambiguities: [],
+    confidence: missing.length ? 'MEDIUM' : 'HIGH',
+    language: 'es',
+  };
+}
+
 function classifyTreasuryTransfer(t: string): FakeOutput | null {
   // Capital / ownership language must NOT become a treasury transfer.
   if (
-    /utilidad|socio|aport[oó]|aportaci[oó]n|retir[eé].*utilidad|p[aá]gale? la utilidad|retiro del socio/.test(
+    /utilidad|socio|aport[oó]|aportaci[oó]n|retir[eé].*utilidad|p[aá]gale? la utilidad|retiro del socio|meti[oó].*negocio/.test(
       t,
     )
   ) {
@@ -390,20 +539,16 @@ function classify(
     return { intent: 'REGISTER_SALE', entities: { watchQuery: t.replace(/^vend[ií] /, '').replace(/\.$/, '') }, missingEntities: ['watchId', 'customerId', 'price', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
 
-  // Capital / ownership economics stay unbound (before transfer/payable/expense).
-  if (
-    /retir[eé].*(utilidad|para c[eé]sar)|retir[eé] .*c[eé]sar|p[aá]gale? la utilidad|retiro del socio|aport[oó] \d|c[eé]sar aport|aportaci[oó]n/.test(
-      t,
-    )
-  ) {
-    return {
-      intent: 'UNKNOWN',
-      entities: {},
-      missingEntities: [],
-      ambiguities: [{ field: 'intent', reason: 'capital movement is not REGISTER_TREASURY_TRANSFER' }],
-      confidence: 'LOW',
-      language: 'es',
-    };
+  // Capital distribution (unbound) before contribution / transfer.
+  {
+    const distribution = classifyCapitalDistribution(t);
+    if (distribution) return distribution;
+  }
+
+  // Capital contribution (WRITE #9) before treasury transfer.
+  {
+    const contribution = classifyCapitalContribution(t);
+    if (contribution) return contribution;
   }
 
   // Internal treasury transfers (before payable/expense) — not capital withdrawals.

@@ -1,6 +1,8 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, PayloadTooLargeException } from '@nestjs/common';
 import { AIAuditEventType, AIRequest, AIRequestStatus } from '@prisma/client';
 import { ReadPlanRunner, ReadPlanResult } from '../bindings/read-plan-runner';
+import { CapitalInvestorEntityResolver } from '../bindings/write/capital-investor-entity-resolver.service';
+import { enrichCapitalContributionEntities } from '../bindings/write/capital-contribution-entity-enricher';
 import { CreateClientEntityResolver } from '../bindings/write/create-client-entity-resolver.service';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
@@ -25,6 +27,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_PAYABLE_PAYMENT',
   'REGISTER_TREASURY_TRANSFER',
+  'REGISTER_CAPITAL_CONTRIBUTION',
   'REGISTER_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
@@ -44,6 +47,7 @@ export class StructuredAssistantService {
     private readonly saleCustomerEntityResolver: SaleCustomerEntityResolver,
     private readonly createClientEntityResolver: CreateClientEntityResolver,
     private readonly updateClientEntityResolver: UpdateClientEntityResolver,
+    private readonly capitalInvestorEntityResolver: CapitalInvestorEntityResolver,
     private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
@@ -525,6 +529,78 @@ export class StructuredAssistantService {
           );
         }
       }
+      if (input.intent === 'REGISTER_CAPITAL_CONTRIBUTION') {
+        entities = enrichCapitalContributionEntities(
+          entities as Record<string, unknown>,
+          request.receivedAt,
+        ) as typeof entities;
+        const resolved = await this.capitalInvestorEntityResolver.resolve(
+          actor.tenantId,
+          entities as Record<string, JsonValue>,
+        );
+        entities = resolved.entities as typeof entities;
+        if (resolved.kind === 'CLARIFY') {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType:
+              resolved.clarify.field === 'currency' ? 'MISSING_FIELD' : 'ENTITY_AMBIGUITY',
+            clarificationReason: resolved.clarify.code ?? 'investor_disambiguation',
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: resolved.clarify.field === 'investor',
+          });
+          if (resolved.clarify.field === 'investor' && resolved.clarify.items.length > 0) {
+            const response = this.accountDisambiguationResponse(
+              request.id,
+              request.traceId,
+              prepared,
+              resolved.clarify.message,
+              resolved.clarify.items,
+              'INVESTOR',
+            );
+            return this.persistence.complete(
+              request.id,
+              actor,
+              response,
+              prepared.workspaceVersion,
+              AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+              AIRequestStatus.NEEDS_CLARIFICATION,
+              { intent: input.intent, entities },
+            );
+          }
+          const response = this.responseBase(
+            request.id,
+            request.traceId,
+            prepared,
+            '',
+            'NEEDS_INPUT',
+            'MISSING_FIELDS_CARD',
+            {
+              message: resolved.clarify.message,
+              missing: [resolved.clarify.field],
+              unchanged: 'No se ejecutó ninguna acción.',
+              nextAction: 'Completa el dato faltante e intenta de nuevo.',
+            },
+            this.planner.plan(
+              { intent: input.intent, entities },
+              { workspaceVersion: prepared.workspaceVersion, entityVersions: {} },
+            ),
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+      }
 
       const plannedInput = { ...input, entities };
       const plannerStarted = Date.now();
@@ -761,7 +837,7 @@ export class StructuredAssistantService {
     prepared: PreparedAssistantRequest,
     message: string,
     items: Array<Record<string, JsonValue>>,
-    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY',
+    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY' | 'INVESTOR',
   ): StructuredAssistantResponse {
     return {
       requestId,

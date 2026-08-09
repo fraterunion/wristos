@@ -27,6 +27,7 @@ export function ConversationPreview({
     | 'CONFIRM_SALE'
     | 'CONFIRM_PAYMENT'
     | 'CONFIRM_TRANSFER'
+    | 'CONFIRM_CONTRIBUTION'
     | 'CONFIRM_EXPENSE'
     | 'CONFIRM_PURCHASE'
     | 'CONFIRM_CLIENT'
@@ -44,6 +45,7 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_SALE' ||
     ctaKind === 'CONFIRM_PAYMENT' ||
     ctaKind === 'CONFIRM_TRANSFER' ||
+    ctaKind === 'CONFIRM_CONTRIBUTION' ||
     ctaKind === 'CONFIRM_EXPENSE' ||
     ctaKind === 'CONFIRM_CLIENT' ||
     ctaKind === 'CONFIRM_CLIENT_UPDATE' ||
@@ -142,13 +144,15 @@ export function ConversationReceipt({
                 ? 'Ver gastos'
                 : dealHref.startsWith('/treasury')
                   ? 'Ver Tesorería'
-                  : dealHref.startsWith('/cuentas')
-                    ? 'Ver cuenta'
-                    : dealHref.startsWith('/inventory')
-                      ? 'Ver reloj'
-                      : dealHref.startsWith('/crm')
-                        ? 'Ver cliente'
-                        : 'Ver venta'}
+                  : dealHref.startsWith('/capital')
+                    ? 'Ver Capital'
+                    : dealHref.startsWith('/cuentas')
+                      ? 'Ver cuenta'
+                      : dealHref.startsWith('/inventory')
+                        ? 'Ver reloj'
+                        : dealHref.startsWith('/crm')
+                          ? 'Ver cliente'
+                          : 'Ver venta'}
             </Link>
           ) : null}
           {correctHref ? (
@@ -157,13 +161,15 @@ export function ConversationReceipt({
                 ? 'Corregir en Gastos'
                 : correctHref.startsWith('/treasury')
                   ? 'Corregir en Tesorería'
-                  : correctHref.startsWith('/cuentas')
-                    ? 'Corregir en Cuentas'
-                    : correctHref.startsWith('/inventory')
-                      ? 'Corregir en Inventario'
-                      : correctHref.startsWith('/crm')
-                        ? 'Corregir en CRM'
-                        : 'Corregir en Ventas'}
+                  : correctHref.startsWith('/capital')
+                    ? 'Corregir en Capital'
+                    : correctHref.startsWith('/cuentas')
+                      ? 'Corregir en Cuentas'
+                      : correctHref.startsWith('/inventory')
+                        ? 'Corregir en Inventario'
+                        : correctHref.startsWith('/crm')
+                          ? 'Corregir en CRM'
+                          : 'Corregir en Ventas'}
             </Link>
           ) : null}
         </div>

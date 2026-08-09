@@ -237,6 +237,73 @@ export class NaturalLanguageAssistantService {
         };
       }
 
+      // REGISTER_CAPITAL_CONTRIBUTION investor picker: continue with trusted id + prior entities.
+      if (
+        loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' &&
+        resolution.entityType === 'INVESTOR'
+      ) {
+        const prior = dto.conversationId
+          ? await this.prisma.aIRequest.findFirst({
+              where: {
+                tenantId: actor.tenantId,
+                conversationId: dto.conversationId,
+                id: { not: request.id },
+                requestPayload: {
+                  path: ['resolvedIntent'],
+                  equals: 'REGISTER_CAPITAL_CONTRIBUTION',
+                },
+              },
+              orderBy: { createdAt: 'desc' },
+              select: { requestPayload: true },
+            })
+          : null;
+        const priorPayload =
+          prior?.requestPayload && typeof prior.requestPayload === 'object'
+            ? (prior.requestPayload as Record<string, unknown>)
+            : null;
+        const priorEntities =
+          priorPayload?.resolvedEntities &&
+          typeof priorPayload.resolvedEntities === 'object' &&
+          !Array.isArray(priorPayload.resolvedEntities)
+            ? Object.fromEntries(
+                Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
+                  ([, v]) =>
+                    typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
+                ),
+              )
+            : {};
+        const contributionEntities: Record<string, string | number | boolean> = {
+          ...priorEntities,
+          selectedInvestorId: resolution.id,
+          investorId: resolution.id,
+          investorLabel: resolution.label,
+        };
+        delete (contributionEntities as Record<string, unknown>).investorQuery;
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: 'REGISTER_CAPITAL_CONTRIBUTION',
+          entities: contributionEntities,
+          candidateHash: resolution.resolvedEntityHash,
+        });
+        const continued = await this.assistant.executeClaimed(
+          actor,
+          {
+            intent: 'REGISTER_CAPITAL_CONTRIBUTION',
+            entities: contributionEntities,
+            surface: dto.surface ?? 'DESKTOP',
+            clientRequestId: dto.clientRequestId,
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            userDisplayText: dto.text,
+          },
+          request,
+        );
+        return {
+          resolvedIntent: 'REGISTER_CAPITAL_CONTRIBUTION',
+          response: continued,
+          resolvedEntities: contributionEntities,
+        };
+      }
+
       // Controlled composition V1: dependency CTAs (create / search / cancel) or reuse existing Client.
       if (dto.workspaceId && resolution.entityType === 'CLIENT') {
         const compositionHandled = await this.handleCompositionPickerSelection({
@@ -486,6 +553,16 @@ export class NaturalLanguageAssistantService {
         });
       }
       if (
+        outcome.candidate.intent === 'REGISTER_CAPITAL_CONTRIBUTION' &&
+        resolution.entityType === 'INVESTOR'
+      ) {
+        entities = mergeTrustedIds(entities, {
+          investorId: resolution.id,
+          selectedInvestorId: resolution.id,
+          investorLabel: resolution.label,
+        });
+      }
+      if (
         outcome.candidate.intent === 'REGISTER_RECEIVABLE_PAYMENT' &&
         resolution.entityType === 'ACCOUNT_ENTRY'
       ) {
@@ -537,6 +614,14 @@ export class NaturalLanguageAssistantService {
       entities = mergeTrustedIds(entities, {
         clientId: loaded.working.lastResolvedEntities.clientId,
         selectedClientId: loaded.working.lastResolvedEntities.clientId,
+      });
+    } else if (
+      outcome.candidate.intent === 'REGISTER_CAPITAL_CONTRIBUTION' &&
+      loaded.working?.lastResolvedEntities?.investorId
+    ) {
+      entities = mergeTrustedIds(entities, {
+        investorId: loaded.working.lastResolvedEntities.investorId,
+        selectedInvestorId: loaded.working.lastResolvedEntities.investorId,
       });
     }
 

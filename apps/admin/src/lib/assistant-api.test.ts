@@ -6,7 +6,7 @@ import { createAssistantAction } from './assistant-api';
 import { postLoginRoute } from './mobile-routing';
 
 describe('assistant surface contracts', () => {
-  it('exposes fourteen reads and eight write-preview actions (five executable writes including CREATE_CLIENT)', () => {
+  it('exposes fourteen reads and thirteen write-preview actions (nine executable including capital contribution)', () => {
     assert.deepEqual(READ_ACTIONS, [
       'GET_LIQUIDITY',
       'GET_MONTHLY_PROFIT',
@@ -23,10 +23,12 @@ describe('assistant surface contracts', () => {
       'GET_ATTENTION_ITEMS',
       'GET_BUSINESS_SUMMARY',
     ]);
-    assert.equal(WRITE_PREVIEW_ACTIONS.length, 11);
+    assert.equal(WRITE_PREVIEW_ACTIONS.length, 13);
     assert.equal(WRITE_PREVIEW_ACTIONS[0], 'REGISTER_SALE');
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('CREATE_CLIENT'));
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('UPDATE_CLIENT'));
+    assert.ok(WRITE_PREVIEW_ACTIONS.includes('REGISTER_CAPITAL_CONTRIBUTION'));
+    assert.ok(WRITE_PREVIEW_ACTIONS.includes('REGISTER_CAPITAL_DISTRIBUTION'));
   });
 
   it('keeps desktop dashboard default and prefers assistant on mobile', () => {

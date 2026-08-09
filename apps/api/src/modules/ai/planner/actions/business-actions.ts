@@ -35,6 +35,9 @@ const questions: Record<string, string> = {
   email: '¿Cuál es el correo?',
   phone: '¿Cuál es el teléfono?',
   allowProbableDuplicate: 'Encontré clientes con nombre parecido. ¿Creo uno nuevo de todos modos?',
+  investorId: '¿De qué socio es la aportación?',
+  account: '¿Cuál es la cuenta de referencia? (Efectivo, Bancos o Cuenta César)',
+  contributedAt: '¿Qué fecha tiene la aportación?',
 };
 
 interface ActionOptions {
@@ -83,6 +86,7 @@ const destinationLabel: Record<string, string> = {
   BANK: 'Bancos',
   BANCOS: 'Bancos',
   CESAR: 'Cuenta César',
+  CESAR_ACCOUNT: 'Cuenta César',
   APPLY_TO_PAYABLE: 'Aplicar a cuenta por pagar',
 };
 
@@ -377,6 +381,88 @@ function registerTreasuryTransferPreviewFields(
     });
   }
   return rows;
+}
+
+function registerCapitalContributionEffects(
+  entities: StructuredEntities,
+): Array<{ area: string; description: string }> {
+  const amount = formatMoneyPreview(entities.amount, entities.currency ?? 'MXN');
+  return [
+    { area: 'Capital', description: `Capital aportado: +${amount}` },
+    { area: 'Capital', description: `Capital neto: +${amount}` },
+    { area: 'Ownership', description: 'Ownership: Sin cambio' },
+    { area: 'P&L', description: 'Utilidad del negocio: Sin cambio' },
+    { area: 'Treasury', description: 'Tesorería: Sin cambio' },
+    {
+      area: 'Correction',
+      description:
+        'Después de registrarla, cualquier corrección se realiza desde Capital (revierte y crea de nuevo).',
+    },
+  ];
+}
+
+function registerCapitalContributionPreviewFields(
+  entities: StructuredEntities,
+): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  const investorLabel =
+    (typeof entities.investorLabel === 'string' && entities.investorLabel) ||
+    (typeof entities.investorName === 'string' && entities.investorName) ||
+    null;
+  if (investorLabel) rows.push({ label: 'Socio', value: investorLabel });
+  if (present(entities.amount)) {
+    rows.push({
+      label: 'Monto',
+      value: formatMoneyPreview(entities.amount, entities.currency ?? 'MXN'),
+    });
+  }
+  const account =
+    typeof entities.account === 'string'
+      ? entities.account
+      : typeof entities.capitalAccount === 'string'
+        ? entities.capitalAccount
+        : null;
+  if (account || typeof entities.accountLabel === 'string') {
+    rows.push({
+      label: 'Cuenta de referencia',
+      value:
+        (typeof entities.accountLabel === 'string' && entities.accountLabel) ||
+        (account ? destinationLabel[account] ?? account : null),
+    });
+  }
+  if (present(entities.contributedAt) || present(entities.date)) {
+    rows.push({
+      label: 'Fecha',
+      value: entities.contributedAt ?? entities.date ?? null,
+    });
+  }
+  return rows;
+}
+
+function registerCapitalContributionConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  const amount = moneyNumber(entities.amount);
+  if (present(entities.amount) && (amount === null || amount <= 0)) {
+    missing.push({
+      entity: 'amount',
+      question: 'El monto de la aportación debe ser mayor que cero.',
+    });
+  }
+  if (
+    entities.currency === 'USD' ||
+    entities.currency === 'USDT' ||
+    entities.currency === 'CRYPTO' ||
+    entities.account === 'CRYPTO'
+  ) {
+    missing.push({
+      entity: 'currency',
+      question:
+        'Las aportaciones de capital V1 son solo en MXN. ¿Confirmas el monto en pesos mexicanos?',
+    });
+  }
+  return missing;
 }
 
 function registerTreasuryTransferConditionalMissing(
@@ -1127,6 +1213,53 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
           e.currency !== null,
       ),
     ],
+  }),
+  define({
+    id: 'REGISTER_CAPITAL_CONTRIBUTION',
+    name: 'Register Capital Contribution',
+    category: 'CAPITAL',
+    tier: 'HIGH',
+    required: ['investorId', 'amount', 'account', 'contributedAt'],
+    optional: [
+      'currency',
+      'date',
+      'notes',
+      'investorLabel',
+      'investorName',
+      'accountLabel',
+      'selectedInvestorId',
+      'investorQuery',
+      'capitalAccount',
+    ],
+    effectsBuilder: registerCapitalContributionEffects,
+    previewFields: registerCapitalContributionPreviewFields,
+    conditionalMissing: registerCapitalContributionConditionalMissing,
+    reversibility: 'NONE',
+    warnings: [
+      warning(
+        'UNSUPPORTED_CURRENCY',
+        'Capital contributions are MXN only.',
+        (e) =>
+          typeof e.currency === 'string' &&
+          e.currency !== 'MXN' &&
+          e.currency !== '' &&
+          e.currency !== null,
+      ),
+      warning(
+        'LEDGER_ONLY',
+        'Esta aportación es solo en el libro de Capital: la Tesorería no se mueve.',
+        () => true,
+      ),
+    ],
+  }),
+  define({
+    id: 'REGISTER_CAPITAL_DISTRIBUTION',
+    name: 'Register Capital Distribution',
+    category: 'CAPITAL',
+    tier: 'HIGH',
+    required: ['investorId', 'amount', 'account', 'paidAt'],
+    optional: ['currency', 'date', 'notes', 'investorLabel'],
+    reversibility: 'NONE',
   }),
   define({
     id: 'REGISTER_PURCHASE',

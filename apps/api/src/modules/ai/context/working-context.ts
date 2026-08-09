@@ -29,6 +29,7 @@ export const assistantWorkingContextSchema = z
         watchId: z.string().min(1).max(128).optional(),
         clientId: z.string().min(1).max(128).optional(),
         accountEntryId: z.string().min(1).max(128).optional(),
+        investorId: z.string().min(1).max(128).optional(),
       })
       .strict()
       .optional(),
@@ -143,6 +144,9 @@ export function intentToCandidateEntityType(intent: string | undefined): Context
   ) {
     return 'ACCOUNT_ENTRY';
   }
+  if (intent === 'REGISTER_CAPITAL_CONTRIBUTION' || intent === 'REGISTER_CAPITAL_DISTRIBUTION') {
+    return 'INVESTOR';
+  }
   return null;
 }
 
@@ -154,7 +158,8 @@ export function extractPresentedCandidatesFromEntityList(payload: {
   const explicitType =
     payload.entityType === 'CLIENT' ||
     payload.entityType === 'WATCH' ||
-    payload.entityType === 'ACCOUNT_ENTRY'
+    payload.entityType === 'ACCOUNT_ENTRY' ||
+    payload.entityType === 'INVESTOR'
       ? payload.entityType
       : null;
   const type = explicitType ?? intentToCandidateEntityType(payload.intent);
@@ -227,6 +232,7 @@ export function applySelectedEntity(
   if (selected.type === 'CLIENT') lastResolvedEntities.clientId = selected.id;
   if (selected.type === 'WATCH') lastResolvedEntities.watchId = selected.id;
   if (selected.type === 'ACCOUNT_ENTRY') lastResolvedEntities.accountEntryId = selected.id;
+  if (selected.type === 'INVESTOR') lastResolvedEntities.investorId = selected.id;
   return {
     ...base,
     lastSelectedEntity: selected,

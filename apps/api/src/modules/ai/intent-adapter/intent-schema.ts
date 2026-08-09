@@ -30,6 +30,8 @@ export const WRITE_INTENTS = [
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_PAYABLE_PAYMENT',
   'REGISTER_TREASURY_TRANSFER',
+  'REGISTER_CAPITAL_CONTRIBUTION',
+  'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
   'CREATE_CLIENT',
@@ -262,6 +264,40 @@ export const entitySchemas = {
       destinationQuery: query.optional(),
       effectiveDate: isoDate.optional(),
       transferDate: isoDate.optional(),
+      notes: z.string().trim().max(2000).optional(),
+    })
+    .strip(),
+
+  REGISTER_CAPITAL_CONTRIBUTION: z
+    .object({
+      amount: money.optional(),
+      currency: currency.optional(),
+      investorQuery: query.optional(),
+      investorName: z.string().trim().min(1).max(160).optional(),
+      partnerQuery: query.optional(),
+      partnerName: z.string().trim().min(1).max(160).optional(),
+      name: z.string().trim().min(1).max(160).optional(),
+      account: z.enum(['CASH', 'BANK', 'CESAR_ACCOUNT']).optional(),
+      capitalAccount: z.enum(['CASH', 'BANK', 'CESAR_ACCOUNT']).optional(),
+      accountQuery: query.optional(),
+      contributedAt: isoDate.optional(),
+      effectiveDate: isoDate.optional(),
+      notes: z.string().trim().max(2000).optional(),
+      // Never trust provider IDs — stripped before resolution; kept optional for schema parse only.
+      investorId: z.string().trim().min(1).max(64).optional(),
+      selectedInvestorId: z.string().trim().min(1).max(64).optional(),
+    })
+    .strip(),
+
+  REGISTER_CAPITAL_DISTRIBUTION: z
+    .object({
+      amount: money.optional(),
+      currency: currency.optional(),
+      investorQuery: query.optional(),
+      investorName: z.string().trim().min(1).max(160).optional(),
+      account: z.enum(['CASH', 'BANK', 'CESAR_ACCOUNT']).optional(),
+      paidAt: isoDate.optional(),
+      effectiveDate: isoDate.optional(),
       notes: z.string().trim().max(2000).optional(),
     })
     .strip(),
