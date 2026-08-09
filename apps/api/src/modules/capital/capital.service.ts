@@ -5,6 +5,8 @@ import {
   effectiveSaleDate,
 } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CapitalContributionService } from './capital-contribution.service';
+import { CapitalDistributionService } from './capital-distribution.service';
 import { CreateContributionDto } from './dto/create-contribution.dto';
 import { CreateDistributionDto } from './dto/create-distribution.dto';
 import { CreateInvestorDto } from './dto/create-investor.dto';
@@ -55,7 +57,11 @@ type DistributionWithInvestor = {
 
 @Injectable()
 export class CapitalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly capitalContribution: CapitalContributionService,
+    private readonly capitalDistribution: CapitalDistributionService,
+  ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
 
@@ -425,20 +431,24 @@ export class CapitalService {
     return contributions.map((c) => this.serializeContribution(c));
   }
 
+  /**
+   * Manual Capital aporte → canonical CapitalContributionService.register().
+   * Partner equity ledger only — no Treasury write (V1 frozen semantics).
+   */
   async createContribution(tenantId: string, dto: CreateContributionDto) {
-    await this.findInvestorOrThrow(dto.investorId, tenantId);
-    const contribution = await this.prisma.investorContribution.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        investor: { connect: { id: dto.investorId } },
-        amount: new Prisma.Decimal(dto.amount),
-        account: dto.account,
-        notes: dto.notes ?? null,
-        contributedAt: new Date(dto.contributedAt),
-      },
+    const { contribution } = await this.capitalContribution.register(tenantId, {
+      investorId: dto.investorId,
+      amount: dto.amount,
+      account: dto.account,
+      contributedAt: dto.contributedAt,
+      notes: dto.notes ?? null,
+      registerIdempotencyKey: dto.registerIdempotencyKey ?? null,
+    });
+    const withInvestor = await this.prisma.investorContribution.findFirstOrThrow({
+      where: { id: contribution.id, tenantId },
       include: { investor: { select: { name: true } } },
     });
-    return this.serializeContribution(contribution);
+    return this.serializeContribution(withInvestor);
   }
 
   async updateContribution(id: string, tenantId: string, dto: UpdateContributionDto) {
@@ -457,11 +467,7 @@ export class CapitalService {
   }
 
   async removeContribution(id: string, tenantId: string) {
-    await this.findContributionOrThrow(id, tenantId);
-    await this.prisma.investorContribution.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
+    await this.capitalContribution.reverse(tenantId, id);
   }
 
   // ─── Distributions ────────────────────────────────────────────────────────────
@@ -488,20 +494,25 @@ export class CapitalService {
     return distributions.map((d) => this.serializeDistribution(d));
   }
 
+  /**
+   * Manual Capital retiro → canonical CapitalDistributionService.register().
+   * Partner distribution ledger only — no Treasury write (V1 frozen semantics).
+   * Over-entitlement remains allowed (UI warning only).
+   */
   async createDistribution(tenantId: string, dto: CreateDistributionDto) {
-    await this.findInvestorOrThrow(dto.investorId, tenantId);
-    const distribution = await this.prisma.investorDistribution.create({
-      data: {
-        tenant: { connect: { id: tenantId } },
-        investor: { connect: { id: dto.investorId } },
-        amount: new Prisma.Decimal(dto.amount),
-        account: dto.account,
-        notes: dto.notes ?? null,
-        paidAt: new Date(dto.paidAt),
-      },
+    const { distribution } = await this.capitalDistribution.register(tenantId, {
+      investorId: dto.investorId,
+      amount: dto.amount,
+      account: dto.account,
+      paidAt: dto.paidAt,
+      notes: dto.notes ?? null,
+      registerIdempotencyKey: dto.registerIdempotencyKey ?? null,
+    });
+    const withInvestor = await this.prisma.investorDistribution.findFirstOrThrow({
+      where: { id: distribution.id, tenantId },
       include: { investor: { select: { name: true } } },
     });
-    return this.serializeDistribution(distribution);
+    return this.serializeDistribution(withInvestor);
   }
 
   async updateDistribution(id: string, tenantId: string, dto: UpdateDistributionDto) {
@@ -520,11 +531,7 @@ export class CapitalService {
   }
 
   async removeDistribution(id: string, tenantId: string) {
-    await this.findDistributionOrThrow(id, tenantId);
-    await this.prisma.investorDistribution.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
+    await this.capitalDistribution.reverse(tenantId, id);
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────────

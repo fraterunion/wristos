@@ -20,4 +20,9 @@ export class CreateDistributionDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  /** Optional durable idempotency. Future AI: `ai-action-run:<actionRunId>`. */
+  @IsOptional()
+  @IsString()
+  registerIdempotencyKey?: string;
 }

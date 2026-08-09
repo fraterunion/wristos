@@ -1443,6 +1443,9 @@ model InvestorContribution {
   account       CapitalAccount
   notes         String?
   contributedAt DateTime
+  /// Durable registration idempotency. Future AI: `ai-action-run:<actionRunId>`.
+  /// V1 Capital contribution is partner-ledger only — does NOT write Treasury.
+  registerIdempotencyKey String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   deletedAt     DateTime?
@@ -1451,6 +1454,7 @@ model InvestorContribution {
   investor      Investor       @relation(fields: [investorId], references: [id], onDelete: Restrict)
   treasuryEntry TreasuryEntry?
 
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, investorId])
   @@index([tenantId, contributedAt])
@@ -1466,6 +1470,9 @@ model InvestorDistribution {
   account    CapitalAccount
   notes      String?
   paidAt     DateTime
+  /// Durable registration idempotency. Future AI: `ai-action-run:<actionRunId>`.
+  /// V1 Capital distribution is partner-ledger only — does NOT write Treasury.
+  registerIdempotencyKey String?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
   deletedAt  DateTime?
@@ -1474,6 +1481,7 @@ model InvestorDistribution {
   investor      Investor       @relation(fields: [investorId], references: [id], onDelete: Restrict)
   treasuryEntry TreasuryEntry?
 
+  @@unique([tenantId, registerIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, investorId])
   @@index([tenantId, paidAt])
