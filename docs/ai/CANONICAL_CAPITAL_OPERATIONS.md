@@ -1,4 +1,4 @@
-# Canonical Capital Operations (Commits 23A / 23B / 24A)
+# Canonical Capital Operations (Commits 23A / 23B / 24A / 24B)
 
 Domain: partner-ledger-only Capital contribution + distribution.
 
@@ -6,11 +6,12 @@ AI WRITE status:
 
 - `REGISTER_CAPITAL_CONTRIBUTION` — **bound** (Commit 24A) as WRITE #9
   See `docs/ai/REGISTER_CAPITAL_CONTRIBUTION_BINDING.md`
-- `REGISTER_CAPITAL_DISTRIBUTION` — still **unbound**
+- `REGISTER_CAPITAL_DISTRIBUTION` — **bound** (Commit 24B) as WRITE #10
+  See `docs/ai/REGISTER_CAPITAL_DISTRIBUTION_BINDING.md`
 
-Exactly nine executable AI WRITE bindings after 24A (sale, receivable payment,
+Exactly ten executable AI WRITE bindings after 24B (sale, receivable payment,
 expense, purchase, create/update client, payable payment, treasury transfer,
-capital contribution).
+capital contribution, capital distribution).
 
 ## Frozen V1 product semantics (audit-proven)
 

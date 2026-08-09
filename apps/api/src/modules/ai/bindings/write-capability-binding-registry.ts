@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { BusinessCapability } from '../planner/planner.types';
 import { CreateClientWriteBinding } from './write/create-client.binding';
 import { RegisterCapitalContributionWriteBinding } from './write/register-capital-contribution.binding';
+import { RegisterCapitalDistributionWriteBinding } from './write/register-capital-distribution.binding';
 import { RegisterExpenseWriteBinding } from './write/register-expense.binding';
 import { RegisterPayablePaymentWriteBinding } from './write/register-payable-payment.binding';
 import { RegisterPurchaseWriteBinding } from './write/register-purchase.binding';
@@ -13,11 +14,11 @@ import { WriteCapabilityBindingDefinition } from './write/write-capability-bindi
 
 /**
  * Construction-time allowlist for WRITE capability bindings.
- * Commit 24A: exactly nine bindings —
+ * Commit 24B: exactly ten bindings —
  * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE + REGISTER_PURCHASE
  * + CREATE_CLIENT + UPDATE_CLIENT + REGISTER_PAYABLE_PAYMENT + REGISTER_TREASURY_TRANSFER
- * + REGISTER_CAPITAL_CONTRIBUTION.
- * REGISTER_CAPITAL_DISTRIBUTION remains unbound. No dynamic registration API.
+ * + REGISTER_CAPITAL_CONTRIBUTION + REGISTER_CAPITAL_DISTRIBUTION.
+ * No dynamic registration API.
  */
 @Injectable()
 export class WriteCapabilityBindingRegistry implements OnModuleInit {
@@ -33,6 +34,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
     private readonly registerPayablePayment: RegisterPayablePaymentWriteBinding,
     private readonly registerTreasuryTransfer: RegisterTreasuryTransferWriteBinding,
     private readonly registerCapitalContribution: RegisterCapitalContributionWriteBinding,
+    private readonly registerCapitalDistribution: RegisterCapitalDistributionWriteBinding,
   ) {}
 
   onModuleInit() {
@@ -46,6 +48,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.registerPayablePayment,
       this.registerTreasuryTransfer,
       this.registerCapitalContribution,
+      this.registerCapitalDistribution,
     ];
     if (new Set(bindings.map((b) => b.capability)).size !== bindings.length) {
       throw new Error('Duplicate write capability binding');
@@ -59,7 +62,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.bindings.set(binding.capability, binding);
     }
     if (
-      this.bindings.size !== 9 ||
+      this.bindings.size !== 10 ||
       !this.bindings.has('REGISTER_SALE') ||
       !this.bindings.has('REGISTER_RECEIVABLE_PAYMENT') ||
       !this.bindings.has('REGISTER_EXPENSE') ||
@@ -68,10 +71,11 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       !this.bindings.has('UPDATE_CLIENT') ||
       !this.bindings.has('REGISTER_PAYABLE_PAYMENT') ||
       !this.bindings.has('REGISTER_TREASURY_TRANSFER') ||
-      !this.bindings.has('REGISTER_CAPITAL_CONTRIBUTION')
+      !this.bindings.has('REGISTER_CAPITAL_CONTRIBUTION') ||
+      !this.bindings.has('REGISTER_CAPITAL_DISTRIBUTION')
     ) {
       throw new Error(
-        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, CREATE_CLIENT, UPDATE_CLIENT, REGISTER_PAYABLE_PAYMENT, REGISTER_TREASURY_TRANSFER, and REGISTER_CAPITAL_CONTRIBUTION',
+        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, CREATE_CLIENT, UPDATE_CLIENT, REGISTER_PAYABLE_PAYMENT, REGISTER_TREASURY_TRANSFER, REGISTER_CAPITAL_CONTRIBUTION, and REGISTER_CAPITAL_DISTRIBUTION',
       );
     }
   }

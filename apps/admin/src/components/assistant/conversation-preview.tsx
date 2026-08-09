@@ -28,6 +28,7 @@ export function ConversationPreview({
     | 'CONFIRM_PAYMENT'
     | 'CONFIRM_TRANSFER'
     | 'CONFIRM_CONTRIBUTION'
+    | 'CONFIRM_DISTRIBUTION'
     | 'CONFIRM_EXPENSE'
     | 'CONFIRM_PURCHASE'
     | 'CONFIRM_CLIENT'
@@ -46,6 +47,7 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_PAYMENT' ||
     ctaKind === 'CONFIRM_TRANSFER' ||
     ctaKind === 'CONFIRM_CONTRIBUTION' ||
+    ctaKind === 'CONFIRM_DISTRIBUTION' ||
     ctaKind === 'CONFIRM_EXPENSE' ||
     ctaKind === 'CONFIRM_CLIENT' ||
     ctaKind === 'CONFIRM_CLIENT_UPDATE' ||

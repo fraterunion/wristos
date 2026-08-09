@@ -33,15 +33,21 @@ function fakeCapitalAccount(fragment: string): 'CASH' | 'BANK' | 'CESAR_ACCOUNT'
 }
 
 function classifyCapitalDistribution(t: string): FakeOutput | null {
+  // Payable debt language is not a capital distribution.
+  if (/\b(?:que le debemos|cuenta por pagar|cxp)\b/.test(t)) return null;
+  // Treasury transfer phrasing.
+  if (/\b(?:pasa|pasar|mueve|mover|transfiere|transferir)\b/.test(t)) return null;
   if (
-    !/(?:utilidad|retiro del socio|retir[eé].*(?:utilidad|para)|p[aá]gale?\s+(?:[\d.,]+\s*(?:mil|k|millones)?\s+)?(?:de\s+)?utilidad)/.test(
+    !/(?:utilidad|distribuci[oó]n|retiro del socio|retir[aeé].*(?:utilidad|para)|p[aá]gale?\s+(?:[\d.,]+\s*(?:mil|k|millones)?\s+)?(?:de\s+)?utilidad|dale\s+.*utilidad|registra.*distribuci)/.test(
       t,
     )
   ) {
     return null;
   }
   // Keep purchase/expense language out.
-  if (/\b(?:compr[eé]|gast[eé]|renta|gasolina|marketing|publicidad)\b/.test(t)) return null;
+  if (/\b(?:compr[eé]|gast[eé]|renta|gasolina|marketing|publicidad|vuelo)\b/.test(t)) {
+    return null;
+  }
 
   const amountMatch = t.match(/([\d.,]+ ?(mil|k|millones)?)/);
   let amount: string | undefined;
@@ -55,14 +61,47 @@ function classifyCapitalDistribution(t: string): FakeOutput | null {
     }
   }
   const nameMatch = t.match(
-    /(?:para|a)\s+([a-záéíóúñü][a-záéíóúñü\s]{1,40}?)(?:\s|$)/i,
+    /(?:para|a)\s+([a-záéíóúñü][a-záéíóúñü\s]{1,40}?)(?:\s+(?:en|de)\b|\s*$)/i,
   );
+  let account: 'CASH' | 'BANK' | 'CESAR_ACCOUNT' | null = null;
+  const enAccount = t.match(/\b(?:en|como)\s+(.+?)(?:\s*$)/i);
+  if (enAccount) account = fakeCapitalAccount(enAccount[1]);
+  if (!account) {
+    if (/\bbancos?\b|\bbanco\b/.test(t)) account = 'BANK';
+    else if (/\befectivo\b|\bcaja\b/.test(t)) account = 'CASH';
+    else if (/cuenta\s+c[eé]sar/.test(t)) account = 'CESAR_ACCOUNT';
+  }
+
+  if (/crypto|usdt|bitcoin|btc|d[oó]lares|\busd\b/.test(t)) {
+    return {
+      intent: 'REGISTER_CAPITAL_DISTRIBUTION',
+      entities: {},
+      missingEntities: ['amount', 'investorQuery', 'account'],
+      ambiguities: [
+        {
+          field: 'currency',
+          reason: 'Capital distributions are MXN only',
+          candidates: [],
+        },
+      ],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
   const entities: Record<string, string> = { currency: 'MXN' };
   if (amount) entities.amount = amount;
-  if (nameMatch?.[1]) entities.investorQuery = nameMatch[1].trim();
+  if (nameMatch?.[1]) {
+    const name = nameMatch[1].trim().replace(/\s+(en|de)$/i, '');
+    if (!/^(efectivo|bancos|banco|caja|utilidad|sus)$/i.test(name)) {
+      entities.investorQuery = name;
+    }
+  }
+  if (account) entities.account = account;
   const missing: string[] = [];
   if (!amount) missing.push('amount');
   if (!entities.investorQuery) missing.push('investorQuery');
+  if (!account) missing.push('account');
   return {
     intent: 'REGISTER_CAPITAL_DISTRIBUTION',
     entities,
@@ -484,6 +523,17 @@ function classify(
     }
   }
 
+  // Capital distribution / contribution before CREATE_CLIENT — "registra una distribución/aportación…"
+  // would otherwise match CREATE_CLIENT name capture.
+  {
+    const distribution = classifyCapitalDistribution(t);
+    if (distribution) return distribution;
+  }
+  {
+    const contribution = classifyCapitalContribution(t);
+    if (contribution) return contribution;
+  }
+
   // CREATE_CLIENT — before SEARCH_CLIENT / payment / purchase to avoid collisions.
   if (
     context?.lastIntent === 'CREATE_CLIENT' &&
@@ -503,7 +553,7 @@ function classify(
   );
   if (
     createClientMatch &&
-    !/busca|pag[oó]|vend[ií]|compr[eé]|gast[eé]|transfer|utilidad|reloj|cat[aá]logo|usdt|bitcoin|inventario/.test(
+    !/busca|pag[oó]|vend[ií]|compr[eé]|gast[eé]|transfer|utilidad|distribuci[oó]n|aportaci[oó]n|reloj|cat[aá]logo|usdt|bitcoin|inventario/.test(
       t,
     )
   ) {
@@ -539,19 +589,8 @@ function classify(
     return { intent: 'REGISTER_SALE', entities: { watchQuery: t.replace(/^vend[ií] /, '').replace(/\.$/, '') }, missingEntities: ['watchId', 'customerId', 'price', 'currency'], ambiguities: [], confidence: 'MEDIUM', language: 'es' };
   }
 
-  // Capital distribution (unbound) before contribution / transfer.
-  {
-    const distribution = classifyCapitalDistribution(t);
-    if (distribution) return distribution;
-  }
-
-  // Capital contribution (WRITE #9) before treasury transfer.
-  {
-    const contribution = classifyCapitalContribution(t);
-    if (contribution) return contribution;
-  }
-
   // Internal treasury transfers (before payable/expense) — not capital withdrawals.
+  // Capital contribution/distribution already classified above (before CREATE_CLIENT).
   {
     const transfer = classifyTreasuryTransfer(t);
     if (transfer) return transfer;
