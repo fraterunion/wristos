@@ -128,7 +128,7 @@ describe('CapitalService — InvestorOpeningBalance', () => {
       ],
     });
 
-    const summary = await new CapitalService(prisma as never).getSummary('tenant-wc');
+    const summary = await new CapitalService(prisma as never, {} as never, {} as never).getSummary('tenant-wc');
     // profit = 10000 - 4000 - 100 = 5900
     expect(summary.totalBusinessProfit).toBe('5900.00');
     expect(summary.totalOpeningCapital).toBe('5112500.00');
@@ -174,7 +174,7 @@ describe('CapitalService — InvestorOpeningBalance', () => {
       ],
       contributions: [{ investorId: 'cesar', amount: new Prisma.Decimal(1000) }],
     });
-    const summary = await new CapitalService(prisma as never).getSummary('tenant-wc');
+    const summary = await new CapitalService(prisma as never, {} as never, {} as never).getSummary('tenant-wc');
     expect(summary.totalOpeningCapital).toBe('582000.00');
     expect(summary.totalLaterContributions).toBe('1000.00');
     expect(summary.totalCapitalContributed).toBe('583000.00');
@@ -182,7 +182,7 @@ describe('CapitalService — InvestorOpeningBalance', () => {
 
   it('keeps ROI undefined when invested capital is zero', async () => {
     const prisma = makePrisma({});
-    const summary = await new CapitalService(prisma as never).getSummary('tenant-wc');
+    const summary = await new CapitalService(prisma as never, {} as never, {} as never).getSummary('tenant-wc');
     expect(summary.totalCapitalContributed).toBe('0.00');
     expect(summary.roiAvailable).toBe(false);
     expect(summary.contributionsIncomplete).toBe(true);
@@ -200,7 +200,7 @@ describe('CapitalService — InvestorOpeningBalance', () => {
         },
       ],
     });
-    await new CapitalService(prisma as never).getSummary('tenant-wc');
+    await new CapitalService(prisma as never, {} as never, {} as never).getSummary('tenant-wc');
     expect(prisma.investor.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ tenantId: 'tenant-wc' }),

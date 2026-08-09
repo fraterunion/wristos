@@ -38,7 +38,7 @@ describe('CapitalService — Treasury bank commissions in business profit', () =
       },
     };
 
-    const service = new CapitalService(prisma as never);
+    const service = new CapitalService(prisma as never, {} as never, {} as never);
     const summary = await service.getSummary('tenant-wc');
 
     // profit = 1000 - 400 - 50 = 550

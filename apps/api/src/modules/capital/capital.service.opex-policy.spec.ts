@@ -61,7 +61,7 @@ describe('CapitalService — OperatingExpense policy (15A financial gate)', () =
       },
     };
 
-    const service = new CapitalService(prisma as never);
+    const service = new CapitalService(prisma as never, {} as never, {} as never);
     const summary = await service.getSummary('tenant-wc');
 
     // Capital formula ignores OpEx: 500k − 300k − 10k = 190k
