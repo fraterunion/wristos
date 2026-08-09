@@ -54,6 +54,8 @@ const MANUAL_CTA_LABEL: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_RECEIVABLE_PAYMENT: 'Continuar en Cuentas',
   REGISTER_PAYABLE_PAYMENT: 'Continuar en Cuentas',
   REGISTER_TREASURY_TRANSFER: 'Abrir Tesorería',
+  REGISTER_CAPITAL_CONTRIBUTION: 'Ver Capital',
+  REGISTER_CAPITAL_DISTRIBUTION: 'Ver Capital',
   REGISTER_PURCHASE: 'Abrir Inventario',
   REGISTER_EXPENSE: 'Completar en Gastos',
   CREATE_CLIENT: 'Abrir CRM',
@@ -71,6 +73,7 @@ export type PreviewCtaKind =
   | 'CONFIRM_SALE'
   | 'CONFIRM_PAYMENT'
   | 'CONFIRM_TRANSFER'
+  | 'CONFIRM_CONTRIBUTION'
   | 'CONFIRM_EXPENSE'
   | 'CONFIRM_CLIENT'
   | 'CONFIRM_CLIENT_UPDATE'
@@ -560,6 +563,8 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     response.payload.executable === true;
   const executableTransfer =
     intent === 'REGISTER_TREASURY_TRANSFER' && response.payload.executable === true;
+  const executableContribution =
+    intent === 'REGISTER_CAPITAL_CONTRIBUTION' && response.payload.executable === true;
   const executableExpense =
     intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
   const executablePurchase =
@@ -577,15 +582,17 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
         ? 'Voy a registrar esta compra:'
         : executableExpense
           ? 'Voy a registrar este gasto:'
-          : executableTransfer
-            ? 'Voy a registrar esta transferencia:'
-            : executablePayment
-              ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
-                  ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
-                  : 'Voy a registrar este pago:')
-              : executableSale
-                ? 'Perfecto. Esto es lo que voy a registrar:'
-                : 'Perfecto. Esto es lo que voy a preparar:';
+          : executableContribution
+            ? 'Voy a registrar esta aportación:'
+            : executableTransfer
+              ? 'Voy a registrar esta transferencia:'
+              : executablePayment
+                ? (fields.some((f) => f.label === 'Liquidez' && f.value === 'Sin cambio')
+                    ? 'Voy a aplicar este pago directamente a una cuenta por pagar:'
+                    : 'Voy a registrar este pago:')
+                : executableSale
+                  ? 'Perfecto. Esto es lo que voy a registrar:'
+                  : 'Perfecto. Esto es lo que voy a preparar:';
   return [
     {
       kind: 'preview',
@@ -602,13 +609,15 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
             ? 'Confirmar compra'
             : executableExpense
               ? 'Confirmar gasto'
-              : executableTransfer
-                ? 'Confirmar transferencia'
-                : executablePayment
-                  ? 'Confirmar pago'
-                  : executableSale
-                    ? 'Confirmar venta'
-                    : manualCtaLabel(intent),
+              : executableContribution
+                ? 'Confirmar aportación'
+                : executableTransfer
+                  ? 'Confirmar transferencia'
+                  : executablePayment
+                    ? 'Confirmar pago'
+                    : executableSale
+                      ? 'Confirmar venta'
+                      : manualCtaLabel(intent),
       ctaKind: executableUpdateClient
         ? 'CONFIRM_CLIENT_UPDATE'
         : executableCreateClient
@@ -617,13 +626,15 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
             ? 'CONFIRM_PURCHASE'
             : executableExpense
               ? 'CONFIRM_EXPENSE'
-              : executableTransfer
-                ? 'CONFIRM_TRANSFER'
-                : executablePayment
-                  ? 'CONFIRM_PAYMENT'
-                  : executableSale
-                    ? 'CONFIRM_SALE'
-                    : 'MANUAL_MODULE',
+              : executableContribution
+                ? 'CONFIRM_CONTRIBUTION'
+                : executableTransfer
+                  ? 'CONFIRM_TRANSFER'
+                  : executablePayment
+                    ? 'CONFIRM_PAYMENT'
+                    : executableSale
+                      ? 'CONFIRM_SALE'
+                      : 'MANUAL_MODULE',
       planFingerprint,
       actionRunId: response.actionRunId,
     },
@@ -874,6 +885,45 @@ function treasuryTransferReceiptBlocks(
   ];
 }
 
+function capitalContributionReceiptBlocks(
+  response: StructuredAssistantResponse,
+): ConversationBlock[] {
+  const message =
+    asString(response.payload.message) ?? 'Listo. La aportación quedó registrada.';
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const lines: string[] = [];
+  if (receipt) {
+    const currency = asString(receipt.currency) ?? 'MXN';
+    const amount = formatMoney(receipt.amount, currency);
+    const investor = asString(receipt.investorLabel);
+    if (investor) lines.push(investor);
+    if (amount) lines.push(`Aportación · ${amount}`);
+    const account =
+      asString(receipt.accountLabel) ||
+      (() => {
+        const raw = asString(receipt.account);
+        if (raw === 'CASH') return 'Efectivo';
+        if (raw === 'BANK') return 'Bancos';
+        if (raw === 'CESAR_ACCOUNT') return 'Cuenta César';
+        return raw;
+      })();
+    if (account) lines.push(`Cuenta de referencia · ${account}`);
+    if (amount) lines.push(`Capital aportado · +${amount}`);
+    lines.push('Tesorería · Sin cambio');
+    lines.push('Ownership · Sin cambio');
+  }
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message,
+      lines,
+      dealHref: '/capital',
+      correctHref: '/capital',
+    },
+  ];
+}
+
 function paymentReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
   const message =
     asString(response.payload.message) ?? 'Listo. El pago quedó registrado.';
@@ -1009,6 +1059,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'REGISTER_TREASURY_TRANSFER') {
         main = treasuryTransferReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REGISTER_CAPITAL_CONTRIBUTION') {
+        main = capitalContributionReceiptBlocks(response);
         break;
       }
       if (intent === 'REGISTER_EXPENSE') {

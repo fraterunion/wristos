@@ -6,6 +6,7 @@ import { DealsModule } from '../deals/deals.module';
 import { ExpensesModule } from '../expenses/expenses.module';
 import { HistoryModule } from '../history/history.module';
 import { InventoryModule } from '../inventory/inventory.module';
+import { CapitalModule } from '../capital/capital.module';
 import { TreasuryModule } from '../treasury/treasury.module';
 import { AIController } from './ai.controller';
 import { AuditService } from './audit/audit.service';
@@ -25,9 +26,11 @@ import { PayablePaymentEntityResolver } from './bindings/write/payable-payment-e
 import { ReceivablePaymentEntityResolver } from './bindings/write/receivable-payment-entity-resolver.service';
 import { RegisterPayablePaymentWriteBinding } from './bindings/write/register-payable-payment.binding';
 import { RegisterTreasuryTransferWriteBinding } from './bindings/write/register-treasury-transfer.binding';
+import { CapitalInvestorEntityResolver } from './bindings/write/capital-investor-entity-resolver.service';
 import { CreateClientEntityResolver } from './bindings/write/create-client-entity-resolver.service';
 import { CreateClientWriteBinding } from './bindings/write/create-client.binding';
 import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
+import { RegisterCapitalContributionWriteBinding } from './bindings/write/register-capital-contribution.binding';
 import { RegisterExpenseWriteBinding } from './bindings/write/register-expense.binding';
 import { RegisterPurchaseWriteBinding } from './bindings/write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
@@ -61,6 +64,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     DealsModule,
     ExpensesModule,
     TreasuryModule,
+    CapitalModule,
     TelemetryModule,
   ],
   controllers: [AIController],
@@ -82,6 +86,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     RegisterReceivablePaymentWriteBinding,
     RegisterPayablePaymentWriteBinding,
     RegisterTreasuryTransferWriteBinding,
+    RegisterCapitalContributionWriteBinding,
     RegisterExpenseWriteBinding,
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,
@@ -92,6 +97,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     SaleCustomerEntityResolver,
     CreateClientEntityResolver,
     UpdateClientEntityResolver,
+    CapitalInvestorEntityResolver,
     CompositionService,
     CompositionOrchestrator,
     WriteCapabilityBindingRegistry,

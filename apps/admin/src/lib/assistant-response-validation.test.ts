@@ -204,11 +204,43 @@ describe('assistant response safety validation', () => {
     assert.equal(result.kind, 'FAIL_CLOSED');
   });
 
-  it('still blocks COMPLETED for unbound write intents (settlement/crypto)', () => {
+  it('accepts canonical REGISTER_CAPITAL_CONTRIBUTION SUCCESS_RECEIPT after execution', () => {
+    const candidate = response('COMPLETED', 'SUCCESS_RECEIPT', {
+      message: 'Listo. La aportación quedó registrada.',
+      executableWrite: true,
+      capability: 'REGISTER_CAPITAL_CONTRIBUTION',
+      receipt: {
+        kind: 'CAPITAL_CONTRIBUTION',
+        contributionId: 'contrib-1',
+        investorId: 'inv-1',
+        account: 'BANK',
+        amount: '300000.00',
+        ownershipChanged: false,
+        treasuryChanged: false,
+      },
+    });
+    const result = validateAssistantResponse('REGISTER_CAPITAL_CONTRIBUTION', candidate);
+    assert.equal(result.kind, 'VALID');
+  });
+
+  it('blocks malformed REGISTER_CAPITAL_CONTRIBUTION success', () => {
+    const result = validateAssistantResponse(
+      'REGISTER_CAPITAL_CONTRIBUTION',
+      response('COMPLETED', 'SUCCESS_RECEIPT', {
+        message: 'Listo',
+        executableWrite: true,
+        receipt: { amount: '1', ownershipChanged: false },
+      }),
+    );
+    assert.equal(result.kind, 'FAIL_CLOSED');
+  });
+
+  it('still blocks COMPLETED for unbound write intents (settlement/crypto/distribution)', () => {
     for (const intent of [
       'REGISTER_SETTLEMENT',
       'REGISTER_CRYPTO_POSITION',
       'REGISTER_CRYPTO_PRICE',
+      'REGISTER_CAPITAL_DISTRIBUTION',
     ] as const) {
       const result = validateAssistantResponse(
         intent,

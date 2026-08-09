@@ -208,5 +208,11 @@ export function trustedIdsFromResolution(
 ): Record<string, string> {
   if (resolution.entityType === 'CLIENT') return { clientId: resolution.id };
   if (resolution.entityType === 'WATCH') return { watchId: resolution.id };
+  if (resolution.entityType === 'INVESTOR') {
+    return {
+      investorId: resolution.id,
+      selectedInvestorId: resolution.id,
+    };
+  }
   return { accountEntryId: resolution.id };
 }

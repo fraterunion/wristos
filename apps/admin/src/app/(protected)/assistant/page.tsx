@@ -55,6 +55,7 @@ const writeCards: Array<{ id: WritePreviewAction; label: string; href: string; i
   { id: 'REGISTER_RECEIVABLE_PAYMENT', label: 'Preparar cobro CxC', href: '/cuentas', icon: CircleDollarSign },
   { id: 'REGISTER_PAYABLE_PAYMENT', label: 'Preparar pago CxP', href: '/cuentas', icon: CircleDollarSign },
   { id: 'REGISTER_TREASURY_TRANSFER', label: 'Preparar transferencia', href: '/treasury', icon: Landmark },
+  { id: 'REGISTER_CAPITAL_CONTRIBUTION', label: 'Preparar aportación', href: '/capital', icon: Landmark },
   { id: 'REGISTER_PURCHASE', label: 'Preparar compra', href: '/inventory', icon: ShoppingCart },
   { id: 'REGISTER_EXPENSE', label: 'Preparar gasto', href: '/expenses', icon: WalletCards },
   { id: 'CREATE_CLIENT', label: 'Crear cliente', href: '/crm', icon: UserPlus },
@@ -79,6 +80,7 @@ const mobileWriteLabels: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_RECEIVABLE_PAYMENT: 'Registrar cobro',
   REGISTER_PAYABLE_PAYMENT: 'Registrar pago CxP',
   REGISTER_TREASURY_TRANSFER: 'Registrar transferencia',
+  REGISTER_CAPITAL_CONTRIBUTION: 'Registrar aportación',
   REGISTER_PURCHASE: 'Registrar compra',
   REGISTER_EXPENSE: 'Registrar gasto',
   CREATE_CLIENT: 'Crear cliente',
@@ -362,6 +364,7 @@ export default function AssistantPage() {
       item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
       item.intent === 'REGISTER_PAYABLE_PAYMENT' ||
       item.intent === 'REGISTER_TREASURY_TRANSFER' ||
+      item.intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
       item.intent === 'REGISTER_EXPENSE' ||
       item.intent === 'REGISTER_PURCHASE' ||
       item.intent === 'CREATE_CLIENT' ||
@@ -371,6 +374,7 @@ export default function AssistantPage() {
       item.intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
       item.intent === 'REGISTER_PAYABLE_PAYMENT';
     const isTransfer = item.intent === 'REGISTER_TREASURY_TRANSFER';
+    const isContribution = item.intent === 'REGISTER_CAPITAL_CONTRIBUTION';
     const isExpense = item.intent === 'REGISTER_EXPENSE';
     const isPurchase = item.intent === 'REGISTER_PURCHASE';
     const isCreateClient = item.intent === 'CREATE_CLIENT';
@@ -383,11 +387,13 @@ export default function AssistantPage() {
           ? 'Confirmar compra'
           : isExpense
             ? 'Confirmar gasto'
-            : isTransfer
-              ? 'Confirmar transferencia'
-              : isPayment
-                ? 'Confirmar pago'
-                : 'Confirmar venta';
+            : isContribution
+              ? 'Confirmar aportación'
+              : isTransfer
+                ? 'Confirmar transferencia'
+                : isPayment
+                  ? 'Confirmar pago'
+                  : 'Confirmar venta';
     setError(null);
     setMessageError(null);
     setConfirmingSale(true);

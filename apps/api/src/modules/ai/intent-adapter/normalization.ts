@@ -209,6 +209,8 @@ export function normalizeEntities(
     REGISTER_RECEIVABLE_PAYMENT: ['amount'],
     REGISTER_PAYABLE_PAYMENT: ['amount', 'exchangeRateUsed'],
     REGISTER_TREASURY_TRANSFER: ['amount'],
+    REGISTER_CAPITAL_CONTRIBUTION: ['amount'],
+    REGISTER_CAPITAL_DISTRIBUTION: ['amount'],
     REGISTER_PURCHASE: ['cost'],
     REGISTER_EXPENSE: ['amount'],
     REGISTER_SETTLEMENT: ['amount'],

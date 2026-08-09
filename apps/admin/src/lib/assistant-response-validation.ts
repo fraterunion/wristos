@@ -32,6 +32,8 @@ const manualRoutes: Readonly<Record<WritePreviewAction, string>> = {
   REGISTER_RECEIVABLE_PAYMENT: '/cuentas',
   REGISTER_PAYABLE_PAYMENT: '/cuentas',
   REGISTER_TREASURY_TRANSFER: '/treasury',
+  REGISTER_CAPITAL_CONTRIBUTION: '/capital',
+  REGISTER_CAPITAL_DISTRIBUTION: '/capital',
   REGISTER_PURCHASE: '/inventory',
   REGISTER_EXPENSE: '/expenses',
   CREATE_CLIENT: '/crm',
@@ -142,6 +144,29 @@ function isCanonicalTreasuryTransferSuccess(
   return true;
 }
 
+function isCanonicalCapitalContributionSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'REGISTER_CAPITAL_CONTRIBUTION') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.contributionId !== 'string' || !receipt.contributionId) return false;
+  if (typeof receipt.investorId !== 'string' || !receipt.investorId) return false;
+  if (typeof receipt.account !== 'string' || !receipt.account) return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (receipt.ownershipChanged !== false) return false;
+  if (receipt.treasuryChanged !== false) return false;
+  if (payload.executableWrite !== true && payload.capability !== 'REGISTER_CAPITAL_CONTRIBUTION') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
 function isCanonicalExpenseSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
@@ -232,6 +257,7 @@ function isCanonicalExecutableWriteSuccess(
     isCanonicalReceivablePaymentSuccess(intent, response) ||
     isCanonicalPayablePaymentSuccess(intent, response) ||
     isCanonicalTreasuryTransferSuccess(intent, response) ||
+    isCanonicalCapitalContributionSuccess(intent, response) ||
     isCanonicalExpenseSuccess(intent, response) ||
     isCanonicalPurchaseSuccess(intent, response) ||
     isCanonicalCreateClientSuccess(intent, response) ||
@@ -275,6 +301,7 @@ export function validateAssistantResponse(
           intent === 'REGISTER_RECEIVABLE_PAYMENT' ||
           intent === 'REGISTER_PAYABLE_PAYMENT' ||
           intent === 'REGISTER_TREASURY_TRANSFER' ||
+          intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
           intent === 'REGISTER_EXPENSE' ||
           intent === 'REGISTER_PURCHASE' ||
           intent === 'CREATE_CLIENT' ||

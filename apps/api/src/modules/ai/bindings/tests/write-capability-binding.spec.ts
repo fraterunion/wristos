@@ -7,6 +7,7 @@ import { RegisterPayablePaymentWriteBinding } from '../write/register-payable-pa
 import { RegisterReceivablePaymentWriteBinding } from '../write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
 import { RegisterTreasuryTransferWriteBinding } from '../write/register-treasury-transfer.binding';
+import { RegisterCapitalContributionWriteBinding } from '../write/register-capital-contribution.binding';
 import { UpdateClientWriteBinding } from '../write/update-client.binding';
 
 function buildRegistry() {
@@ -67,6 +68,15 @@ function buildRegistry() {
       bindingName: 'register_treasury_transfer_canonical@1.0.0',
     },
   );
+  const capitalContribution = Object.assign(
+    new RegisterCapitalContributionWriteBinding({} as never, {} as never),
+    {
+      capability: 'REGISTER_CAPITAL_CONTRIBUTION',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'register_capital_contribution_canonical@1.0.0',
+    },
+  );
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
@@ -76,18 +86,20 @@ function buildRegistry() {
     updateClient,
     payablePayment,
     treasuryTransfer,
+    capitalContribution,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly eight WRITE bindings including REGISTER_TREASURY_TRANSFER', () => {
+  it('contains exactly nine WRITE bindings including REGISTER_CAPITAL_CONTRIBUTION', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(8);
+    expect(bindings).toHaveLength(9);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
+      'REGISTER_CAPITAL_CONTRIBUTION',
       'REGISTER_EXPENSE',
       'REGISTER_PAYABLE_PAYMENT',
       'REGISTER_PURCHASE',
@@ -104,6 +116,7 @@ describe('WriteCapabilityBindingRegistry', () => {
     'REGISTER_SETTLEMENT',
     'REGISTER_CRYPTO_POSITION',
     'REGISTER_CRYPTO_PRICE',
+    'REGISTER_CAPITAL_DISTRIBUTION',
     'DELETE_CLIENT',
     'MERGE_CLIENT',
   ])('keeps %s explicitly unbound for WRITE', (capability) => {
@@ -150,6 +163,13 @@ describe('WriteCapabilityBindingRegistry', () => {
         mode: 'WRITE',
       },
     );
+    const capitalContribution = Object.assign(
+      new RegisterCapitalContributionWriteBinding({} as never, {} as never),
+      {
+        capability: 'REGISTER_CAPITAL_CONTRIBUTION',
+        mode: 'WRITE',
+      },
+    );
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
@@ -165,9 +185,10 @@ describe('WriteCapabilityBindingRegistry', () => {
       wrong,
       payablePayment,
       treasuryTransfer,
+      capitalContribution,
     );
     expect(() => registry.onModuleInit()).toThrow(
-      /REGISTER_TREASURY_TRANSFER/,
+      /REGISTER_CAPITAL_CONTRIBUTION/,
     );
   });
 });
