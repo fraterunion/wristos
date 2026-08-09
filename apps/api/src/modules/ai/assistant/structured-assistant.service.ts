@@ -6,7 +6,9 @@ import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
 import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
 import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-payment-entity-resolver.service';
+import { SaleCustomerEntityResolver } from '../bindings/write/sale-customer-entity-resolver.service';
 import { UpdateClientEntityResolver } from '../bindings/write/update-client-entity-resolver.service';
+import { CompositionOrchestrator } from '../composition/composition-orchestrator.service';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
 import { BusinessExecutionPlan } from '../planner/planner.types';
@@ -35,8 +37,10 @@ export class StructuredAssistantService {
     private readonly readRunner: ReadPlanRunner,
     private readonly receivablePaymentResolver: ReceivablePaymentEntityResolver,
     private readonly purchaseEntityResolver: PurchaseEntityResolver,
+    private readonly saleCustomerEntityResolver: SaleCustomerEntityResolver,
     private readonly createClientEntityResolver: CreateClientEntityResolver,
     private readonly updateClientEntityResolver: UpdateClientEntityResolver,
+    private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -75,6 +79,10 @@ export class StructuredAssistantService {
         capability: input.intent,
         funnelStage: 'intent',
       });
+
+      // Crash recovery: CREATE_CLIENT completed but parent preview never checkpointed.
+      const recoveredComposition = await this.tryRecoverComposition(actor, request, prepared);
+      if (recoveredComposition) return recoveredComposition;
 
       let entities = input.entities;
       if (input.intent === 'REGISTER_RECEIVABLE_PAYMENT') {
@@ -130,6 +138,65 @@ export class StructuredAssistantService {
         );
         entities = resolved.entities as typeof entities;
         if (resolved.kind === 'USE_EXISTING') {
+          const active = await this.compositionOrchestrator.loadActive({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            workspaceId: prepared.workspaceId,
+          });
+          const composition = active.composition;
+          if (composition && composition.state !== 'CANCELLED') {
+            const resumed = await this.compositionOrchestrator.resumeParentAfterClient({
+              actor,
+              requestId: request.id,
+              traceId: request.traceId,
+              workspaceId: prepared.workspaceId,
+              conversationId: prepared.conversationId,
+              expectedVersion: active.version,
+              clientId: resolved.clientId,
+              clientLabel: resolved.clientName,
+              kind: 'CLIENT_REUSED',
+            });
+            if ('parentResponse' in resumed) {
+              return this.persistence.complete(
+                request.id,
+                actor,
+                resumed.parentResponse,
+                resumed.workspaceVersion,
+                AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+                resumed.parentResponse.interactionState === 'READY_FOR_CONFIRMATION'
+                  ? AIRequestStatus.READY_FOR_CONFIRMATION
+                  : AIRequestStatus.NEEDS_CLARIFICATION,
+                { intent: resumed.parentCapability, entities },
+              );
+            }
+            const partial = this.responseBase(
+              request.id,
+              request.traceId,
+              prepared,
+              '',
+              'COMPLETED',
+              'ERROR_RECOVERY_CARD',
+              {
+                code: 'COMPOSITION_PARTIAL',
+                message: resumed.message,
+                unchanged: 'No se registró la acción principal.',
+                nextAction: 'Reintenta continuar; el cliente existente ya está identificado.',
+              },
+              this.planner.plan(
+                { intent: 'SEARCH_CLIENT', entities: { query: resolved.clientName } },
+                { workspaceVersion: prepared.workspaceVersion, entityVersions: {} },
+              ),
+            );
+            return this.persistence.complete(
+              request.id,
+              actor,
+              partial,
+              resumed.workspaceVersion,
+              AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+              AIRequestStatus.COMPLETED,
+              { intent: input.intent, entities },
+            );
+          }
           const response = this.responseBase(
             request.id,
             request.traceId,
@@ -332,6 +399,84 @@ export class StructuredAssistantService {
             { intent: input.intent, entities },
           );
         }
+        if (resolved.dependencyRequired) {
+          const paused = await this.compositionOrchestrator.pausePurchaseSellerMissing({
+            actor,
+            prepared,
+            requestId: request.id,
+            traceId: request.traceId,
+            entities: entities as Record<string, JsonValue>,
+            query: resolved.dependencyRequired.query,
+            message: resolved.dependencyRequired.message,
+          });
+          return this.persistence.complete(
+            request.id,
+            actor,
+            paused.response,
+            paused.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+      }
+      if (input.intent === 'REGISTER_SALE') {
+        const resolved = await this.saleCustomerEntityResolver.resolve(
+          actor.tenantId,
+          entities as Record<string, JsonValue>,
+        );
+        entities = resolved.entities as typeof entities;
+        if (resolved.clarify) {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: 'customer_disambiguation',
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: true,
+          });
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            resolved.clarify.message,
+            resolved.clarify.items,
+            resolved.clarify.entityType,
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+        if (resolved.dependencyRequired) {
+          const paused = await this.compositionOrchestrator.pauseSaleCustomerMissing({
+            actor,
+            prepared,
+            requestId: request.id,
+            traceId: request.traceId,
+            entities: entities as Record<string, JsonValue>,
+            query: resolved.dependencyRequired.query,
+            message: resolved.dependencyRequired.message,
+          });
+          return this.persistence.complete(
+            request.id,
+            actor,
+            paused.response,
+            paused.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
       }
 
       const plannedInput = { ...input, entities };
@@ -366,6 +511,29 @@ export class StructuredAssistantService {
         { plannerLatencyMs },
       );
 
+      // Composition V1: CREATE_CLIENT child preview attaches to paused parent draft.
+      let workspaceVersion = checkpoint.workspaceVersion;
+      if (plannedInput.intent === 'CREATE_CLIENT' && plan.state !== 'NEEDS_CLARIFICATION') {
+        const active = await this.compositionOrchestrator.loadActive({
+          tenantId: actor.tenantId,
+          userId: actor.userId,
+          workspaceId: prepared.workspaceId,
+        });
+        if (
+          active.composition &&
+          active.composition.state === 'DEPENDENCY_REQUIRED' &&
+          active.composition.childCapability === 'CREATE_CLIENT'
+        ) {
+          workspaceVersion = await this.compositionOrchestrator.attachChildPreview({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            workspaceId: prepared.workspaceId,
+            expectedVersion: active.version,
+            childActionRunId: checkpoint.actionRun.id,
+          });
+        }
+      }
+
       if (plan.state === 'NEEDS_CLARIFICATION') {
         for (const missing of plan.missingEntities) {
           telem(this.telemetry, {
@@ -380,7 +548,7 @@ export class StructuredAssistantService {
           });
         }
         const response = this.clarificationResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
-        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: plannedInput.intent, entities });
+        return this.persistence.complete(request.id, actor, response, workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: plannedInput.intent, entities });
       }
       if (!READ_ACTIONS.has(plannedInput.intent)) {
         telem(this.telemetry, {
@@ -397,7 +565,7 @@ export class StructuredAssistantService {
           totalLatencyMs: Date.now() - totalStarted,
         });
         const response = this.writePreviewResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
-        return this.persistence.complete(request.id, actor, response, checkpoint.workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION, { intent: plannedInput.intent, entities });
+        return this.persistence.complete(request.id, actor, response, workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.READY_FOR_CONFIRMATION, { intent: plannedInput.intent, entities });
       }
 
       telem(this.telemetry, {
@@ -626,5 +794,50 @@ export class StructuredAssistantService {
 
   private async currentWorkspaceVersion(actor: AssistantActorContext, prepared: PreparedAssistantRequest): Promise<number> {
     return this.persistence.currentWorkspaceVersion(actor, prepared.workspaceId);
+  }
+
+  /**
+   * If CREATE_CLIENT child committed but parent preview was never checkpointed,
+   * resume the parked parent exactly once (no second Client create).
+   */
+  private async tryRecoverComposition(
+    actor: AssistantActorContext,
+    request: AIRequest,
+    prepared: PreparedAssistantRequest,
+  ): Promise<StructuredAssistantResponse | null> {
+    const active = await this.compositionOrchestrator.loadActive({
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+      workspaceId: prepared.workspaceId,
+    });
+    if (!active.composition || active.composition.state === 'CANCELLED') return null;
+    if (
+      active.composition.state !== 'DEPENDENCY_COMPLETED' &&
+      active.composition.state !== 'PRIMARY_RESUMING' &&
+      !(active.composition.childActionRunId && !active.composition.resolvedClientId)
+    ) {
+      return null;
+    }
+    const resumed = await this.compositionOrchestrator.recoverPendingResume({
+      actor,
+      requestId: request.id,
+      traceId: request.traceId,
+      workspaceId: prepared.workspaceId,
+      conversationId: prepared.conversationId,
+      expectedVersion: active.version,
+      resolvedContext: active.resolvedContext,
+    });
+    if (!resumed) return null;
+    return this.persistence.complete(
+      request.id,
+      actor,
+      resumed.parentResponse,
+      resumed.workspaceVersion,
+      AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+      resumed.parentResponse.interactionState === 'READY_FOR_CONFIRMATION'
+        ? AIRequestStatus.READY_FOR_CONFIRMATION
+        : AIRequestStatus.NEEDS_CLARIFICATION,
+      { intent: resumed.parentCapability, entities: {} },
+    );
   }
 }

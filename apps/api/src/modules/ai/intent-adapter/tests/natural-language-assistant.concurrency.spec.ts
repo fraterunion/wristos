@@ -94,6 +94,9 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       persistSelection: jest.fn(),
       buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
     };
+    const compositionOrchestrator = {
+      loadActive: jest.fn().mockResolvedValue({ composition: null, version: 1, resolvedContext: {} }),
+    };
     const service = new NaturalLanguageAssistantService(
       aiRequests,
       intentAdapter as never,
@@ -101,6 +104,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       new ReferenceResolverService(),
       workingContext as never,
       prisma as never,
+      compositionOrchestrator as never,
     );
 
     const [resultA, resultB] = await Promise.all([
@@ -135,6 +139,9 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       persistSelection: jest.fn(),
       buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
     };
+    const compositionOrchestrator = {
+      loadActive: jest.fn().mockResolvedValue({ composition: null, version: 1, resolvedContext: {} }),
+    };
     const service = new NaturalLanguageAssistantService(
       aiRequests,
       { interpret } as never,
@@ -142,6 +149,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       new ReferenceResolverService(),
       workingContext as never,
       prisma as never,
+      compositionOrchestrator as never,
     );
 
     await service.handleMessage(actor, dto);

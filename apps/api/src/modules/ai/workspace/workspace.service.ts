@@ -26,6 +26,14 @@ export class WorkspaceService implements WorkspaceStore {
     return workspace;
   }
 
+  /** Latest active workspace for a conversation (composition resume after child confirm). */
+  async findForConversation(tenantId: string, userId: string, conversationId: string) {
+    return this.prisma.aIWorkspace.findFirst({
+      where: { tenantId, userId, conversationId, deletedAt: null },
+      orderBy: { lastActivityAt: 'desc' },
+    });
+  }
+
   update(tenantId: string, userId: string, id: string, dto: UpdateWorkspaceDto) {
     return this.prisma.$transaction(async (tx) => {
       const current = await this.requireActive(tx, tenantId, userId, id);

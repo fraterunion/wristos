@@ -199,8 +199,19 @@ export function clearResumeHint(): void {
 }
 
 export type ConfirmSaleResult = {
-  interactionState: 'COMPLETED' | 'FAILED' | 'STALE_PLAN' | 'PERMISSION_BLOCKED' | 'EXECUTING';
-  responseType: 'SUCCESS_RECEIPT' | 'ERROR_RECOVERY_CARD';
+  interactionState:
+    | 'COMPLETED'
+    | 'FAILED'
+    | 'STALE_PLAN'
+    | 'PERMISSION_BLOCKED'
+    | 'EXECUTING'
+    | 'READY_FOR_CONFIRMATION'
+    | 'NEEDS_INPUT';
+  responseType:
+    | 'SUCCESS_RECEIPT'
+    | 'ERROR_RECOVERY_CARD'
+    | 'ACTION_PREVIEW_CARD'
+    | 'MISSING_FIELDS_CARD';
   message: string;
   receipt: JsonValue | null;
   planFingerprint: string;
@@ -209,6 +220,8 @@ export type ConfirmSaleResult = {
   replayed: boolean;
   recovered: boolean;
   actionRunId: string;
+  /** Parent preview after CREATE_CLIENT in controlled composition (second confirm still required). */
+  compositionResume?: StructuredAssistantResponse;
 };
 
 /**
@@ -234,12 +247,32 @@ export async function confirmAssistantActionRun(input: {
       interactionState === 'COMPLETED' ||
       interactionState === 'STALE_PLAN' ||
       interactionState === 'PERMISSION_BLOCKED' ||
-      interactionState === 'EXECUTING'
+      interactionState === 'EXECUTING' ||
+      interactionState === 'READY_FOR_CONFIRMATION' ||
+      interactionState === 'NEEDS_INPUT'
         ? interactionState
         : 'FAILED';
+    const compositionResumeRaw = raw.compositionResume;
+    const compositionResume =
+      compositionResumeRaw &&
+      typeof compositionResumeRaw === 'object' &&
+      !Array.isArray(compositionResumeRaw)
+        ? (compositionResumeRaw as StructuredAssistantResponse)
+        : undefined;
+    const actionRun = raw.actionRun;
+    const resumedActionRunId =
+      actionRun && typeof actionRun === 'object' && !Array.isArray(actionRun) && typeof (actionRun as { id?: unknown }).id === 'string'
+        ? String((actionRun as { id: string }).id)
+        : compositionResume?.actionRunId;
+    const normalizedResponseType: ConfirmSaleResult['responseType'] =
+      responseType === 'SUCCESS_RECEIPT' ||
+      responseType === 'ACTION_PREVIEW_CARD' ||
+      responseType === 'MISSING_FIELDS_CARD'
+        ? responseType
+        : 'ERROR_RECOVERY_CARD';
     return {
       interactionState: normalizedState,
-      responseType: responseType === 'SUCCESS_RECEIPT' ? 'SUCCESS_RECEIPT' : 'ERROR_RECOVERY_CARD',
+      responseType: normalizedResponseType,
       message: typeof raw.message === 'string' ? raw.message : 'No se pudo confirmar la acción.',
       receipt,
       planFingerprint: typeof raw.planFingerprint === 'string' ? raw.planFingerprint : input.planFingerprint,
@@ -247,7 +280,8 @@ export async function confirmAssistantActionRun(input: {
       capability: typeof raw.capability === 'string' ? raw.capability : 'UNKNOWN',
       replayed: Boolean(raw.replayed),
       recovered: Boolean(raw.recovered),
-      actionRunId: input.actionRunId,
+      actionRunId: resumedActionRunId || input.actionRunId,
+      compositionResume,
     };
   } catch (error) {
     if (error instanceof ApiError) {
@@ -266,13 +300,23 @@ export function confirmResultToAssistantResponse(
   result: ConfirmSaleResult,
   shell: Pick<StructuredAssistantResponse, 'conversationId' | 'workspaceId' | 'requestId' | 'traceId'>,
 ): StructuredAssistantResponse {
+  if (result.compositionResume) {
+    return {
+      ...result.compositionResume,
+      requestId: result.compositionResume.requestId || shell.requestId,
+      conversationId: result.compositionResume.conversationId || shell.conversationId,
+      workspaceId: result.compositionResume.workspaceId || shell.workspaceId,
+      actionRunId: result.compositionResume.actionRunId || result.actionRunId,
+      traceId: result.compositionResume.traceId || shell.traceId,
+    };
+  }
   return {
     requestId: shell.requestId,
     conversationId: shell.conversationId,
     workspaceId: shell.workspaceId,
     actionRunId: result.actionRunId,
-    interactionState: result.interactionState,
-    responseType: result.responseType,
+    interactionState: result.interactionState as StructuredAssistantResponse['interactionState'],
+    responseType: result.responseType as StructuredAssistantResponse['responseType'],
     payload: {
       message: result.message,
       receipt: result.receipt,

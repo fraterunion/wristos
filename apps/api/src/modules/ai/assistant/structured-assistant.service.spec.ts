@@ -20,6 +20,14 @@ describe('StructuredAssistantService', () => {
     resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
       entities,
       clarify: null,
+      dependencyRequired: null,
+    })),
+  };
+  const saleCustomerEntityResolver = {
+    resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
+      entities,
+      clarify: null,
+      dependencyRequired: null,
     })),
   };
   const createClientEntityResolver = {
@@ -34,6 +42,15 @@ describe('StructuredAssistantService', () => {
       entities,
     })),
   };
+  const compositionOrchestrator = {
+    loadActive: jest.fn(async () => ({ composition: null, version: 1, resolvedContext: {} })),
+    recoverPendingResume: jest.fn(async () => null),
+    pausePurchaseSellerMissing: jest.fn(),
+    pauseSaleCustomerMissing: jest.fn(),
+    attachChildPreview: jest.fn(),
+    resumeParentAfterClient: jest.fn(),
+    read: jest.fn(() => null),
+  };
   const service = new StructuredAssistantService(
     requests as never,
     persistence as never,
@@ -41,8 +58,10 @@ describe('StructuredAssistantService', () => {
     readRunner as never,
     receivablePaymentResolver as never,
     purchaseEntityResolver as never,
+    saleCustomerEntityResolver as never,
     createClientEntityResolver as never,
     updateClientEntityResolver as never,
+    compositionOrchestrator as never,
   );
   const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] };
   const prepared = { conversationId: 'c1', workspaceId: 'w1', workspaceVersion: 1 };

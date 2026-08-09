@@ -33,6 +33,11 @@ function buildService(overrides: {
   const prisma = {
     aIRequest: { findFirst: jest.fn().mockResolvedValue(null) },
   };
+  const compositionOrchestrator = {
+    loadActive: jest.fn().mockResolvedValue({ composition: null, version: 1, resolvedContext: {} }),
+    cancelComposition: jest.fn(),
+    resumeParentAfterClient: jest.fn(),
+  };
   const service = new NaturalLanguageAssistantService(
     aiRequests as never,
     intentAdapter as never,
@@ -40,6 +45,7 @@ function buildService(overrides: {
     referenceResolver,
     workingContext as never,
     prisma as never,
+    compositionOrchestrator as never,
   );
   return { service, request, aiRequests, intentAdapter, assistant, workingContext, prisma };
 }
@@ -217,7 +223,10 @@ describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling th
     // Deps: AIRequestService, IntentAdapterService, StructuredAssistantService,
     // ReferenceResolverService, WorkingContextService, PrismaService,
     // optional TelemetryEmitter.
-    expect(NaturalLanguageAssistantService.length).toBe(7);
+    // AIRequestService, IntentAdapterService, StructuredAssistantService,
+    // ReferenceResolverService, WorkingContextService, PrismaService,
+    // CompositionOrchestrator, optional TelemetryEmitter.
+    expect(NaturalLanguageAssistantService.length).toBe(8);
   });
 });
 

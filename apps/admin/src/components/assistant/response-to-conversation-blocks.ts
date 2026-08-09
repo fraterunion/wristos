@@ -485,6 +485,17 @@ function entityListBlocks(intent: BusinessActionId, response: StructuredAssistan
   if (entries.length) return accountEntriesList(response, entries);
   if (intent === 'SEARCH_INVENTORY') return inventoryList(response, items);
   if (intent === 'SEARCH_CLIENT' || intent === 'GET_CLIENT_ACCOUNTS') return clientChoices(response, items);
+  // Write disambiguation / controlled composition dependency CTAs.
+  if (
+    response.payload.entityType === 'CLIENT' ||
+    intent === 'REGISTER_PURCHASE' ||
+    intent === 'REGISTER_SALE' ||
+    intent === 'CREATE_CLIENT' ||
+    intent === 'UPDATE_CLIENT' ||
+    intent === 'REGISTER_RECEIVABLE_PAYMENT'
+  ) {
+    if (items.length) return clientChoices(response, items);
+  }
   if (intent === 'GET_INVENTORY_AGING') return agingList(response, items);
   if (intent === 'GET_TOP_INVENTORY_CAPITAL') return capitalList(response, items);
   if (intent === 'GET_TOP_DEBTORS') return debtorsList(response);
