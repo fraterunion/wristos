@@ -22,7 +22,7 @@ export type CounterpartyType =
   | 'LOGISTICS'
   | 'OTHER';
 export type Currency = 'MXN' | 'USD';
-export type AccountEntrySource = 'MANUAL' | 'DEAL_AUTO';
+export type AccountEntrySource = 'MANUAL' | 'DEAL_AUTO' | 'PURCHASE_AUTO';
 export type TreasuryAccount = 'CASH' | 'BANK' | 'CESAR';
 export type AccountPaymentDestination = TreasuryAccount | 'APPLY_TO_PAYABLE';
 

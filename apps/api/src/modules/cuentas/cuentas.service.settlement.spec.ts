@@ -9,6 +9,7 @@ import {
 import { NotFoundException } from '@nestjs/common';
 import { CuentasService } from './cuentas.service';
 import { AccountPaymentDestination } from './dto/create-account-payment.dto';
+import { PayablePaymentService } from './payable-payment.service';
 import { ReceivablePaymentService } from './receivable-payment.service';
 
 function d(n: number | string) {
@@ -250,11 +251,13 @@ describe('CuentasService — account-to-account settlement', () => {
     };
 
     const receivablePayments = new ReceivablePaymentService(prisma as never, treasury as never);
+    const payablePayments = new PayablePaymentService(prisma as never, treasury as never);
     const service = new CuentasService(
       prisma as never,
       { getUsdMxn: jest.fn() } as never,
       treasury as never,
       receivablePayments,
+      payablePayments,
     );
 
     // Patch findEntry to use in-memory compute without full persist complexity
