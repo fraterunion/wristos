@@ -5,8 +5,8 @@ import {
   effectiveSaleDate,
 } from '../../common/utils/effective-sale-date';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CapitalContributionService } from './capital-contribution.service';
-import { CapitalDistributionService } from './capital-distribution.service';
+import { CapitalContributionService, capitalContributionImmutableConflict } from './capital-contribution.service';
+import { CapitalDistributionService, capitalDistributionImmutableConflict } from './capital-distribution.service';
 import { CreateContributionDto } from './dto/create-contribution.dto';
 import { CreateDistributionDto } from './dto/create-distribution.dto';
 import { CreateInvestorDto } from './dto/create-investor.dto';
@@ -451,19 +451,27 @@ export class CapitalService {
     return this.serializeContribution(withInvestor);
   }
 
+  /**
+   * PATCH contribution — notes only (Commit 23B economic immutability).
+   * Any amount/account/contributedAt attempt → CAPITAL_CONTRIBUTION_IMMUTABLE.
+   */
   async updateContribution(id: string, tenantId: string, dto: UpdateContributionDto) {
-    await this.findContributionOrThrow(id, tenantId);
-    const contribution = await this.prisma.investorContribution.update({
-      where: { id },
-      data: {
-        ...(dto.amount !== undefined && { amount: new Prisma.Decimal(dto.amount) }),
-        ...(dto.account !== undefined && { account: dto.account }),
-        ...(dto.contributedAt !== undefined && { contributedAt: new Date(dto.contributedAt) }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-      },
+    if (
+      dto.amount !== undefined ||
+      dto.account !== undefined ||
+      dto.contributedAt !== undefined
+    ) {
+      throw capitalContributionImmutableConflict();
+    }
+    const { contribution } = await this.capitalContribution.updateNotes(tenantId, id, {
+      notes: dto.notes,
+      expectedUpdatedAt: dto.expectedUpdatedAt ?? null,
+    });
+    const withInvestor = await this.prisma.investorContribution.findFirstOrThrow({
+      where: { id: contribution.id, tenantId },
       include: { investor: { select: { name: true } } },
     });
-    return this.serializeContribution(contribution);
+    return this.serializeContribution(withInvestor);
   }
 
   async removeContribution(id: string, tenantId: string) {
@@ -515,19 +523,23 @@ export class CapitalService {
     return this.serializeDistribution(withInvestor);
   }
 
+  /**
+   * PATCH distribution — notes only (Commit 23B economic immutability).
+   * Any amount/account/paidAt attempt → CAPITAL_DISTRIBUTION_IMMUTABLE.
+   */
   async updateDistribution(id: string, tenantId: string, dto: UpdateDistributionDto) {
-    await this.findDistributionOrThrow(id, tenantId);
-    const distribution = await this.prisma.investorDistribution.update({
-      where: { id },
-      data: {
-        ...(dto.amount !== undefined && { amount: new Prisma.Decimal(dto.amount) }),
-        ...(dto.account !== undefined && { account: dto.account }),
-        ...(dto.paidAt !== undefined && { paidAt: new Date(dto.paidAt) }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-      },
+    if (dto.amount !== undefined || dto.account !== undefined || dto.paidAt !== undefined) {
+      throw capitalDistributionImmutableConflict();
+    }
+    const { distribution } = await this.capitalDistribution.updateNotes(tenantId, id, {
+      notes: dto.notes,
+      expectedUpdatedAt: dto.expectedUpdatedAt ?? null,
+    });
+    const withInvestor = await this.prisma.investorDistribution.findFirstOrThrow({
+      where: { id: distribution.id, tenantId },
       include: { investor: { select: { name: true } } },
     });
-    return this.serializeDistribution(distribution);
+    return this.serializeDistribution(withInvestor);
   }
 
   async removeDistribution(id: string, tenantId: string) {

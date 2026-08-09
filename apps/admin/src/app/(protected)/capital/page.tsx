@@ -741,7 +741,7 @@ function AportesTable({
                         onClick={() => onEdit(row)}
                         className="rounded px-2 py-1 text-xs text-white/40 transition hover:bg-white/8 hover:text-white"
                       >
-                        Editar
+                        Notas
                       </button>
                       <button
                         type="button"
@@ -850,7 +850,7 @@ function RetirosTable({
                         onClick={() => onEdit(row)}
                         className="rounded px-2 py-1 text-xs text-white/40 transition hover:bg-white/8 hover:text-white"
                       >
-                        Editar
+                        Notas
                       </button>
                       <button
                         type="button"
@@ -1122,11 +1122,17 @@ function AporteModal({
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
             <h2 className="text-base font-semibold tracking-tight">
-              {isEdit ? 'Editar aporte' : 'Registrar aporte de capital'}
+              {isEdit ? 'Editar notas del aporte' : 'Registrar aporte de capital'}
             </h2>
             {!isEdit && (
               <p className="mt-0.5 text-xs text-white/40">
                 Registra el dinero que un socio aporta al negocio.
+              </p>
+            )}
+            {isEdit && (
+              <p className="mt-0.5 text-xs text-white/40">
+                Solo las notas se pueden editar. Para cambiar monto, cuenta, fecha o socio,
+                elimina/revierte este movimiento y registra uno nuevo.
               </p>
             )}
           </div>
@@ -1177,6 +1183,8 @@ function AporteModal({
               onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
               className="ui-input mt-1.5"
               required
+              disabled={isEdit}
+              readOnly={isEdit}
             />
           </div>
           <div>
@@ -1186,7 +1194,11 @@ function AporteModal({
                 <PillBtn
                   key={opt.value}
                   active={form.account === opt.value}
-                  onClick={() => setForm((f) => ({ ...f, account: opt.value }))}
+                  disabled={isEdit}
+                  onClick={() => {
+                    if (isEdit) return;
+                    setForm((f) => ({ ...f, account: opt.value }));
+                  }}
                 >
                   {opt.label}
                 </PillBtn>
@@ -1200,8 +1212,16 @@ function AporteModal({
               value={form.contributedAt}
               onChange={(e) => setForm((f) => ({ ...f, contributedAt: e.target.value }))}
               className="ui-input mt-1.5"
+              disabled={isEdit}
+              readOnly={isEdit}
             />
           </div>
+          {isEdit && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-[11px] text-amber-200/80">
+              Para cambiar monto, cuenta, fecha o socio, elimina/revierte este movimiento y
+              registra uno nuevo.
+            </div>
+          )}
           <div>
             <label className="ui-field-label">Notas (opcional)</label>
             <textarea
@@ -1221,7 +1241,7 @@ function AporteModal({
               disabled={!canSubmit || saving}
               className="ui-btn-primary px-5 py-2 disabled:opacity-50"
             >
-              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Registrar aporte'}
+              {saving ? 'Guardando…' : isEdit ? 'Guardar notas' : 'Registrar aporte'}
             </button>
           </div>
         </form>
@@ -1329,11 +1349,17 @@ function RetiroModal({
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
             <h2 className="text-base font-semibold tracking-tight">
-              {isEdit ? 'Editar retiro' : 'Registrar retiro'}
+              {isEdit ? 'Editar notas del retiro' : 'Registrar retiro'}
             </h2>
             {!isEdit && (
               <p className="mt-0.5 text-xs text-white/40">
                 Registra un pago o retiro de utilidades a un socio.
+              </p>
+            )}
+            {isEdit && (
+              <p className="mt-0.5 text-xs text-white/40">
+                Solo las notas se pueden editar. Para cambiar monto, cuenta, fecha o socio,
+                elimina/revierte este movimiento y registra uno nuevo.
               </p>
             )}
           </div>
@@ -1390,8 +1416,10 @@ function RetiroModal({
               onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
               className="ui-input mt-1.5"
               required
+              disabled={isEdit}
+              readOnly={isEdit}
             />
-            {overage > 0 && (
+            {overage > 0 && !isEdit && (
               <p className="mt-1.5 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-[11px] text-amber-200/80">
                 ⚠ Este retiro supera la utilidad pendiente de {selectedInvestor?.name ?? ''} por{' '}
                 {fmtMxn(overage)}.
@@ -1405,7 +1433,11 @@ function RetiroModal({
                 <PillBtn
                   key={opt.value}
                   active={form.account === opt.value}
-                  onClick={() => setForm((f) => ({ ...f, account: opt.value }))}
+                  disabled={isEdit}
+                  onClick={() => {
+                    if (isEdit) return;
+                    setForm((f) => ({ ...f, account: opt.value }));
+                  }}
                 >
                   {opt.label}
                 </PillBtn>
@@ -1419,8 +1451,16 @@ function RetiroModal({
               value={form.paidAt}
               onChange={(e) => setForm((f) => ({ ...f, paidAt: e.target.value }))}
               className="ui-input mt-1.5"
+              disabled={isEdit}
+              readOnly={isEdit}
             />
           </div>
+          {isEdit && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-[11px] text-amber-200/80">
+              Para cambiar monto, cuenta, fecha o socio, elimina/revierte este movimiento y
+              registra uno nuevo.
+            </div>
+          )}
           <div>
             <label className="ui-field-label">Notas (opcional)</label>
             <textarea
@@ -1440,7 +1480,7 @@ function RetiroModal({
               disabled={!canSubmit || saving}
               className="ui-btn-primary px-5 py-2 disabled:opacity-50"
             >
-              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Registrar retiro'}
+              {saving ? 'Guardando…' : isEdit ? 'Guardar notas' : 'Registrar retiro'}
             </button>
           </div>
         </form>
@@ -1733,10 +1773,8 @@ export default function CapitalPage() {
   async function handleSaveAporte(form: AporteForm) {
     if (aporteModal.editing) {
       await updateCapitalContribution(aporteModal.editing.id, {
-        amount: Number(form.amount),
-        account: form.account as CapitalAccount,
-        contributedAt: form.contributedAt,
-        notes: form.notes.trim() || undefined,
+        notes: form.notes.trim(),
+        expectedUpdatedAt: aporteModal.editing.updatedAt,
       });
     } else {
       await createCapitalContribution({
@@ -1754,10 +1792,8 @@ export default function CapitalPage() {
   async function handleSaveRetiro(form: RetiroForm) {
     if (retiroModal.editing) {
       await updateCapitalDistribution(retiroModal.editing.id, {
-        amount: Number(form.amount),
-        account: form.account as CapitalAccount,
-        paidAt: form.paidAt,
-        notes: form.notes.trim() || undefined,
+        notes: form.notes.trim(),
+        expectedUpdatedAt: retiroModal.editing.updatedAt,
       });
     } else {
       await createCapitalDistribution({

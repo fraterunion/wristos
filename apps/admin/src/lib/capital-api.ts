@@ -156,7 +156,7 @@ export function createCapitalContribution(body: {
 
 export function updateCapitalContribution(
   id: string,
-  body: { amount?: number; account?: CapitalAccount; contributedAt?: string; notes?: string },
+  body: { notes?: string; expectedUpdatedAt?: string },
 ) {
   return apiPatch<CapitalContribution>(`/capital/contributions/${id}`, body, AUTH);
 }
@@ -185,7 +185,7 @@ export function createCapitalDistribution(body: {
 
 export function updateCapitalDistribution(
   id: string,
-  body: { amount?: number; account?: CapitalAccount; paidAt?: string; notes?: string },
+  body: { notes?: string; expectedUpdatedAt?: string },
 ) {
   return apiPatch<CapitalDistribution>(`/capital/distributions/${id}`, body, AUTH);
 }

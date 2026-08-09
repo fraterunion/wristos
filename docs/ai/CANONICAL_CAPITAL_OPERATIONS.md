@@ -134,3 +134,67 @@ Efectos: Distribuciones +N · Pendiente −N · Utilidad negocio sin cambio · T
 ```
 
 Do not claim BANK/CASH liquidity movement until cash-linked Capital is explicitly approved.
+
+## Commit 23B — Economic immutability
+
+After creation, Capital financial identity is **immutable** for **all** active rows
+(legacy and keyed alike).
+
+### Allowed in-place
+
+- `notes` only via `updateNotes()` / PATCH (optional `expectedUpdatedAt` CAS)
+
+### Rejected in-place (typed conflict)
+
+Contribution → `CAPITAL_CONTRIBUTION_IMMUTABLE`
+Distribution → `CAPITAL_DISTRIBUTION_IMMUTABLE`
+
+Rejected fields: `investorId`, `amount`, `account`, `contributedAt`/`paidAt`,
+`registerIdempotencyKey`, `tenantId`, `deletedAt`.
+
+Spanish message:
+
+> Este movimiento financiero no se puede modificar. Revierte el registro y crea uno nuevo con los datos correctos.
+
+### Correction flow
+
+1. Reverse (soft-delete) original row
+2. Register a new corrected Capital event
+
+No automatic reverse+recreate. No conversational reversal.
+
+### Material payload (idempotency + future AI recovery)
+
+Contribution: `investorId`, `amount`, `account`, `contributedAt`
+Distribution: `investorId`, `amount`, `account`, `paidAt`
+
+**Notes are non-material** after creation — notes-only edits must not break replay.
+
+`registerIdempotencyKey` is identity metadata and immutable.
+
+### Future AI recovery (unbound)
+
+| State | Classification |
+|--|--|
+| Key + material match + active | recover success |
+| Soft-deleted | `STALE_CAPITAL_*_REVERSED` |
+| Key exists but material diverges | `CANONICAL_CAPITAL_*_INVARIANT` |
+
+Never re-apply automatically.
+
+Helpers: `classifyRecovery()` on both services (domain only; not AI-bound).
+
+### Historical 1970 dates
+
+Ordinary PATCH cannot fix them. Dedicated backlog:
+
+`CAPITAL_HISTORICAL_DATE_REMEDIATION`
+
+### Admin UX
+
+Edit modal: economic fields read-only; notes editable; correction copy shown.
+
+### AI readiness
+
+With durable keys + immutable economics + soft-delete reverse, AI Capital WRITE
+bindings are unblocked for a later commit. **Still unbound in 23B.**

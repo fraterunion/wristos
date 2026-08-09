@@ -30,6 +30,28 @@ export type ReverseCapitalContributionResult = {
   alreadyReversed: boolean;
 };
 
+export type UpdateCapitalContributionNotesInput = {
+  notes?: string | null;
+  /** Optional optimistic concurrency for interactive Admin note edits. */
+  expectedUpdatedAt?: Date | string | null;
+};
+
+export type UpdateCapitalContributionNotesResult = {
+  contribution: InvestorContribution;
+  changed: boolean;
+};
+
+/** Material financial identity for idempotency / future AI recovery (notes excluded). */
+export type CapitalContributionMaterialPayload = {
+  investorId: string;
+  amount: Prisma.Decimal;
+  account: CapitalAccount;
+  contributedAt: Date;
+};
+
+export const CAPITAL_CONTRIBUTION_IMMUTABLE_MESSAGE =
+  'Este movimiento financiero no se puede modificar. Revierte el registro y crea uno nuevo con los datos correctos.';
+
 const ALLOWED_ACCOUNTS: ReadonlySet<CapitalAccount> = new Set([
   CapitalAccount.CASH,
   CapitalAccount.BANK,
@@ -134,7 +156,6 @@ export class CapitalContributionService {
           amount,
           account: input.account,
           contributedAt,
-          notes,
         });
         return { contribution: existing, replayed: true };
       }
@@ -173,7 +194,6 @@ export class CapitalContributionService {
             amount,
             account: input.account,
             contributedAt,
-            notes,
           });
           return { contribution: raced, replayed: true };
         }
@@ -182,6 +202,74 @@ export class CapitalContributionService {
         );
       }
       throw error;
+    }
+  }
+
+  /**
+   * Notes-only mutation. Economic fields are immutable after creation (Commit 23B).
+   * Applies to ALL active contribution rows (legacy + keyed).
+   */
+  async updateNotes(
+    tenantId: string,
+    contributionId: string,
+    input: UpdateCapitalContributionNotesInput,
+  ): Promise<UpdateCapitalContributionNotesResult> {
+    const contribution = await this.prisma.investorContribution.findFirst({
+      where: { id: contributionId, tenantId },
+    });
+    if (!contribution || contribution.deletedAt) {
+      throw new NotFoundException('Contribution not found');
+    }
+
+    if (input.expectedUpdatedAt != null && String(input.expectedUpdatedAt).trim() !== '') {
+      const expected = new Date(input.expectedUpdatedAt);
+      if (Number.isNaN(expected.getTime())) {
+        throw new BadRequestException('Invalid expectedUpdatedAt');
+      }
+      if (contribution.updatedAt.toISOString() !== expected.toISOString()) {
+        throw new ConflictException({
+          code: 'CAPITAL_CONTRIBUTION_NOTES_STALE',
+          message:
+            'Las notas fueron actualizadas por otro cambio. Recarga e intenta de nuevo.',
+        });
+      }
+    }
+
+    if (input.notes === undefined) {
+      return { contribution, changed: false };
+    }
+
+    const notes = normalizeNotes(input.notes);
+    if (normalizeNotes(contribution.notes) === notes) {
+      return { contribution, changed: false };
+    }
+
+    const updated = await this.prisma.investorContribution.update({
+      where: { id: contributionId },
+      data: { notes },
+    });
+    return { contribution: updated, changed: true };
+  }
+
+  /**
+   * Future AI / API recovery classification against material payload.
+   * Does not mutate. Not bound to AI in 23B.
+   */
+  classifyRecovery(
+    existing: InvestorContribution | null,
+    expected: CapitalContributionMaterialPayload,
+  ):
+    | 'MATCH'
+    | 'STALE_CAPITAL_CONTRIBUTION_REVERSED'
+    | 'CANONICAL_CAPITAL_CONTRIBUTION_INVARIANT'
+    | 'MISSING' {
+    if (!existing) return 'MISSING';
+    if (existing.deletedAt) return 'STALE_CAPITAL_CONTRIBUTION_REVERSED';
+    try {
+      this.assertCompatibleReplay(existing, expected);
+      return 'MATCH';
+    } catch {
+      return 'CANONICAL_CAPITAL_CONTRIBUTION_INVARIANT';
     }
   }
 
@@ -217,24 +305,27 @@ export class CapitalContributionService {
 
   private assertCompatibleReplay(
     existing: InvestorContribution,
-    expected: {
-      investorId: string;
-      amount: Prisma.Decimal;
-      account: CapitalAccount;
-      contributedAt: Date;
-      notes: string | null;
-    },
+    expected: CapitalContributionMaterialPayload,
   ) {
+    // Notes are non-material after creation (23B): later notes-only edits must not
+    // break idempotent replay / future AI recovery.
     const sameInvestor = existing.investorId === expected.investorId;
     const sameAmount = existing.amount.equals(expected.amount);
     const sameAccount = existing.account === expected.account;
     const sameDate =
       dateBucket(existing.contributedAt) === dateBucket(expected.contributedAt);
-    const sameNotes = normalizeNotes(existing.notes) === expected.notes;
-    if (!sameInvestor || !sameAmount || !sameAccount || !sameDate || !sameNotes) {
+    if (!sameInvestor || !sameAmount || !sameAccount || !sameDate) {
       throw new ConflictException(
         'registerIdempotencyKey already used with a conflicting contribution payload',
       );
     }
   }
+}
+
+/** Typed rejection when a client attempts economic in-place mutation. */
+export function capitalContributionImmutableConflict(): ConflictException {
+  return new ConflictException({
+    code: 'CAPITAL_CONTRIBUTION_IMMUTABLE',
+    message: CAPITAL_CONTRIBUTION_IMMUTABLE_MESSAGE,
+  });
 }
