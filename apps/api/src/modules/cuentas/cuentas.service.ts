@@ -34,6 +34,10 @@ import { UpdateAccountEntryDto } from './dto/update-account-entry.dto';
 import { UpdateAccountPaymentDto } from './dto/update-account-payment.dto';
 import { isHistoricalDealSourceTag } from './historical-ar-exclusion';
 import {
+  PayablePaymentService,
+  toPayableSourceAccount,
+} from './payable-payment.service';
+import {
   ReceivablePaymentService,
   toReceivableDestination,
 } from './receivable-payment.service';
@@ -82,6 +86,7 @@ export class CuentasService {
     private readonly fxService: FxService,
     private readonly treasuryService: TreasuryService,
     private readonly receivablePayments: ReceivablePaymentService,
+    private readonly payablePayments: PayablePaymentService,
   ) {}
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -627,58 +632,18 @@ export class CuentasService {
       return this.findEntry(entryId, tenantId);
     }
 
-    // PAYABLE treasury outflow (supplier payment) — atomic AccountPayment + Treasury.
-    this.assertManualEntry(entry);
-
-    const currency = dto.currency ?? entry.currency;
-    if (currency !== entry.currency) {
-      throw new BadRequestException('Payment currency must match entry currency');
-    }
-
-    const cashAccount = this.resolveTreasuryAccount(dto, destination);
-    const method = this.resolveTreasuryPaymentMethod(dto, cashAccount);
-    this.assertExchangeRateForCurrency(currency, dto.exchangeRateUsed);
-
-    const amount = new Prisma.Decimal(dto.amount);
-    const outstanding = await this.getEntryOutstanding(entry);
-    if (amount.greaterThan(outstanding)) {
-      throw new BadRequestException(
-        `El monto excede el saldo pendiente (${outstanding.toFixed(2)} ${entry.currency}).`,
-      );
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      const payment = await tx.accountPayment.create({
-        data: {
-          tenantId,
-          entryId,
-          amount,
-          currency,
-          method,
-          paidAt: new Date(dto.paidAt),
-          notes: dto.notes,
-          cashAccount,
-          exchangeRateUsed:
-            currency === Currency.USD && dto.exchangeRateUsed !== undefined
-              ? new Prisma.Decimal(dto.exchangeRateUsed)
-              : null,
-        },
-      });
-
-      await this.treasuryService.createFromAccountPayment({
-        tenantId,
-        accountPaymentId: payment.id,
-        account: cashAccount,
-        direction: this.treasuryDirectionForEntry(entry.type),
-        amount: payment.amount,
-        currency: payment.currency,
-        exchangeRateUsed: payment.exchangeRateUsed,
-        transactionDate: payment.paidAt,
-        description: this.treasuryDescriptionForEntry(entry),
-        tx,
-      });
+    // PAYABLE treasury outflow → canonical PayablePaymentService (MANUAL + PURCHASE_AUTO).
+    await this.payablePayments.register(tenantId, {
+      payableEntryId: entryId,
+      amount: dto.amount,
+      sourceAccount: toPayableSourceAccount(destination),
+      paymentDate: new Date(dto.paidAt),
+      notes: dto.notes,
+      currency: dto.currency,
+      exchangeRateUsed: dto.exchangeRateUsed,
+      registerIdempotencyKey: dto.registerIdempotencyKey ?? dto.idempotencyKey,
+      actorUserId,
     });
-
     return this.findEntry(entryId, tenantId);
   }
 
@@ -794,6 +759,12 @@ export class CuentasService {
     const linkedSettlement = await this.findActiveSettlementForPayment(paymentId, tenantId);
     if (linkedSettlement) {
       return this.reverseSettlement(linkedSettlement.id, tenantId);
+    }
+
+    // PAYABLE cash payments → canonical reverse (status + Treasury in one Serializable txn).
+    if (entry.type === AccountEntryType.PAYABLE) {
+      await this.payablePayments.reverse(tenantId, entryId, paymentId);
+      return this.findEntry(entryId, tenantId);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -1566,9 +1537,9 @@ export class CuentasService {
   }
 
   /**
-   * Retained for PAYABLE treasury outflows and in-place payment edits.
-   * Deal-linked RECEIVABLE collections use ReceivablePaymentService (eligible).
-   * Correction of deal-linked AccountPayments uses removePayment (allowed).
+   * Retained for in-place payment edits and settlement entry guards.
+   * PAYABLE cash registration uses PayablePaymentService (MANUAL + PURCHASE_AUTO).
+   * Deal-linked RECEIVABLE collections use ReceivablePaymentService.
    */
   private assertManualEntry(entry: AccountEntry) {
     if (this.isDealLinked(entry)) {

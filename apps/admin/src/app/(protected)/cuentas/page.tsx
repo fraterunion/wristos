@@ -217,8 +217,14 @@ function isDealLinked(entry: AccountEntry) {
   return entry.source === 'DEAL_AUTO' || entry.dealId !== null;
 }
 
-function isManualEntry(entry: AccountEntry) {
-  return entry.source === 'MANUAL' && entry.dealId === null;
+/** MANUAL + PURCHASE_AUTO CXP/CXC cash payment (not deal-linked). */
+function canCashPayEntry(entry: AccountEntry) {
+  return (
+    !isDealLinked(entry) &&
+    (entry.source === 'MANUAL' || entry.source === 'PURCHASE_AUTO') &&
+    entry.status !== 'PAID' &&
+    Number(entry.balance) > 0
+  );
 }
 
 function statusPillClass(status: AccountEntryStatus) {
@@ -237,13 +243,19 @@ function statusPillClass(status: AccountEntryStatus) {
 }
 
 function sourcePillClass(source: AccountEntrySource) {
-  return source === 'DEAL_AUTO'
-    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300'
-    : 'border-white/15 bg-white/[0.05] text-white/60';
+  if (source === 'DEAL_AUTO') {
+    return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300';
+  }
+  if (source === 'PURCHASE_AUTO') {
+    return 'border-sky-500/25 bg-sky-500/10 text-sky-300';
+  }
+  return 'border-white/15 bg-white/[0.05] text-white/60';
 }
 
 function sourceLabel(source: AccountEntrySource) {
-  return source === 'DEAL_AUTO' ? 'Venta' : 'Manual';
+  if (source === 'DEAL_AUTO') return 'Venta';
+  if (source === 'PURCHASE_AUTO') return 'Compra';
+  return 'Manual';
 }
 
 type EntryFilters = {
@@ -1424,9 +1436,7 @@ function EntryDrawer({
   if (!entry) return null;
 
   const dealLinked = isDealLinked(entry);
-  const manual = isManualEntry(entry);
-  const canRegisterPayment =
-    manual && entry.status !== 'PAID' && Number(entry.balance) > 0;
+  const canRegisterPayment = canCashPayEntry(entry);
   const canDelete = entry.status !== 'PAID';
   const payments = [...(entry.payments ?? [])].sort((a, b) => b.paidAt.localeCompare(a.paidAt));
 
@@ -2072,6 +2082,7 @@ export default function CuentasPage() {
                   <option value="">Todas</option>
                   <option value="MANUAL">Manual</option>
                   <option value="DEAL_AUTO">Venta</option>
+                  <option value="PURCHASE_AUTO">Compra</option>
                 </select>
                 <input
                   type="number"
@@ -2207,12 +2218,7 @@ export default function CuentasPage() {
           if (drawerEntry) setEntryModal({ open: true, editing: drawerEntry });
         }}
         onPayment={() => {
-          if (
-            drawerEntry &&
-            isManualEntry(drawerEntry) &&
-            drawerEntry.status !== 'PAID' &&
-            Number(drawerEntry.balance) > 0
-          ) {
+          if (drawerEntry && canCashPayEntry(drawerEntry)) {
             setPaymentModal({ open: true, entry: drawerEntry, editing: null });
           }
         }}

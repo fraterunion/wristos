@@ -70,6 +70,7 @@ describe('legacy Receivable write guardrail', () => {
         deleteByAccountPaymentId: jest.fn(),
       } as never,
       { register: jest.fn() } as never,
+      { register: jest.fn(), reverse: jest.fn() } as never,
     );
 
     await service.syncDealReceivable('deal-op', 't1');
