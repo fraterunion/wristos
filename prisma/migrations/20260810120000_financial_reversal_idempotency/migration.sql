@@ -1,12 +1,12 @@
--- Commit 26A — Financial Reversal Safety Framework
--- Durable reverse causality for Expense + Treasury Transfer (AI recovery gate).
+-- Commit 26A/26B — Financial Reversal Causality (durable idempotency keys).
 -- Additive only. Nullable. No backfill. No business rewrite.
 --
 -- Distinguishes:
 --   AI ActionRun reverse then crash  → SAME_COMMAND recovery (matching key)
 --   Human / other reverse            → EXTERNAL (deleted, key null or different)
 --
--- Production migrate is NOT part of 26A deploy. Local authoring only.
+-- Treasury unique includes direction so BOTH transfer legs may share one key.
+-- Production migrate is NOT auto-deployed; run manually before 26C bindings.
 
 ALTER TABLE "operating_expenses"
   ADD COLUMN "reversalIdempotencyKey" TEXT;

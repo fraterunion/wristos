@@ -325,6 +325,41 @@ describe('ExpenseRegistrationService — canonical paid expense', () => {
     expect(other.causality).toBe('EXTERNAL');
   });
 
+  it('crash recovery: commit then same K → SAME_COMMAND; human then K → EXTERNAL', async () => {
+    const { service } = build();
+    const a = await service.register('t1', { ...baseInput, amount: 1111, notes: 'crash-a' });
+    const k = 'ai-action-run:crash-1';
+    await service.reverse('t1', a.expense.id, { reversalIdempotencyKey: k });
+    expect((await service.classifyReversal('t1', a.expense.id, k)).kind).toBe('SAME_COMMAND');
+    const replay = await service.reverse('t1', a.expense.id, { reversalIdempotencyKey: k });
+    expect(replay.causality).toBe('SAME_COMMAND');
+
+    const b = await service.register('t1', { ...baseInput, amount: 2222, notes: 'human-b' });
+    await service.reverse('t1', b.expense.id); // manual, no key
+    expect((await service.classifyReversal('t1', b.expense.id, k)).kind).toBe('EXTERNAL');
+    const afterHuman = await service.reverse('t1', b.expense.id, { reversalIdempotencyKey: k });
+    expect(afterHuman.causality).toBe('EXTERNAL');
+  });
+
+  it('different-key race: loser is EXTERNAL and liquidity restored once', async () => {
+    const { service, treasury } = build();
+    const created = await service.register('t1', { ...baseInput, amount: 3333, notes: 'race' });
+    const [r1, r2] = await Promise.all([
+      service.reverse('t1', created.expense.id, {
+        reversalIdempotencyKey: 'ai-action-run:k1',
+      }),
+      service.reverse('t1', created.expense.id, {
+        reversalIdempotencyKey: 'ai-action-run:k2',
+      }),
+    ]);
+    const applied = [r1, r2].filter((r) => r.causality === 'APPLIED');
+    const external = [r1, r2].filter((r) => r.causality === 'EXTERNAL');
+    expect(applied).toHaveLength(1);
+    expect(external).toHaveLength(1);
+    const deletedTreasury = [...treasury.values()].filter((t) => t.deletedAt);
+    expect(deletedTreasury).toHaveLength(1);
+  });
+
   it('legacy expense without Treasury soft-deletes without inventing reversal', async () => {
     const { service, expenses, treasuryService } = build();
     expenses.set('legacy', {

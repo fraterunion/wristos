@@ -100,6 +100,22 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
           Object.assign(row, data);
           return { ...row };
         }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          let count = 0;
+          for (const t of treasury.values()) {
+            if (where.id && t.id !== where.id) continue;
+            if (where.tenantId && t.tenantId !== where.tenantId) continue;
+            if (where.deletedAt === null && t.deletedAt) continue;
+            Object.assign(t, data);
+            count += 1;
+          }
+          return { count };
+        }),
+        findFirstOrThrow: jest.fn(async ({ where }: any) => {
+          const row = treasury.get(where.id);
+          if (!row) throw new Error('missing');
+          return { ...row };
+        }),
       },
       $transaction: jest.fn(async (fn: any) => {
         // Snapshot for rollback on failure (approximate atomicity).
@@ -405,6 +421,84 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
     });
     expect(other.alreadyReversed).toBe(true);
     expect(other.causality).toBe('EXTERNAL');
+  });
+
+  it('crash recovery + manual-before-retry + mismatched keys invariant', async () => {
+    const ctx = build();
+    const reg = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 12000,
+      registerIdempotencyKey: 'xfer-crash',
+    });
+    const k = 'ai-action-run:xfer-crash-1';
+    await ctx.service.reverse('t1', reg.transferId, { reversalIdempotencyKey: k });
+    expect((await ctx.service.classifyReversal('t1', reg.transferId, k)).kind).toBe(
+      'SAME_COMMAND',
+    );
+    const replay = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: k,
+    });
+    expect(replay.causality).toBe('SAME_COMMAND');
+
+    const manual = await ctx.service.register('t1', {
+      sourceAccount: 'CASH',
+      destinationAccount: 'CESAR',
+      amount: 8000,
+      registerIdempotencyKey: 'xfer-manual',
+    });
+    await ctx.service.reverse('t1', manual.transferId);
+    expect((await ctx.service.classifyReversal('t1', manual.transferId, k)).kind).toBe(
+      'EXTERNAL',
+    );
+
+    // Force mismatched keys on a reversed pair → INVARIANT
+    const bad = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CESAR',
+      amount: 9000,
+      registerIdempotencyKey: 'xfer-mismatch',
+    });
+    await ctx.service.reverse('t1', bad.transferId, {
+      reversalIdempotencyKey: 'ai-action-run:match-a',
+    });
+    for (const t of ctx.treasury.values()) {
+      if (t.provenanceKey?.includes(bad.transferId) && t.direction === 'INFLOW') {
+        t.reversalIdempotencyKey = 'ai-action-run:match-b';
+      }
+    }
+    await expect(
+      ctx.service.reverse('t1', bad.transferId, {
+        reversalIdempotencyKey: 'ai-action-run:match-a',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect((await ctx.service.classifyReversal('t1', bad.transferId, k)).kind).toBe(
+      'INVARIANT',
+    );
+  });
+
+  it('different-key race: one APPLIED, one EXTERNAL, liquidity once', async () => {
+    const ctx = build();
+    const reg = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 44000,
+      registerIdempotencyKey: 'xfer-race',
+    });
+    const [a, b] = await Promise.all([
+      ctx.service.reverse('t1', reg.transferId, {
+        reversalIdempotencyKey: 'ai-action-run:race-1',
+      }),
+      ctx.service.reverse('t1', reg.transferId, {
+        reversalIdempotencyKey: 'ai-action-run:race-2',
+      }),
+    ]);
+    const applied = [a, b].filter((r) => r.causality === 'APPLIED');
+    const external = [a, b].filter((r) => r.causality === 'EXTERNAL');
+    expect(applied).toHaveLength(1);
+    expect(external).toHaveLength(1);
+    expect(ctx.liveLegs()).toHaveLength(0);
+    expect(ctx.totalLiquidity().toString()).toBe('0');
   });
 
   it('reverse missing transfer → NotFound', async () => {

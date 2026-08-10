@@ -296,14 +296,18 @@ export class TreasuryTransferService {
         }
 
         if (outflow.deletedAt && inflow.deletedAt) {
+          const outKey = outflow.reversalIdempotencyKey ?? null;
+          const inKey = inflow.reversalIdempotencyKey ?? null;
+          if (outKey !== inKey) {
+            throw new ConflictException(
+              'STALE_TREASURY_TRANSFER_INVARIANT: mismatched reversal causality keys on transfer legs',
+            );
+          }
           return {
             transferId: logicalKey,
             reversed: false,
             alreadyReversed: true,
-            causality: classifyTransferAlreadyReversedCausality(
-              outflow.reversalIdempotencyKey ?? inflow.reversalIdempotencyKey,
-              reversalKey,
-            ),
+            causality: classifyTransferAlreadyReversedCausality(outKey, reversalKey),
             outflowEntry: outflow,
             inflowEntry: inflow,
           };
@@ -316,13 +320,43 @@ export class TreasuryTransferService {
 
         const now = new Date();
         const stamp = reversalKey ? { reversalIdempotencyKey: reversalKey } : {};
-        const outflowEntry = await tx.treasuryEntry.update({
-          where: { id: outflow.id },
+        // Claim both legs only while still active — loser classifies EXTERNAL/SAME_COMMAND.
+        // Claim outflow first; if lost, do not touch inflow (avoid half-key stamp).
+        const claimedOut = await tx.treasuryEntry.updateMany({
+          where: { id: outflow.id, tenantId, deletedAt: null },
           data: { deletedAt: now, ...stamp },
         });
-        const inflowEntry = await tx.treasuryEntry.update({
-          where: { id: inflow.id },
+        if (claimedOut.count === 0) {
+          const racedOut = await tx.treasuryEntry.findFirst({
+            where: { tenantId, provenanceKey: outflowKey },
+          });
+          const racedIn = await tx.treasuryEntry.findFirst({
+            where: { tenantId, provenanceKey: inflowKey },
+          });
+          return classifyRacedTransferPair({
+            logicalKey,
+            reversalKey,
+            racedOut,
+            racedIn,
+          });
+        }
+
+        const claimedIn = await tx.treasuryEntry.updateMany({
+          where: { id: inflow.id, tenantId, deletedAt: null },
           data: { deletedAt: now, ...stamp },
+        });
+        if (claimedIn.count === 0) {
+          // Outflow claimed in this tx; inflow lost → fail closed (tx rolls back).
+          throw new ConflictException(
+            'STALE_TREASURY_TRANSFER_INVARIANT: concurrent reverse claim failed',
+          );
+        }
+
+        const outflowEntry = await tx.treasuryEntry.findFirstOrThrow({
+          where: { id: outflow.id },
+        });
+        const inflowEntry = await tx.treasuryEntry.findFirstOrThrow({
+          where: { id: inflow.id },
         });
 
         return {
@@ -355,6 +389,61 @@ export class TreasuryTransferService {
     });
     if (!outflow && !inflow) return null;
     return { transferId: logicalKey, outflow, inflow };
+  }
+
+  /**
+   * Commit 26B — read-only transfer causality classification for future AI recovery.
+   * Does not mutate. Outcomes: ACTIVE | SAME_COMMAND | EXTERNAL | INVARIANT | MISSING.
+   */
+  async classifyReversal(
+    tenantId: string,
+    transferId: string,
+    reversalIdempotencyKey?: string | null,
+  ): Promise<
+    | { kind: 'MISSING' }
+    | { kind: 'ACTIVE'; transferId: string }
+    | { kind: 'SAME_COMMAND'; transferId: string }
+    | { kind: 'EXTERNAL'; transferId: string }
+    | { kind: 'INVARIANT'; transferId: string; code: string }
+  > {
+    const logicalKey = String(transferId ?? '').trim();
+    if (!logicalKey) return { kind: 'MISSING' };
+    const key = normalizeTransferReversalKey(reversalIdempotencyKey);
+    const found = await this.findByTransferId(tenantId, logicalKey);
+    if (!found) return { kind: 'MISSING' };
+    const { outflow, inflow } = found;
+    if (!outflow || !inflow) {
+      return {
+        kind: 'INVARIANT',
+        transferId: logicalKey,
+        code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+      };
+    }
+    const outDeleted = outflow.deletedAt != null;
+    const inDeleted = inflow.deletedAt != null;
+    if (outDeleted !== inDeleted) {
+      return {
+        kind: 'INVARIANT',
+        transferId: logicalKey,
+        code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+      };
+    }
+    const outKey = outflow.reversalIdempotencyKey ?? null;
+    const inKey = inflow.reversalIdempotencyKey ?? null;
+    if (outDeleted && inDeleted && outKey !== inKey) {
+      return {
+        kind: 'INVARIANT',
+        transferId: logicalKey,
+        code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+      };
+    }
+    if (!outDeleted && !inDeleted) {
+      return { kind: 'ACTIVE', transferId: logicalKey };
+    }
+    if (key && outKey === key && inKey === key) {
+      return { kind: 'SAME_COMMAND', transferId: logicalKey };
+    }
+    return { kind: 'EXTERNAL', transferId: logicalKey };
   }
 
   /** Safe audit hash — no PII. */
@@ -440,4 +529,43 @@ function classifyTransferAlreadyReversedCausality(
     return 'SAME_COMMAND';
   }
   return 'EXTERNAL';
+}
+
+function classifyRacedTransferPair(args: {
+  logicalKey: string;
+  reversalKey: string | null;
+  racedOut: TreasuryEntry | null;
+  racedIn: TreasuryEntry | null;
+}): ReverseTreasuryTransferResult {
+  const { logicalKey, reversalKey, racedOut, racedIn } = args;
+  if (!racedOut || !racedIn) {
+    throw new ConflictException(
+      'STALE_TREASURY_TRANSFER_INVARIANT: unpaired transfer legs',
+    );
+  }
+  if (Boolean(racedOut.deletedAt) !== Boolean(racedIn.deletedAt)) {
+    throw new ConflictException(
+      'STALE_TREASURY_TRANSFER_INVARIANT: partially reversed transfer',
+    );
+  }
+  if (!racedOut.deletedAt || !racedIn.deletedAt) {
+    throw new ConflictException(
+      'STALE_TREASURY_TRANSFER_INVARIANT: concurrent reverse claim failed',
+    );
+  }
+  const outKey = racedOut.reversalIdempotencyKey ?? null;
+  const inKey = racedIn.reversalIdempotencyKey ?? null;
+  if (outKey !== inKey) {
+    throw new ConflictException(
+      'STALE_TREASURY_TRANSFER_INVARIANT: mismatched reversal causality keys on transfer legs',
+    );
+  }
+  return {
+    transferId: logicalKey,
+    reversed: false,
+    alreadyReversed: true,
+    causality: classifyTransferAlreadyReversedCausality(outKey, reversalKey),
+    outflowEntry: racedOut,
+    inflowEntry: racedIn,
+  };
 }

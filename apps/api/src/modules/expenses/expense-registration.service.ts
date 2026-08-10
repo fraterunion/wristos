@@ -369,6 +369,33 @@ export class ExpenseRegistrationService {
     };
   }
 
+  /**
+   * Commit 26B — read-only causality classification for future AI recovery.
+   * Does not mutate. Outcomes: ACTIVE | SAME_COMMAND | EXTERNAL | MISSING.
+   */
+  async classifyReversal(
+    tenantId: string,
+    expenseId: string,
+    reversalIdempotencyKey?: string | null,
+  ): Promise<
+    | { kind: 'MISSING' }
+    | { kind: 'ACTIVE'; expenseId: string }
+    | { kind: 'SAME_COMMAND'; expenseId: string }
+    | { kind: 'EXTERNAL'; expenseId: string }
+  > {
+    const key = normalizeReversalKey(reversalIdempotencyKey);
+    const expense = await this.prisma.operatingExpense.findFirst({
+      where: { id: expenseId, tenantId },
+      select: { id: true, deletedAt: true, reversalIdempotencyKey: true },
+    });
+    if (!expense) return { kind: 'MISSING' };
+    if (!expense.deletedAt) return { kind: 'ACTIVE', expenseId: expense.id };
+    if (key && expense.reversalIdempotencyKey === key) {
+      return { kind: 'SAME_COMMAND', expenseId: expense.id };
+    }
+    return { kind: 'EXTERNAL', expenseId: expense.id };
+  }
+
   private assertCompatibleReplay(
     existing: OperatingExpense,
     expected: {

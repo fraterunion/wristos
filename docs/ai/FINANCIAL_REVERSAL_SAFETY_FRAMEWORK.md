@@ -1,6 +1,6 @@
-# Financial Reversal Safety Framework (Commit 26A)
+# Financial Reversal Safety Framework (Commits 26A + 26B)
 
-Status: **FRAMEWORK + DOMAIN GATE** — no AI write bindings yet.
+Status: **26B CAUSALITY READY** — durable keys + domain classification; **no AI write bindings**.
 
 `REVERSE_EXPENSE` and `REVERSE_TREASURY_TRANSFER` remain **AI-unbound**.
 
@@ -8,6 +8,79 @@ Executable AI WRITE registry remains exactly **TWELVE**.
 
 Controlled Action Composition V1 remains unchanged
 (`PURCHASE_SELLER → CREATE_CLIENT`, `SALE_CUSTOMER → CREATE_CLIENT` only).
+
+---
+
+## 0. Commit 26B — Durable reversal causality
+
+26B solves only the causality gap left after 26A: `deletedAt` alone cannot distinguish
+AI reverse+crash from human/other reverse before retry.
+
+### Schema fields (additive, nullable, no backfill)
+
+| Model | Field | Tenant-safe uniqueness |
+|---|---|---|
+| `OperatingExpense` | `reversalIdempotencyKey String?` | `@@unique([tenantId, reversalIdempotencyKey])` |
+| `TreasuryEntry` | `reversalIdempotencyKey String?` | `@@unique([tenantId, reversalIdempotencyKey, direction])` |
+
+**Transfer paired-key rule:** one logical transfer has OUTFLOW + INFLOW. Both legs stamp the
+**same** command key. Uniqueness includes `direction` so the pair is legal; a blind
+`@@unique([tenantId, reversalIdempotencyKey])` would incorrectly reject the second leg.
+
+Migration: `20260810120000_financial_reversal_idempotency` (existing rows stay NULL).
+
+### Canonical key format (future AI)
+
+`ai-action-run:<actionRunId>` — domain accepts generic `reversalIdempotencyKey?: string`.
+Manual HTTP callers omit it. Public DTOs do **not** accept a client-spoofable key.
+
+### Causality classification
+
+| Value | Meaning |
+|---|---|
+| `APPLIED` | This call performed the economic reverse now |
+| `SAME_COMMAND` | Already reversed with this exact key (crash recovery) |
+| `EXTERNAL` | Already reversed by a different key or manual (null key) |
+
+Transfer pair invariant: both legs deleted with matching keys, or fail closed
+(`STALE_TREASURY_TRANSFER_INVARIANT`). No silent repair of one-leg / mismatched keys.
+
+### Crash recovery proof
+
+1. Canonical reverse with key `K` commits.
+2. Caller crashes before ActionRun completion.
+3. Retry reverse with `K` → `SAME_COMMAND` (no second economic mutation).
+
+### Manual-before-retry
+
+Manual reverse (null key) then keyed retry with `K` → `EXTERNAL` (not recovery success).
+
+### Public key safety / privacy
+
+- HTTP expense DELETE and transfer reverse omit the key.
+- Field is internal operational metadata; prefer not to surface raw ActionRun IDs in Admin cards.
+- Hash if used in telemetry later.
+
+### Economics
+
+Unchanged from pre-26B: canonical expense restores source liquidity once; legacy expense
+Treasury Δ0; transfer total liquidity Δ0.
+
+### No AI execution yet
+
+Planner, Intent Provider, FakeIntent, NL/Structured Assistant, WritePlanRunner, confirmation,
+Admin Assistant UI, telemetry funnels, composition, and write registry: **zero behavior change**.
+
+### Rollout (TYPE C + TYPE B domain)
+
+1. Backup + read-only OpEx/Treasury pre-audit.
+2. Inspect migration SQL → `prisma migrate deploy` **before** relying on keys in prod.
+3. Verify all existing keys NULL + indexes.
+4. Merge domain code; Railway SHA health.
+5. DEMO keyed reverse / same-key / different-key / manual-before-key for Expense + Transfer.
+6. Confirm exactly 12 WRITEs; reversals still unbound; composition unchanged.
+
+**Do not bind REVERSE_* until 26C+ after migrate.**
 
 ---
 
