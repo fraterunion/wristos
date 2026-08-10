@@ -234,6 +234,39 @@ export function deriveWorkingContextAfterResponse(args: {
     working = applySelectedEntity(working, { type: 'ACCOUNT_ENTRY', id: accountId, label }, now);
   }
 
+  // After CREATE_RECEIVABLE / CREATE_PAYABLE: select the new AccountEntry so follow-up
+  // payment intents can reuse trusted accountEntryId ("Cóbrale 50 mil a esa cuenta").
+  if (
+    (args.intent === 'CREATE_RECEIVABLE' || args.intent === 'CREATE_PAYABLE') &&
+    args.responseType === 'SUCCESS_RECEIPT'
+  ) {
+    const receipt =
+      args.payload.receipt && typeof args.payload.receipt === 'object'
+        ? (args.payload.receipt as Record<string, unknown>)
+        : null;
+    const createdAccountId =
+      typeof receipt?.accountEntryId === 'string' ? receipt.accountEntryId : null;
+    if (createdAccountId) {
+      const label =
+        (typeof receipt?.counterpartyLabel === 'string' && receipt.counterpartyLabel) ||
+        (args.intent === 'CREATE_RECEIVABLE' ? 'Cuenta por cobrar' : 'Cuenta por pagar');
+      working = applySelectedEntity(
+        working,
+        { type: 'ACCOUNT_ENTRY', id: createdAccountId, label },
+        now,
+      );
+    }
+  }
+
+  if (accountId && args.intent === 'REGISTER_PAYABLE_PAYMENT') {
+    const label =
+      (typeof args.entities.payableLabel === 'string' && args.entities.payableLabel) ||
+      (typeof args.entities.accountLabel === 'string' && args.entities.accountLabel) ||
+      (working?.lastPresentedCandidates?.candidates.find((c) => c.id === accountId)?.label) ||
+      'Cuenta';
+    working = applySelectedEntity(working, { type: 'ACCOUNT_ENTRY', id: accountId, label }, now);
+  }
+
   if (!working) return null;
   return {
     ...working,

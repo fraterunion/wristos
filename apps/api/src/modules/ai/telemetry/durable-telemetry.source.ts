@@ -35,6 +35,8 @@ const DANGEROUS_WRITES = new Set([
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
+  'CREATE_RECEIVABLE',
+  'CREATE_PAYABLE',
 ]);
 
 const TERMINAL_REQUEST = new Set<AIRequestStatus>([

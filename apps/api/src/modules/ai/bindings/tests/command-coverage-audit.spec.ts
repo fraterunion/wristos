@@ -13,7 +13,7 @@ const COMPOSITION = join(
 const MANIFEST = join(ROOT, 'docs/ai/command-coverage.json');
 const AUDIT_DOC = join(ROOT, 'docs/ai/COMMAND_COVERAGE_AUDIT.md');
 
-const EXPECTED_TEN = [
+const EXPECTED_TWELVE = [
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_EXPENSE',
@@ -24,6 +24,8 @@ const EXPECTED_TEN = [
   'REGISTER_TREASURY_TRANSFER',
   'REGISTER_CAPITAL_CONTRIBUTION',
   'REGISTER_CAPITAL_DISTRIBUTION',
+  'CREATE_RECEIVABLE',
+  'CREATE_PAYABLE',
 ] as const;
 
 const UNBOUND = [
@@ -32,15 +34,16 @@ const UNBOUND = [
   'REGISTER_CRYPTO_PRICE',
 ] as const;
 
-describe('Command Coverage Audit 25A (architecture-only)', () => {
-  it('keeps production write registry at exactly TEN executable bindings', () => {
+describe('Command Coverage Audit 25C (CREATE_RECEIVABLE + CREATE_PAYABLE wired)', () => {
+  it('keeps production write registry at exactly TWELVE executable bindings', () => {
     const src = readFileSync(REGISTRY, 'utf8');
-    expect(src).toContain('this.bindings.size !== 10');
-    for (const capability of EXPECTED_TEN) {
+    expect(src).toContain('this.bindings.size !== 12');
+    for (const capability of EXPECTED_TWELVE) {
       expect(src).toContain(`'${capability}'`);
     }
-    expect(src).toContain('RegisterCapitalDistributionWriteBinding');
-    // No eleventh executable binding classes for settlement/crypto.
+    expect(src).toContain('CreateReceivableWriteBinding');
+    expect(src).toContain('CreatePayableWriteBinding');
+    // No thirteenth executable binding classes for settlement/crypto.
     expect(src).not.toMatch(/RegisterSettlementWriteBinding/);
     expect(src).not.toMatch(/RegisterCryptoPositionWriteBinding/);
     expect(src).not.toMatch(/RegisterCryptoPriceWriteBinding/);
@@ -49,8 +52,6 @@ describe('Command Coverage Audit 25A (architecture-only)', () => {
   it('keeps known catalogued writes unbound in the registry source', () => {
     const src = readFileSync(REGISTRY, 'utf8');
     for (const capability of UNBOUND) {
-      // Unbound capabilities must not appear in the onModuleInit has() allowlist as required bindings.
-      // They may still appear in comments; assert they are not in the size===10 required set string.
       expect(src).not.toContain(`!this.bindings.has('${capability}')`);
     }
   });
@@ -60,21 +61,23 @@ describe('Command Coverage Audit 25A (architecture-only)', () => {
     expect(src).toMatch(/PURCHASE_SELLER/);
     expect(src).toMatch(/SALE_CUSTOMER/);
     expect(src).toMatch(/CREATE_CLIENT/);
-    // No Capital composition edges.
+    // No Capital / manual-account composition edges.
     expect(src).not.toMatch(/REGISTER_CAPITAL_CONTRIBUTION[\s\S]{0,80}CREATE_CLIENT/);
     expect(src).not.toMatch(/REGISTER_CAPITAL_DISTRIBUTION[\s\S]{0,80}CREATE_CLIENT/);
+    expect(src).not.toMatch(/CREATE_RECEIVABLE[\s\S]{0,80}CREATE_CLIENT/);
+    expect(src).not.toMatch(/CREATE_PAYABLE[\s\S]{0,80}CREATE_CLIENT/);
   });
 
-  it('keeps command-coverage manifest aligned with the TEN executable writes', () => {
+  it('keeps command-coverage manifest aligned with the TWELVE executable writes', () => {
     const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
       productionExecutableWrites: string[];
       cataloguedUnboundWrites: string[];
       compositionV1: Array<{ parent: string; child: string }>;
       metrics: { full: number };
     };
-    expect(manifest.productionExecutableWrites).toEqual([...EXPECTED_TEN]);
+    expect(manifest.productionExecutableWrites).toEqual([...EXPECTED_TWELVE]);
     expect(manifest.cataloguedUnboundWrites).toEqual([...UNBOUND]);
-    expect(manifest.metrics.full).toBe(10);
+    expect(manifest.metrics.full).toBe(12);
     expect(manifest.compositionV1).toEqual([
       {
         parent: 'REGISTER_PURCHASE',
@@ -99,11 +102,12 @@ describe('Command Coverage Audit 25A (architecture-only)', () => {
     expect(doc).toContain('no runtime capabilities added');
   });
 
-  it('keeps CREATE_RECEIVABLE / CREATE_PAYABLE unbound after domain gate 25B', () => {
+  it('binds CREATE_RECEIVABLE / CREATE_PAYABLE in the write registry after 25C', () => {
     const src = readFileSync(REGISTRY, 'utf8');
-    expect(src).not.toContain('CREATE_RECEIVABLE');
-    expect(src).not.toContain('CREATE_PAYABLE');
-    expect(src).not.toMatch(/CreateReceivableWriteBinding|CreatePayableWriteBinding/);
-    expect(src).toContain('this.bindings.size !== 10');
+    expect(src).toContain('CREATE_RECEIVABLE');
+    expect(src).toContain('CREATE_PAYABLE');
+    expect(src).toMatch(/CreateReceivableWriteBinding/);
+    expect(src).toMatch(/CreatePayableWriteBinding/);
+    expect(src).toContain('this.bindings.size !== 12');
   });
 });

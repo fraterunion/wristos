@@ -490,17 +490,18 @@ describe('ManualAccountEntryService (25B)', () => {
   });
 });
 
-describe('AI bindings remain unbound for CREATE_RECEIVABLE / CREATE_PAYABLE', () => {
-  it('write registry source still lists exactly ten bindings and no manual-account bindings', async () => {
+describe('AI bindings are wired for CREATE_RECEIVABLE / CREATE_PAYABLE', () => {
+  it('write registry source lists twelve bindings including manual-account bindings', async () => {
     const { readFileSync } = await import('fs');
     const { join } = await import('path');
     const registry = readFileSync(
       join(__dirname, '../ai/bindings/write-capability-binding-registry.ts'),
       'utf8',
     );
-    expect(registry).toContain('this.bindings.size !== 10');
-    expect(registry).not.toMatch(/CreateReceivableWriteBinding|CreatePayableWriteBinding/);
-    expect(registry).not.toContain("CREATE_RECEIVABLE");
-    expect(registry).not.toContain("CREATE_PAYABLE");
+    expect(registry).toContain('this.bindings.size !== 12');
+    expect(registry).toMatch(/CreateReceivableWriteBinding/);
+    expect(registry).toMatch(/CreatePayableWriteBinding/);
+    expect(registry).toContain('CREATE_RECEIVABLE');
+    expect(registry).toContain('CREATE_PAYABLE');
   });
 });

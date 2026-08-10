@@ -1,5 +1,5 @@
 {
-  "version": "25A",
+  "version": "25C",
   "auditedAt": "2026-08-09",
   "productionExecutableWrites": [
     "REGISTER_SALE",
@@ -11,7 +11,9 @@
     "REGISTER_PAYABLE_PAYMENT",
     "REGISTER_TREASURY_TRANSFER",
     "REGISTER_CAPITAL_CONTRIBUTION",
-    "REGISTER_CAPITAL_DISTRIBUTION"
+    "REGISTER_CAPITAL_DISTRIBUTION",
+    "CREATE_RECEIVABLE",
+    "CREATE_PAYABLE"
   ],
   "cataloguedUnboundWrites": [
     "REGISTER_SETTLEMENT",
@@ -24,32 +26,32 @@
   ],
   "metrics": {
     "totalMeaningful": 62,
-    "full": 10,
-    "partial": 8,
+    "full": 12,
+    "partial": 6,
     "uncovered": 28,
     "intentionallyExcluded": 16,
-    "overallCoveragePct": 21.7,
-    "financialCoveragePct": 38.5,
+    "overallCoveragePct": 26.1,
+    "financialCoveragePct": 46.2,
     "inventoryCoveragePct": 12.5,
     "crmCoveragePct": 40.0,
     "capitalCoveragePct": 25.0,
     "coverageFormula": "full / (full + partial + uncovered) * 100",
-    "notes": "intentionallyExcluded omitted from coverage denominator (admin/bulk/platform/read-only)"
+    "notes": "intentionallyExcluded omitted from coverage denominator (admin/bulk/platform/read-only); 25C adds CREATE_RECEIVABLE + CREATE_PAYABLE"
   },
   "assistantOperateWristOSLevel": {
     "requiredForClaim": "LEVEL_2",
     "currentLevel": "LEVEL_1",
     "levels": {
-      "LEVEL_1": "Core transaction entry (current TEN writes)",
+      "LEVEL_1": "Core transaction entry (current TWELVE writes)",
       "LEVEL_2": "Core corrections/reversals for the same domains",
-      "LEVEL_3": "Operational entity maintenance (watch edit, manual CxC/CxP, Radar)",
+      "LEVEL_3": "Operational entity maintenance (watch edit, Radar)",
       "LEVEL_4": "Advanced/bulk/admin (imports, automations, ownership, platform)"
     }
   },
   "recommendedNextCommit": {
-    "id": "25B",
-    "title": "CREATE_RECEIVABLE + CREATE_PAYABLE (manual account entries)",
+    "id": "26A",
+    "title": "Correction / cancel flows for manual accounts + payments",
     "priority": "P0",
-    "rationale": "Highest-frequency financial gap after TEN entry writes; domain CuentasService already exists; unblocks César creating debts/credits without UI"
+    "rationale": "LEVEL_2 corrections remain the gap after entry writes including manual CxC/CxP"
   }
 }

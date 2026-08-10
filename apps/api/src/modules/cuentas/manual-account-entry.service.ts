@@ -135,7 +135,7 @@ function initialStatus(dueDate: Date | null, now = new Date()): AccountEntryStat
  * OperatingExpense, or Capital events.
  * Liquidity Δ0. No automatic collection/payment.
  *
- * Not AI-bound in 25B.
+ * Not AI-bound in 25B; AI CREATE_RECEIVABLE / CREATE_PAYABLE bindings added in 25C.
  */
 @Injectable()
 export class ManualAccountEntryService {

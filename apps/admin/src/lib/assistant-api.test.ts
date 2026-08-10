@@ -23,12 +23,14 @@ describe('assistant surface contracts', () => {
       'GET_ATTENTION_ITEMS',
       'GET_BUSINESS_SUMMARY',
     ]);
-    assert.equal(WRITE_PREVIEW_ACTIONS.length, 13);
+    assert.equal(WRITE_PREVIEW_ACTIONS.length, 15);
     assert.equal(WRITE_PREVIEW_ACTIONS[0], 'REGISTER_SALE');
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('CREATE_CLIENT'));
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('UPDATE_CLIENT'));
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('REGISTER_CAPITAL_CONTRIBUTION'));
     assert.ok(WRITE_PREVIEW_ACTIONS.includes('REGISTER_CAPITAL_DISTRIBUTION'));
+    assert.ok(WRITE_PREVIEW_ACTIONS.includes('CREATE_RECEIVABLE'));
+    assert.ok(WRITE_PREVIEW_ACTIONS.includes('CREATE_PAYABLE'));
   });
 
   it('keeps desktop dashboard default and prefers assistant on mobile', () => {

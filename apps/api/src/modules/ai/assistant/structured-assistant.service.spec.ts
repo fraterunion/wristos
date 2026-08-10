@@ -48,6 +48,12 @@ describe('StructuredAssistantService', () => {
       entities,
     })),
   };
+  const createManualAccountEntityResolver = {
+    resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
+      kind: 'READY' as const,
+      entities,
+    })),
+  };
   const compositionOrchestrator = {
     loadActive: jest.fn(async () => ({ composition: null, version: 1, resolvedContext: {} })),
     recoverPendingResume: jest.fn(async () => null),
@@ -70,6 +76,7 @@ describe('StructuredAssistantService', () => {
     createClientEntityResolver as never,
     updateClientEntityResolver as never,
     capitalInvestorEntityResolver as never,
+    createManualAccountEntityResolver as never,
     { getSummary: jest.fn(async () => ({ investors: [] })) } as never,
     compositionOrchestrator as never,
   );

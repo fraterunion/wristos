@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { AIActionRun, AIActionRunStatus, AIAuditEventType, Prisma } from '@prisma/client';
+import { AIActionRun, AIActionRunStatus, AIAuditEventType, AccountEntryStatus, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
@@ -30,6 +30,10 @@ import {
 import {
   registerCapitalDistributionIdempotencyKey,
 } from './write/register-capital-distribution.binding';
+import {
+  createPayableIdempotencyKey,
+  createReceivableIdempotencyKey,
+} from './write/create-manual-account.shared';
 import {
   treasuryTransferInflowProvenanceKey,
   treasuryTransferOutflowProvenanceKey,
@@ -79,7 +83,8 @@ type ClaimResult =
   | { kind: 'CAPITAL_CONTRIBUTION_REVERSED'; run: AIActionRun }
   | { kind: 'CAPITAL_CONTRIBUTION_INVARIANT'; run: AIActionRun; code: string }
   | { kind: 'CAPITAL_DISTRIBUTION_REVERSED'; run: AIActionRun }
-  | { kind: 'CAPITAL_DISTRIBUTION_INVARIANT'; run: AIActionRun; code: string };
+  | { kind: 'CAPITAL_DISTRIBUTION_INVARIANT'; run: AIActionRun; code: string }
+  | { kind: 'ACCOUNT_ENTRY_CANCELLED'; run: AIActionRun; code: string };
 
 type PayableMarkerClassification =
   | { kind: 'ACTIVE' }
@@ -103,6 +108,11 @@ type CapitalDistributionMarkerClassification =
   | { kind: 'REVERSED' }
   | { kind: 'NONE' };
 
+type ManualAccountMarkerClassification =
+  | { kind: 'ACTIVE' }
+  | { kind: 'CANCELLED' }
+  | { kind: 'NONE' };
+
 export function registerSaleIdempotencyKey(actionRunId: string): string {
   return `ai-action-run:${actionRunId}`;
 }
@@ -122,6 +132,12 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
   }
   if (intent === 'REGISTER_CAPITAL_DISTRIBUTION') {
     return registerCapitalDistributionIdempotencyKey(actionRunId);
+  }
+  if (intent === 'CREATE_RECEIVABLE') {
+    return createReceivableIdempotencyKey(actionRunId);
+  }
+  if (intent === 'CREATE_PAYABLE') {
+    return createPayableIdempotencyKey(actionRunId);
   }
   if (intent === 'REGISTER_EXPENSE') {
     return registerExpenseIdempotencyKey(actionRunId);
@@ -146,7 +162,8 @@ function capabilityLabel(
   | 'actualizacion'
   | 'transferencia'
   | 'aportacion'
-  | 'distribucion' {
+  | 'distribucion'
+  | 'cuenta' {
   if (
     capability === 'REGISTER_RECEIVABLE_PAYMENT' ||
     capability === 'REGISTER_PAYABLE_PAYMENT'
@@ -156,6 +173,7 @@ function capabilityLabel(
   if (capability === 'REGISTER_TREASURY_TRANSFER') return 'transferencia';
   if (capability === 'REGISTER_CAPITAL_CONTRIBUTION') return 'aportacion';
   if (capability === 'REGISTER_CAPITAL_DISTRIBUTION') return 'distribucion';
+  if (capability === 'CREATE_RECEIVABLE' || capability === 'CREATE_PAYABLE') return 'cuenta';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
@@ -185,6 +203,7 @@ export class WritePlanRunner {
  *   treasury-transfer:ai-action-run:<id>:outflow|inflow
  * - REGISTER_CAPITAL_CONTRIBUTION → InvestorContribution.registerIdempotencyKey
  * - REGISTER_CAPITAL_DISTRIBUTION → InvestorDistribution.registerIdempotencyKey
+ * - CREATE_RECEIVABLE / CREATE_PAYABLE → AccountEntry.registerIdempotencyKey
  * - REGISTER_EXPENSE → OperatingExpense.registerIdempotencyKey
  * - REGISTER_PURCHASE → Watch.registerIdempotencyKey
  * - CREATE_CLIENT → Client.registerIdempotencyKey
@@ -392,6 +411,19 @@ export class WritePlanRunner {
       return this.failureEnvelope(claim.run, claim.code);
     }
 
+    if (claim.kind === 'ACCOUNT_ENTRY_CANCELLED') {
+      if (claim.run.status === AIActionRunStatus.EXECUTING) {
+        await this.runtime.failExecution(
+          args.tenantId,
+          args.userId,
+          claim.run.id,
+          claim.code,
+          { planFingerprint: args.expectedFingerprint },
+        );
+      }
+      return this.failureEnvelope(claim.run, claim.code);
+    }
+
     if (claim.kind === 'IN_PROGRESS') {
       const label = capabilityLabel(claim.run.intent);
       return {
@@ -417,7 +449,9 @@ export class WritePlanRunner {
                       ? 'La aportación se está registrando. Reintenta la misma confirmación en un momento. No inicies una aportación nueva.'
                       : label === 'distribucion'
                         ? 'La distribución se está registrando. Reintenta la misma confirmación en un momento. No inicies una distribución nueva.'
-                        : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
+                        : label === 'cuenta'
+                          ? 'La cuenta se está registrando. Reintenta la misma confirmación en un momento. No inicies una cuenta nueva.'
+                          : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
         receipt: null,
         planFingerprint: claim.run.planFingerprint,
         executableWrite: true,
@@ -715,6 +749,10 @@ export class WritePlanRunner {
               ? 'CANONICAL_CAPITAL_CONTRIBUTION_COMMITTED_RUNTIME_PENDING'
               : run.intent === 'REGISTER_CAPITAL_DISTRIBUTION'
                 ? 'CANONICAL_CAPITAL_DISTRIBUTION_COMMITTED_RUNTIME_PENDING'
+                : run.intent === 'CREATE_RECEIVABLE'
+                  ? 'CANONICAL_CREATE_RECEIVABLE_COMMITTED_RUNTIME_PENDING'
+                  : run.intent === 'CREATE_PAYABLE'
+                    ? 'CANONICAL_CREATE_PAYABLE_COMMITTED_RUNTIME_PENDING'
               : run.intent === 'REGISTER_EXPENSE'
                 ? 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING'
                 : run.intent === 'REGISTER_PURCHASE'
@@ -910,7 +948,69 @@ export class WritePlanRunner {
     return { kind: 'ACTIVE' };
   }
 
-  /** Payable + treasury-transfer + capital typed recovery before IN_PROGRESS. */
+  /**
+   * CREATE_RECEIVABLE / CREATE_PAYABLE recovery inspects AccountEntry by
+   * registerIdempotencyKey. Active → recover; cancelled/deleted → typed stale; none → IN_PROGRESS.
+   */
+  private async classifyCreateReceivableRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    if (run.intent !== 'CREATE_RECEIVABLE') return null;
+    const marker = await this.inspectManualAccountMarker(tenantId, run.id, db);
+    if (marker.kind === 'ACTIVE') {
+      return { kind: 'RECOVER', run, priorStatus: run.status };
+    }
+    if (marker.kind === 'CANCELLED') {
+      return {
+        kind: 'ACCOUNT_ENTRY_CANCELLED',
+        run,
+        code: 'STALE_CREATE_RECEIVABLE_CANCELLED',
+      };
+    }
+    return null;
+  }
+
+  private async classifyCreatePayableRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    if (run.intent !== 'CREATE_PAYABLE') return null;
+    const marker = await this.inspectManualAccountMarker(tenantId, run.id, db);
+    if (marker.kind === 'ACTIVE') {
+      return { kind: 'RECOVER', run, priorStatus: run.status };
+    }
+    if (marker.kind === 'CANCELLED') {
+      return {
+        kind: 'ACCOUNT_ENTRY_CANCELLED',
+        run,
+        code: 'STALE_CREATE_PAYABLE_CANCELLED',
+      };
+    }
+    return null;
+  }
+
+  private async inspectManualAccountMarker(
+    tenantId: string,
+    actionRunId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<ManualAccountMarkerClassification> {
+    const key = createReceivableIdempotencyKey(actionRunId);
+    const row = await db.accountEntry.findFirst({
+      where: { tenantId, registerIdempotencyKey: key },
+      select: { id: true, deletedAt: true, status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!row) return { kind: 'NONE' };
+    if (row.deletedAt || row.status === AccountEntryStatus.CANCELLED) {
+      return { kind: 'CANCELLED' };
+    }
+    return { kind: 'ACTIVE' };
+  }
+
+  /** Payable + treasury-transfer + capital + manual-account typed recovery before IN_PROGRESS. */
   private async classifyWriteRecoveryClaim(
     tenantId: string,
     run: AIActionRun,
@@ -920,7 +1020,9 @@ export class WritePlanRunner {
       (await this.classifyPayableRecoveryClaim(tenantId, run, db)) ??
       (await this.classifyTreasuryTransferRecoveryClaim(tenantId, run, db)) ??
       (await this.classifyCapitalContributionRecoveryClaim(tenantId, run, db)) ??
-      (await this.classifyCapitalDistributionRecoveryClaim(tenantId, run, db))
+      (await this.classifyCapitalDistributionRecoveryClaim(tenantId, run, db)) ??
+      (await this.classifyCreateReceivableRecoveryClaim(tenantId, run, db)) ??
+      (await this.classifyCreatePayableRecoveryClaim(tenantId, run, db))
     );
   }
 
@@ -960,6 +1062,10 @@ export class WritePlanRunner {
     }
     if (intent === 'REGISTER_CAPITAL_DISTRIBUTION') {
       const marker = await this.inspectCapitalDistributionMarker(tenantId, actionRunId, db);
+      return marker.kind === 'ACTIVE';
+    }
+    if (intent === 'CREATE_RECEIVABLE' || intent === 'CREATE_PAYABLE') {
+      const marker = await this.inspectManualAccountMarker(tenantId, actionRunId, db);
       return marker.kind === 'ACTIVE';
     }
     if (intent === 'REGISTER_EXPENSE') {
@@ -1261,6 +1367,10 @@ export class WritePlanRunner {
           ? meta.recovered || meta.replayed
             ? 'Listo. La aportación ya estaba registrada.'
             : 'Listo. La aportación quedó registrada.'
+          : label === 'cuenta'
+            ? meta.recovered || meta.replayed
+              ? 'Listo. La cuenta ya estaba registrada.'
+              : 'Listo. La cuenta quedó registrada.'
           : label === 'transferencia'
             ? meta.recovered || meta.replayed
               ? 'Listo. La transferencia ya estaba registrada.'
@@ -1303,6 +1413,8 @@ export class WritePlanRunner {
       failureType.startsWith('CANONICAL_TREASURY_TRANSFER_COMMITTED') ||
       failureType.startsWith('CANONICAL_CAPITAL_CONTRIBUTION_COMMITTED') ||
       failureType.startsWith('CANONICAL_CAPITAL_DISTRIBUTION_COMMITTED') ||
+      failureType.startsWith('CANONICAL_CREATE_RECEIVABLE_COMMITTED') ||
+      failureType.startsWith('CANONICAL_CREATE_PAYABLE_COMMITTED') ||
       failureType.startsWith('CANONICAL_EXPENSE_COMMITTED') ||
       failureType.startsWith('CANONICAL_PURCHASE_COMMITTED') ||
       failureType.startsWith('CANONICAL_CLIENT_COMMITTED')
@@ -1320,6 +1432,8 @@ export class WritePlanRunner {
             ? 'La distribución ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
             : label === 'aportacion'
             ? 'La aportación ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
+            : label === 'cuenta'
+              ? 'La cuenta ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
             : label === 'transferencia'
               ? 'La transferencia ya quedó registrada en el negocio, pero no pude confirmar el recibo todavía. Reintenta la misma confirmación.'
               : label === 'pago'
@@ -1402,6 +1516,27 @@ export class WritePlanRunner {
         responseType: 'ERROR_RECOVERY_CARD',
         message:
           'El pago se registró anteriormente, pero después fue revertido en Cuentas. No voy a volver a aplicarlo automáticamente.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
+    if (
+      failureType === 'STALE_CREATE_RECEIVABLE_CANCELLED' ||
+      failureType === 'STALE_CREATE_PAYABLE_CANCELLED'
+    ) {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          'La cuenta se registró anteriormente, pero después fue cancelada en Cuentas. No voy a volver a crearla automáticamente.',
         receipt: null,
         planFingerprint: run.planFingerprint,
         executableWrite: true,
