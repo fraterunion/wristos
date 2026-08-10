@@ -31,6 +31,9 @@ export function MobileBottomNav() {
     router.replace('/login');
   };
 
+  const onAssistant =
+    pathname === '/assistant' || pathname.startsWith('/assistant/');
+
   return (
     <>
       {open ? (
@@ -63,16 +66,42 @@ export function MobileBottomNav() {
           </section>
         </div>
       ) : null}
-      <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t border-white/10 bg-panel/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" aria-label="Navegación principal">
+      <nav
+        className={`fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden ${
+          onAssistant
+            ? 'border-t border-white/[0.06] bg-surface/90'
+            : 'border-t border-white/10 bg-panel/95'
+        }`}
+        aria-label="Navegación principal"
+      >
         {primary.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <Link key={href} href={href} className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${active ? 'text-emerald-300' : 'text-white/55'}`}>
+            <Link
+              key={href}
+              href={href}
+              className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${
+                active
+                  ? onAssistant
+                    ? 'text-emerald-300/90'
+                    : 'text-emerald-300'
+                  : onAssistant
+                    ? 'text-white/40'
+                    : 'text-white/55'
+              }`}
+            >
               <Icon className="h-5 w-5" aria-hidden /><span>{label}</span>
             </Link>
           );
         })}
-        <button type="button" onClick={() => setOpen((value) => !value)} className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${open ? 'text-emerald-300' : 'text-white/55'}`} aria-expanded={open}>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${
+            open ? 'text-emerald-300' : onAssistant ? 'text-white/40' : 'text-white/55'
+          }`}
+          aria-expanded={open}
+        >
           <Menu className="h-5 w-5" aria-hidden /><span>Más</span>
         </button>
       </nav>

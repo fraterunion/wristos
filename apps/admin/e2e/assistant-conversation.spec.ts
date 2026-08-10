@@ -120,6 +120,7 @@ test.describe('Assistant conversation surface', () => {
     await expect(scope.getByText('Buenos días, Cesar.')).toBeVisible();
     await expect(scope.getByText('¿Qué necesitas hacer?')).toBeVisible();
     await expect(page.getByText('Solo lectura')).toHaveCount(0);
+    await expect(page.getByText('Listo', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Ver liquidez' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Ver utilidad' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Buscar reloj' })).toHaveCount(0);
@@ -127,6 +128,21 @@ test.describe('Assistant conversation surface', () => {
     await expect(page.getByText('Preparar acciones')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Consultas rápidas' })).toHaveCount(0);
     await expect(scope.getByLabel('Escribe o habla con WristOS')).toBeInViewport();
+  });
+
+  test('greeting disappears after the first message', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({ payload: { message: 'Tienes liquidez disponible.' } }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    const scope = shell(page);
+    await expect(scope.getByTestId('assistant-empty-state')).toBeVisible();
+    await sendMessage(page, '¿Cuánto tenemos?');
+    await expect(scope.getByText('Tienes liquidez disponible.')).toBeVisible();
+    await expect(scope.getByTestId('assistant-empty-state')).toHaveCount(0);
+    await expect(scope.getByText('¿Qué necesitas hacer?')).toHaveCount(0);
   });
 
   test('user message renders immediately, typing indicator shows only while pending, then disappears', async ({
@@ -243,6 +259,45 @@ test.describe('Assistant conversation surface', () => {
     await expect(scope.getByText('Perfecto. Esto es lo que voy a preparar:')).toBeVisible();
     await expect(scope.getByRole('link', { name: 'Abrir Ventas' })).toHaveAttribute('href', '/ventas');
     await expect(scope.getByRole('button', { name: 'Confirmar' })).toHaveCount(0);
+    await expect(scope.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
+  });
+
+  test('executable write preview uses Registrar venta CTA copy', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'REGISTER_SALE',
+      response: baseResponse({
+        interactionState: 'READY_FOR_CONFIRMATION',
+        responseType: 'ACTION_PREVIEW_CARD',
+        actionRunId: 'ar-sale-1',
+        payload: {
+          executable: true,
+          executableWrite: true,
+          capability: 'REGISTER_SALE',
+          planFingerprint: 'fp-sale-1',
+          preview: {
+            title: 'Venta',
+            fields: [
+              { label: 'Reloj', value: 'Rolex GMT Batman' },
+              { label: 'Precio', value: '$350,000 MXN' },
+              { label: 'Cliente', value: 'José' },
+              { label: 'Forma de pago', value: 'Bancos' },
+            ],
+            warnings: [],
+            estimatedEffects: [
+              { area: 'INVENTORY', description: 'El reloj saldrá del inventario disponible.' },
+            ],
+          },
+          message: 'Encontré este reloj y preparé la venta.',
+        },
+      }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    await sendMessage(page, 'Vendí el Batman en 350');
+    const scope = shell(page);
+    await expect(scope.getByText('Perfecto. Esto es lo que voy a registrar:')).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Registrar venta' })).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
   });
 
   test('malformed write-completion response fails closed', async ({ page }) => {
@@ -439,9 +494,14 @@ test.describe('Assistant conversation surface', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
     const scope = shell(page);
-    const mic = scope.getByRole('button', { name: /Hablar con WristOS|Micrófono no disponible/ });
+    await expect(scope.getByTestId('assistant-composer')).toBeVisible();
+    const mic = scope
+      .getByTestId('assistant-mic')
+      .or(scope.getByTestId('assistant-mic-unsupported'));
     await expect(mic).toBeVisible();
+    await expect(scope.getByTestId('assistant-send')).toBeDisabled();
     // Voice never auto-executes writes — only fills composer / same submit pipeline.
     await expect(page.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Registrar venta' })).toHaveCount(0);
   });
 });

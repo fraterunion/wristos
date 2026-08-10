@@ -30,6 +30,13 @@ describe('Assistant Jarvis UX (26UX) source guards', () => {
     assert.ok(pageSrc.includes('assistant-empty-state'));
     assert.ok(pageSrc.includes('assistant-chat-shell'));
     assert.ok(pageSrc.includes('Escribe o habla'));
+    assert.equal(pageSrc.includes('>Listo<'), false);
+  });
+
+  it('shows greeting only via emptyState (not as a permanent header)', () => {
+    assert.ok(pageSrc.includes('Buenos días'));
+    assert.ok(pageSrc.includes('emptyState={emptyState}'));
+    assert.ok(pageSrc.includes('hasConversation'));
   });
 
   it('keeps confirmation path for all twelve WRITE capabilities', () => {
@@ -58,5 +65,12 @@ describe('Assistant Jarvis UX (26UX) source guards', () => {
     );
     assert.ok(composerSrc.includes('Escuchando'));
     assert.equal(composerSrc.includes('confirmAssistantActionRun'), false);
+  });
+
+  it('composer is the hero surface with send/mic affordances', () => {
+    assert.ok(composerSrc.includes('assistant-send'));
+    assert.ok(composerSrc.includes('assistant-mic'));
+    assert.ok(composerSrc.includes('min-h-[48px]'));
+    assert.ok(composerSrc.includes('safe-area-inset-bottom'));
   });
 });

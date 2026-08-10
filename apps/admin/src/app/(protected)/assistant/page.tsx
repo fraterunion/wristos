@@ -357,22 +357,22 @@ export default function AssistantPage() {
         : isCreateClient
           ? 'Crear cliente'
           : isReceivable
-            ? 'Confirmar cuenta por cobrar'
+            ? 'Crear cuenta por cobrar'
             : isPayable
-              ? 'Confirmar cuenta por pagar'
+              ? 'Crear cuenta por pagar'
               : isPurchase
-                ? 'Confirmar compra'
+                ? 'Registrar compra'
                 : isExpense
-                  ? 'Confirmar gasto'
+                  ? 'Registrar gasto'
                   : isDistribution
-                    ? 'Confirmar distribución'
+                    ? 'Registrar distribución'
                     : isContribution
-                      ? 'Confirmar aportación'
+                      ? 'Registrar aportación'
                       : isTransfer
-                        ? 'Confirmar transferencia'
+                        ? 'Hacer transferencia'
                         : isPayment
-                          ? 'Confirmar pago'
-                          : 'Confirmar venta';
+                          ? 'Registrar pago'
+                          : 'Registrar venta';
       setError(null);
       setMessageError(null);
       setConfirmingSale(true);
@@ -482,60 +482,56 @@ export default function AssistantPage() {
   const emptyState = (
     <section
       aria-label="Conversación vacía"
-      className="flex flex-1 flex-col items-center justify-center px-2 py-10 text-center"
+      className="flex flex-1 flex-col items-center justify-center px-3 py-8 text-center sm:py-14"
       data-testid="assistant-empty-state"
     >
-      <p className="text-[28px] font-semibold tracking-tight text-white sm:text-3xl">
+      <p className="text-[1.75rem] font-semibold tracking-tight text-white sm:text-[2rem]">
         {name ? `Buenos días, ${name}.` : 'Buenos días.'}
       </p>
-      <p className="mt-3 text-base text-white/55">¿Qué necesitas hacer?</p>
-      <p className="mt-2 text-sm text-white/35">Escribe o habla con WristOS.</p>
-      <ul className="mt-8 max-w-sm space-y-2 text-left text-sm text-white/40">
+      <p className="mt-2.5 text-[15px] text-white/50">¿Qué necesitas hacer?</p>
+      <div className="mt-8 hidden max-w-xs space-y-1.5 text-left text-[13px] text-white/30 min-[480px]:block">
+        <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-white/25">Puedes decir</p>
         {firstUseExamples.map((example) => (
-          <li key={example}>
-            <button
-              type="button"
-              onClick={() => setComposerValue(example)}
-              className="w-full rounded-xl px-3 py-2 text-left transition hover:bg-white/[0.04] hover:text-white/70"
-            >
-              “{example}”
-            </button>
-          </li>
+          <button
+            key={example}
+            type="button"
+            onClick={() => setComposerValue(example)}
+            className="block w-full rounded-lg px-2 py-1.5 text-left transition hover:bg-white/[0.03] hover:text-white/55"
+          >
+            “{example}”
+          </button>
         ))}
-      </ul>
+      </div>
     </section>
   );
 
   return (
     <div
-      className="mx-auto flex w-full max-w-[880px] flex-col"
-      style={{ minHeight: 'calc(100dvh - 6.5rem)' }}
+      className="mx-auto flex w-full max-w-[860px] flex-col"
+      style={{ minHeight: 'calc(100dvh - 5.75rem)' }}
       data-testid="assistant-chat-shell"
     >
-      <header className="mb-3 flex shrink-0 items-center justify-between gap-3 px-0.5">
-        <div className="flex items-center gap-2.5">
-          <h1 className="text-lg font-semibold tracking-tight">Asistente</h1>
+      <header className="mb-1 flex h-9 shrink-0 items-center justify-between gap-3 px-0.5">
+        <div className="flex items-center gap-2">
+          <h1 className="text-[15px] font-medium tracking-tight text-white/90">Asistente</h1>
           <span
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[11px] text-white/50"
-            aria-label="Asistente listo"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden />
-            Listo
-          </span>
+            className="h-1.5 w-1.5 rounded-full bg-emerald-400/90"
+            aria-label="Asistente disponible"
+          />
         </div>
         {hasConversation ? (
           <button
             type="button"
             onClick={startNewConversation}
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-white/55 transition hover:border-white/20 hover:text-white/80"
+            className="rounded-full px-2.5 py-1 text-[11px] text-white/40 transition hover:text-white/70"
           >
-            Nueva conversación
+            Nueva
           </button>
         ) : null}
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1">
+        <div className={`min-h-0 flex-1 ${hasConversation ? 'pb-1' : ''}`}>
           <ConversationThread
             history={history}
             pending={busy}
@@ -561,7 +557,6 @@ export default function AssistantPage() {
         </div>
 
         <ConversationComposer
-          variant="bar"
           value={composerValue}
           onChange={setComposerValue}
           onSubmit={submitComposer}

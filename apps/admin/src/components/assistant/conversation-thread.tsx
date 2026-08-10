@@ -102,19 +102,19 @@ export function ConversationThread({
   let lastGroup: string | null = null;
 
   return (
-    <section aria-label="Conversaciones" className="relative space-y-3">
+    <section aria-label="Conversaciones" className="relative space-y-4">
       {chronological.map((item) => {
         const at = timestamps[item.id] ?? now;
         const group = conversationGroupFor(at, now);
         const separator = group !== lastGroup ? <TimelineSeparator key={`sep-${group}-${item.id}`} label={group} /> : null;
         lastGroup = group;
         return (
-          <div key={item.id} className="space-y-2">
+          <div key={item.id} className="space-y-1.5">
             {separator}
             <div className="flex items-start justify-between gap-2">
               <UserMessage>{item.label}</UserMessage>
             </div>
-            <p className="pr-1 text-right text-[10.5px] text-white/30">{formatRelativeTime(at, now)}</p>
+            <p className="pr-1 text-right text-[10px] text-white/20">{formatRelativeTime(at, now)}</p>
             {item.intent === 'UNKNOWN' ? (
               // The natural-language endpoint never resolved this to a real
               // business intent — there is no BusinessActionId to validate
