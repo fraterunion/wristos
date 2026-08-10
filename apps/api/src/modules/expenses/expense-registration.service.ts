@@ -41,10 +41,30 @@ export type RegisterExpenseResult = {
   replayed: boolean;
 };
 
+export type ReverseExpenseCausality =
+  | 'APPLIED'
+  | 'SAME_COMMAND'
+  | 'EXTERNAL';
+
 export type ReverseExpenseResult = {
   expense: OperatingExpense;
   treasuryEntry: TreasuryEntry | null;
   alreadyReversed: boolean;
+  /**
+   * Commit 26A causality:
+   * - APPLIED: this call soft-deleted the expense
+   * - SAME_COMMAND: already reversed with the same reversalIdempotencyKey (AI recovery MATCH)
+   * - EXTERNAL: already reversed by a different/unknown actor (human or other ActionRun)
+   */
+  causality: ReverseExpenseCausality;
+};
+
+export type ReverseExpenseOptions = {
+  /**
+   * Durable reverse causality. Future AI: `ai-action-run:<actionRunId>`.
+   * Never accept from provider/user — server-owned only.
+   */
+  reversalIdempotencyKey?: string | null;
 };
 
 const ALLOWED_SOURCES: ExpenseMoneySource[] = ['CASH', 'BANK', 'CESAR'];
@@ -259,11 +279,16 @@ export class ExpenseRegistrationService {
    *
    * Treasury convention: soft-delete original OUTFLOW (not a compensating INFLOW).
    * Legacy OpEx rows without provenance: soft-delete expense only — never invents Treasury.
+   *
+   * Commit 26A: optional `reversalIdempotencyKey` stamped atomically with deletedAt so
+   * AI ActionRun recovery can distinguish SAME_COMMAND vs EXTERNAL reverse.
    */
   async reverse(
     tenantId: string,
     expenseId: string,
+    options?: ReverseExpenseOptions,
   ): Promise<ReverseExpenseResult> {
+    const reversalKey = normalizeReversalKey(options?.reversalIdempotencyKey);
     const existing = await this.prisma.operatingExpense.findFirst({
       where: { id: expenseId, tenantId },
     });
@@ -280,26 +305,67 @@ export class ExpenseRegistrationService {
         expense: existing,
         treasuryEntry: treasury,
         alreadyReversed: true,
+        causality: classifyAlreadyReversedCausality(
+          existing.reversalIdempotencyKey,
+          reversalKey,
+        ),
       };
     }
 
+    const now = new Date();
     const result = await this.prisma.$transaction(async (tx) => {
-      const expense = await tx.operatingExpense.update({
-        where: { id: expenseId },
-        data: { deletedAt: new Date() },
+      const claimed = await tx.operatingExpense.updateMany({
+        where: { id: expenseId, tenantId, deletedAt: null },
+        data: {
+          deletedAt: now,
+          ...(reversalKey ? { reversalIdempotencyKey: reversalKey } : {}),
+        },
+      });
+
+      if (claimed.count === 0) {
+        const raced = await tx.operatingExpense.findFirst({
+          where: { id: expenseId, tenantId },
+        });
+        if (!raced) throw new NotFoundException('Expense not found');
+        const treasury = await tx.treasuryEntry.findFirst({
+          where: {
+            tenantId,
+            provenanceKey: operatingExpenseOutflowProvenanceKey(expenseId),
+          },
+        });
+        return {
+          expense: raced,
+          treasury,
+          alreadyReversed: true as const,
+          causality: classifyAlreadyReversedCausality(
+            raced.reversalIdempotencyKey,
+            reversalKey,
+          ),
+        };
+      }
+
+      const expense = await tx.operatingExpense.findFirstOrThrow({
+        where: { id: expenseId, tenantId },
       });
       const treasury = await this.treasuryService.softDeleteOperatingExpenseOutflow({
         tenantId,
         operatingExpenseId: expenseId,
+        reversalIdempotencyKey: reversalKey,
         tx,
       });
-      return { expense, treasury };
+      return {
+        expense,
+        treasury,
+        alreadyReversed: false as const,
+        causality: 'APPLIED' as const,
+      };
     });
 
     return {
       expense: result.expense,
       treasuryEntry: result.treasury,
-      alreadyReversed: false,
+      alreadyReversed: result.alreadyReversed,
+      causality: result.causality,
     };
   }
 
@@ -354,4 +420,20 @@ export class ExpenseRegistrationService {
     if (notes) return `Gasto ${category}: ${notes}`.slice(0, 240);
     return `Gasto ${category}`;
   }
+}
+
+function normalizeReversalKey(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function classifyAlreadyReversedCausality(
+  existingKey: string | null | undefined,
+  requestedKey: string | null,
+): ReverseExpenseCausality {
+  if (requestedKey && existingKey && existingKey === requestedKey) {
+    return 'SAME_COMMAND';
+  }
+  return 'EXTERNAL';
 }

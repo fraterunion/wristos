@@ -33,6 +33,7 @@ type TreasRow = {
   description: string | null;
   provenanceKey: string;
   deletedAt: Date | null;
+  reversalIdempotencyKey?: string | null;
 };
 
 describe('TreasuryTransferService — canonical internal liquidity transfer', () => {
@@ -367,12 +368,43 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
 
     const rev = await ctx.service.reverse('t1', reg.transferId);
     expect(rev.reversed).toBe(true);
+    expect(rev.causality).toBe('APPLIED');
     expect(ctx.liveLegs()).toHaveLength(0);
     expect(ctx.totalLiquidity().toString()).toBe('0');
 
     const again = await ctx.service.reverse('t1', reg.transferId);
     expect(again.alreadyReversed).toBe(true);
     expect(again.reversed).toBe(false);
+    expect(again.causality).toBe('EXTERNAL');
+  });
+
+  it('reverse causality: SAME_COMMAND vs EXTERNAL', async () => {
+    const ctx = build();
+    const reg = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 50000,
+      registerIdempotencyKey: 'rev-causality-1',
+    });
+    const key = 'ai-action-run:ar-transfer-rev-1';
+    const first = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: key,
+    });
+    expect(first.causality).toBe('APPLIED');
+    expect(first.outflowEntry?.reversalIdempotencyKey).toBe(key);
+    expect(first.inflowEntry?.reversalIdempotencyKey).toBe(key);
+
+    const same = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: key,
+    });
+    expect(same.alreadyReversed).toBe(true);
+    expect(same.causality).toBe('SAME_COMMAND');
+
+    const other = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: 'ai-action-run:other',
+    });
+    expect(other.alreadyReversed).toBe(true);
+    expect(other.causality).toBe('EXTERNAL');
   });
 
   it('reverse missing transfer → NotFound', async () => {

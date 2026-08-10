@@ -32,6 +32,8 @@ import { CreateClientWriteBinding } from './bindings/write/create-client.binding
 import { CreateManualAccountEntityResolver } from './bindings/write/create-manual-account-entity-resolver.service';
 import { CreatePayableWriteBinding } from './bindings/write/create-payable.binding';
 import { CreateReceivableWriteBinding } from './bindings/write/create-receivable.binding';
+import { ExpenseReversalTargetResolver } from './reversals/expense-reversal-target-resolver.service';
+import { TransferReversalTargetResolver } from './reversals/transfer-reversal-target-resolver.service';
 import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
 import { RegisterCapitalContributionWriteBinding } from './bindings/write/register-capital-contribution.binding';
 import { RegisterCapitalDistributionWriteBinding } from './bindings/write/register-capital-distribution.binding';
@@ -106,6 +108,8 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     UpdateClientEntityResolver,
     CapitalInvestorEntityResolver,
     CreateManualAccountEntityResolver,
+    ExpenseReversalTargetResolver,
+    TransferReversalTargetResolver,
     CompositionService,
     CompositionOrchestrator,
     WriteCapabilityBindingRegistry,

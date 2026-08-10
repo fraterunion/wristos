@@ -42,12 +42,32 @@ export type RegisterTreasuryTransferResult = {
   replayed: boolean;
 };
 
+export type ReverseTreasuryTransferCausality =
+  | 'APPLIED'
+  | 'SAME_COMMAND'
+  | 'EXTERNAL';
+
 export type ReverseTreasuryTransferResult = {
   transferId: string;
   reversed: boolean;
   alreadyReversed: boolean;
+  /**
+   * Commit 26A causality:
+   * - APPLIED: this call soft-deleted both legs
+   * - SAME_COMMAND: already reversed with the same reversalIdempotencyKey
+   * - EXTERNAL: already reversed by a different/unknown actor
+   */
+  causality: ReverseTreasuryTransferCausality;
   outflowEntry: TreasuryEntry | null;
   inflowEntry: TreasuryEntry | null;
+};
+
+export type ReverseTreasuryTransferOptions = {
+  /**
+   * Durable reverse causality. Future AI: `ai-action-run:<actionRunId>`.
+   * Never accept from provider/user — server-owned only.
+   */
+  reversalIdempotencyKey?: string | null;
 };
 
 const ALLOWED: ReadonlySet<TreasuryTransferAccount> = new Set([
@@ -247,11 +267,13 @@ export class TreasuryTransferService {
   async reverse(
     tenantId: string,
     transferId: string,
+    options?: ReverseTreasuryTransferOptions,
   ): Promise<ReverseTreasuryTransferResult> {
     const logicalKey = String(transferId ?? '').trim();
     if (!logicalKey) {
       throw new BadRequestException('transferId is required');
     }
+    const reversalKey = normalizeTransferReversalKey(options?.reversalIdempotencyKey);
     const outflowKey = treasuryTransferOutflowProvenanceKey(logicalKey);
     const inflowKey = treasuryTransferInflowProvenanceKey(logicalKey);
 
@@ -278,6 +300,10 @@ export class TreasuryTransferService {
             transferId: logicalKey,
             reversed: false,
             alreadyReversed: true,
+            causality: classifyTransferAlreadyReversedCausality(
+              outflow.reversalIdempotencyKey ?? inflow.reversalIdempotencyKey,
+              reversalKey,
+            ),
             outflowEntry: outflow,
             inflowEntry: inflow,
           };
@@ -289,19 +315,21 @@ export class TreasuryTransferService {
         }
 
         const now = new Date();
+        const stamp = reversalKey ? { reversalIdempotencyKey: reversalKey } : {};
         const outflowEntry = await tx.treasuryEntry.update({
           where: { id: outflow.id },
-          data: { deletedAt: now },
+          data: { deletedAt: now, ...stamp },
         });
         const inflowEntry = await tx.treasuryEntry.update({
           where: { id: inflow.id },
-          data: { deletedAt: now },
+          data: { deletedAt: now, ...stamp },
         });
 
         return {
           transferId: logicalKey,
           reversed: true,
           alreadyReversed: false,
+          causality: 'APPLIED' as const,
           outflowEntry,
           inflowEntry,
         };
@@ -396,4 +424,20 @@ export class TreasuryTransferService {
       replayed: true,
     };
   }
+}
+
+function normalizeTransferReversalKey(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function classifyTransferAlreadyReversedCausality(
+  existingKey: string | null | undefined,
+  requestedKey: string | null,
+): ReverseTreasuryTransferCausality {
+  if (requestedKey && existingKey && existingKey === requestedKey) {
+    return 'SAME_COMMAND';
+  }
+  return 'EXTERNAL';
 }

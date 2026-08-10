@@ -1167,6 +1167,10 @@ model OperatingExpense {
   /// Durable registration idempotency (manual + future AI ActionRun marker).
   /// Example future AI key: `ai-action-run:<actionRunId>`. Nullable; no backfill.
   registerIdempotencyKey String?
+  /// Durable reverse causality (Commit 26A). Future AI: `ai-action-run:<actionRunId>`.
+  /// Distinguishes AI reverse+crash recovery from independent human reverse.
+  /// Nullable; no backfill. Set atomically with deletedAt on reverse.
+  reversalIdempotencyKey String?
   deletedAt   DateTime?
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
@@ -1176,6 +1180,7 @@ model OperatingExpense {
   accountEntries AccountEntry[]
 
   @@unique([tenantId, registerIdempotencyKey])
+  @@unique([tenantId, reversalIdempotencyKey])
   @@index([tenantId])
   @@index([tenantId, category])
   @@index([tenantId, expenseDate])
@@ -1517,6 +1522,11 @@ model TreasuryEntry {
   /// Nullable for legacy / non-keyed rows. Unique per tenant when set.
   provenanceKey    String?
 
+  /// Durable reverse causality (Commit 26A). Future AI: `ai-action-run:<actionRunId>`.
+  /// Transfer reverses stamp BOTH legs with the same key; uniqueness is per direction.
+  /// Expense OUTFLOW may also carry the OpEx reverse key. Nullable; no backfill.
+  reversalIdempotencyKey String?
+
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -1529,6 +1539,7 @@ model TreasuryEntry {
   physicalCashBalanceAdjustment PhysicalCashBalanceAdjustment?
 
   @@unique([tenantId, provenanceKey])
+  @@unique([tenantId, reversalIdempotencyKey, direction])
   @@index([tenantId])
   @@index([tenantId, account])
   @@index([tenantId, account, direction])

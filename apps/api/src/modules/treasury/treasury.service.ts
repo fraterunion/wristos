@@ -399,6 +399,7 @@ export class TreasuryService {
   async softDeleteOperatingExpenseOutflow(args: {
     tenantId: string;
     operatingExpenseId: string;
+    reversalIdempotencyKey?: string | null;
     tx?: Prisma.TransactionClient;
   }) {
     const db: DbClient = args.tx ?? this.prisma;
@@ -407,9 +408,17 @@ export class TreasuryService {
       where: { tenantId: args.tenantId, provenanceKey, deletedAt: null },
     });
     if (!existing) return null;
+    const reversalKey =
+      typeof args.reversalIdempotencyKey === 'string' &&
+      args.reversalIdempotencyKey.trim()
+        ? args.reversalIdempotencyKey.trim()
+        : null;
     return db.treasuryEntry.update({
       where: { id: existing.id },
-      data: { deletedAt: new Date() },
+      data: {
+        deletedAt: new Date(),
+        ...(reversalKey ? { reversalIdempotencyKey: reversalKey } : {}),
+      },
     });
   }
 
