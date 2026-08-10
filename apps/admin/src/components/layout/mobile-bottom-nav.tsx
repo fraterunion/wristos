@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Bot, Boxes, LayoutDashboard, Menu, WalletCards, X } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import { useAuthContext } from '@/lib/auth-context';
 
 const primary = [
   { href: '/assistant', label: 'Asistente', icon: Bot },
@@ -19,7 +21,15 @@ const more = [
 
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { logout } = useAuthContext();
   const [open, setOpen] = useState(false);
+
+  const onLogout = async () => {
+    setOpen(false);
+    await logout();
+    router.replace('/login');
+  };
 
   return (
     <>
@@ -43,6 +53,13 @@ export function MobileBottomNav() {
                 </Link>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={() => void onLogout()}
+              className="mt-3 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-white/70"
+            >
+              Cerrar sesión
+            </button>
           </section>
         </div>
       ) : null}

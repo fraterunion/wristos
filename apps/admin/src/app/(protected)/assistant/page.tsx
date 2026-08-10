@@ -509,7 +509,7 @@ export default function AssistantPage() {
   return (
     <div
       className="mx-auto flex w-full max-w-[880px] flex-col"
-      style={{ minHeight: 'calc(100dvh - 8.5rem)' }}
+      style={{ minHeight: 'calc(100dvh - 6.5rem)' }}
       data-testid="assistant-chat-shell"
     >
       <header className="mb-3 flex shrink-0 items-center justify-between gap-3 px-0.5">
