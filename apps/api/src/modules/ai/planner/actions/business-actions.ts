@@ -11,34 +11,46 @@ const args = (entities: StructuredEntities): Record<string, JsonValue> => Object
 const warning = (code: string, message: string, predicate: (entities: StructuredEntities) => boolean): WarningRule => ({ code, evaluate: (entities) => predicate(entities) ? { code, message } : null });
 
 const questions: Record<string, string> = {
-  watchId: 'Which watch should be used?', customerId: 'Who is the customer?', price: 'What is the price?', currency: 'What currency applies?',
-  date: 'What date applies?', accountId: 'Which account should be used?', amount: 'What amount should be applied?', destination: 'Where should the payment be received?',
-  payableAccountId: 'Which payable account should receive the settlement?',
-  exchangeRateUsed: '¿Cuál tipo de cambio MXN aplica para este pago en USD?',
-  watch: '¿Qué reloj compraste? (marca y modelo)',
+  watchId: '¿Qué reloj fue?',
+  customerId: '¿A quién se lo vendiste?',
+  price: '¿Por cuánto lo vendiste?',
+  currency: '¿Fue en pesos o en dólares?',
+  date: '¿Qué fecha aplica?',
+  accountId: '¿Cuál cuenta aplica?',
+  amount: '¿De cuánto fue?',
+  destination: '¿Dónde recibiste el dinero?',
+  payableAccountId: '¿Cuál cuenta por pagar debe recibir el abono?',
+  exchangeRateUsed: '¿Qué tipo de cambio usaste?',
+  watch: '¿Qué reloj compraste?',
   brand: '¿Qué marca?',
   model: '¿Qué modelo?',
   cost: '¿Cuánto costó la compra?',
-  paymentMode: '¿Cómo lo pagaste? (pagado / a crédito / parcial)',
+  paymentMode: '¿La compra fue pagada, a crédito o parcialmente?',
   acquiredAt: '¿Qué fecha de compra?',
-  sourceAccount: '¿Desde dónde lo pagaste? (Efectivo, Bancos o Cuenta César)',
-  destinationAccount: '¿Hacia qué cuenta? (Efectivo, Bancos o Cuenta César)',
-  initialPaymentAmount: '¿Cuánto pagaste ahora?',
-  seller: '¿A quién le compraste?',
-  concept: 'What is the expense for?',
-  category: '¿Cuál es la categoría del gasto?',
-  source: '¿Desde dónde lo pagaste?',
-  sourceAccountId: 'Which account is funding the settlement?',
-  destinationAccountId: 'Which account receives the settlement?', asset: 'Which crypto asset?', quantity: 'What quantity applies?', unitPrice: 'What is the crypto unit price?',
-  year: 'Which year?', month: 'Which month?', query: 'What should be searched?', clientId: 'Which client?',
+  sourceAccount: '¿De dónde salió el dinero?',
+  destinationAccount: '¿A qué cuenta va?',
+  initialPaymentAmount: '¿Cuánto pagaste al momento?',
+  seller: '¿A quién se lo compraste?',
+  concept: '¿En qué fue el gasto?',
+  category: '¿Qué tipo de gasto fue?',
+  source: '¿Lo pagaste en Efectivo, Bancos o Cuenta César?',
+  sourceAccountId: '¿De qué cuenta sale?',
+  destinationAccountId: '¿A qué cuenta va?',
+  asset: '¿Qué activo crypto?',
+  quantity: '¿Qué cantidad aplica?',
+  unitPrice: '¿Cuál es el precio unitario?',
+  year: '¿Qué año?',
+  month: '¿Qué mes?',
+  query: '¿Qué busco?',
+  clientId: '¿Qué cliente?',
   name: '¿Cómo se llama el cliente?',
   email: '¿Cuál es el correo?',
   phone: '¿Cuál es el teléfono?',
   allowProbableDuplicate: 'Encontré clientes con nombre parecido. ¿Creo uno nuevo de todos modos?',
-  investorId: '¿De qué socio es la aportación?',
-  account: '¿Cuál es la cuenta de referencia? (Efectivo, Bancos o Cuenta César)',
+  investorId: '¿Para qué socio?',
+  account: '¿Cuál es la cuenta de referencia?',
   contributedAt: '¿Qué fecha tiene la aportación?',
-  counterpartyName: '¿Quién es la contraparte de la cuenta?',
+  counterpartyName: '¿Quién es la contraparte?',
 };
 
 interface ActionOptions {
@@ -65,7 +77,7 @@ const define = (options: ActionOptions): BusinessActionDefinition => {
     confirmationTier: options.tier,
     requiredEntities: required,
     optionalEntities: optional,
-    clarificationQuestions: Object.fromEntries(required.map((key) => [key, questions[key] ?? `Provide ${key}.`])),
+    clarificationQuestions: Object.fromEntries(required.map((key) => [key, questions[key] ?? `Necesito un dato más para continuar.`])),
     warningRules: options.warnings ?? [],
     conditionalMissing: options.conditionalMissing,
     previewBuilder: (entities: StructuredEntities, warnings: BusinessWarning[]) => ({
@@ -1258,7 +1270,7 @@ function registerExpenseConditionalMissing(
   if (!present(entities.source)) {
     missing.push({
       entity: 'source',
-      question: '¿Desde dónde lo pagaste? (Efectivo, Bancos o Cuenta César)',
+      question: '¿Lo pagaste en Efectivo, Bancos o Cuenta César?',
     });
   }
   if (!present(entities.category)) {
@@ -1266,12 +1278,12 @@ function registerExpenseConditionalMissing(
       entity: 'category',
       question:
         (typeof entities.categoryClarifyReason === 'string' && entities.categoryClarifyReason) ||
-        '¿Cuál es la categoría del gasto? (Gasolina, Casetas, Marketing, Otro, …)',
+        '¿Qué tipo de gasto fue?',
     });
   }
   const amount = moneyNumber(entities.amount);
   if (amount !== null && amount <= 0) {
-    missing.push({ entity: 'amount', question: 'El monto del gasto debe ser mayor que cero.' });
+    missing.push({ entity: 'amount', question: 'No entendí bien el monto. ¿De cuánto fue el gasto?' });
   }
   return missing;
 }

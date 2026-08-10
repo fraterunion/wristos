@@ -21,7 +21,14 @@ export type ConversationBlock =
   | { kind: 'text'; id: string; text: string }
   | { kind: 'summary'; id: string; value: string }
   | { kind: 'breakdown'; id: string; items: Array<{ label: string; value: string }> }
-  | { kind: 'question'; id: string; text: string; fields: Array<{ key: string; question: string }> }
+  | {
+      kind: 'question';
+      id: string;
+      text: string;
+      fields: Array<{ key: string; question: string }>;
+      choices?: Array<{ id: string; label: string; value: string }>;
+      fieldKey?: string;
+    }
   | { kind: 'choices'; id: string; options: Array<{ id: string; label: string; context?: string }>; allowOther: boolean }
   | {
       kind: 'preview';
@@ -514,27 +521,67 @@ function entityListBlocks(intent: BusinessActionId, response: StructuredAssistan
   return [{ kind: 'text', id: blockId(response, 'text'), text: 'No encontré resultados.' }];
 }
 
+function looksTechnicalClarification(text: string): boolean {
+  return /has no currency|no treasury account|MISSING_|cashAccount|paymentMode|exchangeRateUsed|Provide\s+\w|field not specified|Amount\s*'|Could be USD|MXN,\s*CAD|\([A-Z_]{3,}\)/i.test(
+    text,
+  );
+}
+
 function missingFieldsBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
   const groups = asArray(response.payload.groups);
   const fields = groups.flatMap((group) => {
     if (!isRecord(group) || !Array.isArray(group.fields)) return [];
     return group.fields.flatMap((field) => {
       if (!isRecord(field) || typeof field.key !== 'string') return [];
-      return [{ key: field.key, question: asString(field.question) ?? field.key }];
+      const question = asString(field.question) ?? field.key;
+      return [{ key: field.key, question }];
     });
   });
-  const message =
-    asString(response.payload.message) ??
-    'Necesito algunos datos para continuar.';
-  if (!fields.length) {
-    return [{ kind: 'text', id: blockId(response, 'text'), text: message }];
+
+  const rawMessage = asString(response.payload.message);
+  const firstField = fields[0];
+  let text =
+    (rawMessage && !looksTechnicalClarification(rawMessage) ? rawMessage : null) ??
+    (firstField && !looksTechnicalClarification(firstField.question) ? firstField.question : null) ??
+    'Necesito un dato más para continuar.';
+
+  if (looksTechnicalClarification(text)) {
+    text = 'Necesito un dato más para continuar.';
   }
+
+  const choiceField = groups.flatMap((group) => {
+    if (!isRecord(group) || !Array.isArray(group.fields)) return [];
+    return group.fields.flatMap((field) => {
+      if (!isRecord(field) || typeof field.key !== 'string') return [];
+      if (!Array.isArray(field.choices)) return [];
+      return [
+        {
+          key: field.key,
+          choices: field.choices.flatMap((choice) => {
+            if (!isRecord(choice)) return [];
+            const label = asString(choice.label);
+            const value = asString(choice.value);
+            if (!label || !value) return [];
+            return [{ id: value, label, value }];
+          }),
+        },
+      ];
+    });
+  })[0];
+
+  if (!fields.length && !choiceField) {
+    return [{ kind: 'text', id: blockId(response, 'text'), text }];
+  }
+
   return [
     {
       kind: 'question',
       id: blockId(response, 'question'),
-      text: message,
-      fields,
+      text,
+      // Keep fields for fail-closed diagnostics only — UI no longer renders mini-forms.
+      fields: firstField ? [firstField] : [],
+      fieldKey: choiceField?.key ?? firstField?.key,
+      choices: choiceField?.choices,
     },
   ];
 }

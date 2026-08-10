@@ -300,6 +300,49 @@ test.describe('Assistant conversation surface', () => {
     await expect(scope.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
   });
 
+  test('expense clarification asks currency naturally without Continuar form', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'REGISTER_EXPENSE',
+      response: baseResponse({
+        interactionState: 'NEEDS_INPUT',
+        responseType: 'MISSING_FIELDS_CARD',
+        payload: {
+          message: '¿Los 500 fueron en pesos o en dólares?',
+          clarificationField: 'currency',
+          groups: [
+            {
+              id: 'required',
+              label: 'Aclaración',
+              fields: [
+                {
+                  key: 'currency',
+                  question: '¿Los 500 fueron en pesos o en dólares?',
+                  choices: [
+                    { label: 'Pesos', value: 'MXN' },
+                    { label: 'Dólares', value: 'USD' },
+                  ],
+                },
+              ],
+            },
+          ],
+          unchanged: 'No se ejecutó ninguna acción.',
+        },
+      }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    await sendMessage(page, 'Gasté 500 en gasolina');
+    const scope = shell(page);
+    await expect(scope.getByText('¿Los 500 fueron en pesos o en dólares?')).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Pesos' })).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Dólares' })).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Continuar' })).toHaveCount(0);
+    await expect(page.getByText('has no currency specified')).toHaveCount(0);
+    await expect(page.getByText('cashAccount')).toHaveCount(0);
+    await expect(page.getByText('CAD')).toHaveCount(0);
+    await expect(page.locator('input[required]')).toHaveCount(0);
+  });
+
   test('malformed write-completion response fails closed', async ({ page }) => {
     await mockAssistantMessage(page, () => ({
       resolvedIntent: 'REGISTER_SALE',

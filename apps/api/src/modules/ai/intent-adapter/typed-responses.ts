@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { StructuredAssistantResponse } from '../assistant/structured-assistant.types';
+import { buildConversationalMissingFieldsPayload } from '../clarification/clarification-presenter';
 import { IntentAdapterOutcome } from './intent-adapter.service';
 import { ConfidencePolicyDecision } from './safety';
 
@@ -48,7 +49,11 @@ export function buildProviderFailureResponse(outcome: Extract<IntentAdapterOutco
   };
 }
 
-export function buildPolicyResponse(policy: Exclude<ConfidencePolicyDecision, { action: 'PROCEED' }>, context: ResponseContext): StructuredAssistantResponse {
+export function buildPolicyResponse(
+  policy: Exclude<ConfidencePolicyDecision, { action: 'PROCEED' }>,
+  context: ResponseContext,
+  meta?: { capability?: string; entities?: Record<string, unknown> },
+): StructuredAssistantResponse {
   if (policy.action === 'REJECT_UNKNOWN') {
     return {
       ...base(context),
@@ -75,28 +80,21 @@ export function buildPolicyResponse(policy: Exclude<ConfidencePolicyDecision, { 
       },
     };
   }
-  // CLARIFY_AMBIGUITY
+  // CLARIFY_AMBIGUITY — one natural question at a time; never raw LLM reason text.
+  const presented = buildConversationalMissingFieldsPayload({
+    capability: meta?.capability ?? 'UNKNOWN',
+    missing: policy.ambiguities.map((ambiguity) => ({
+      entity: ambiguity.field,
+      question: ambiguity.reason,
+    })),
+    entities: meta?.entities,
+  });
   return {
     ...base(context),
     interactionState: 'NEEDS_INPUT',
     responseType: 'MISSING_FIELDS_CARD',
     payload: {
-      title: 'Necesito un poco más de información',
-      message: 'Necesito un poco más de información para continuar.',
-      groups: [
-        {
-          id: 'ambiguities',
-          label: 'Aclaraciones necesarias',
-          fields: policy.ambiguities.map((ambiguity) => ({
-            key: ambiguity.field,
-            question: ambiguity.candidates?.length
-              ? `${ambiguity.reason} (${ambiguity.candidates.join(', ')})`
-              : ambiguity.reason,
-          })),
-        },
-      ],
-      unchanged: 'No se ejecutó ninguna acción.',
-      nextAction: 'Responde con la aclaración solicitada o usa una acción estructurada.',
+      ...presented,
     },
   };
 }

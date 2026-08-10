@@ -37,11 +37,11 @@ export function enrichExpenseEntities(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...entities };
 
-  if (next.amount != null && (next.currency == null || next.currency === '')) {
-    next.currency = 'MXN';
-  }
-  if (typeof next.currency === 'string') {
+  // Do not silently invent currency for a required field — ask conversationally.
+  if (typeof next.currency === 'string' && next.currency.trim()) {
     next.currency = next.currency.trim().toUpperCase();
+  } else {
+    delete next.currency;
   }
 
   const concept = asString(next.concept) ?? asString(next.notes);

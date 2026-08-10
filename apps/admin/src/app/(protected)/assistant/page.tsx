@@ -278,6 +278,16 @@ export default function AssistantPage() {
 
   const selectClient = (id: string, label: string) => {
     const latest = history[0];
+    // Clarification closed choices: submit the natural label through the same NL pipeline.
+    if (latest?.response.responseType === 'MISSING_FIELDS_CARD') {
+      const action = createAssistantMessageAction({
+        text: label,
+        conversationId: workspace.conversationId,
+        workspaceId: workspace.workspaceId,
+      });
+      void runMessageAction(action, label);
+      return;
+    }
     const pickerWrite =
       latest?.response.responseType === 'ENTITY_PICKER' &&
       (id.startsWith('__COMPOSITION_') ||

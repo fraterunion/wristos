@@ -8,6 +8,7 @@ import {
   StructuredAssistantRequest,
   StructuredAssistantResponse,
 } from '../assistant/structured-assistant.types';
+import { buildConversationalMissingFieldsPayload } from '../clarification/clarification-presenter';
 import { JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
 import { BusinessExecutionPlan } from '../planner/planner.types';
@@ -486,6 +487,14 @@ export class CompositionOrchestrator {
     const executable = EXECUTABLE_WRITES.has(plan.businessAction);
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     if (plan.state === 'NEEDS_CLARIFICATION') {
+      const payload = buildConversationalMissingFieldsPayload({
+        capability: plan.businessAction,
+        missing: plan.missingEntities.map((item) => ({
+          entity: item.entity,
+          question: item.question,
+        })),
+        preface: preface.replace(/\.\s*$/, ''),
+      });
       return {
         requestId,
         conversationId: prepared.conversationId,
@@ -494,20 +503,8 @@ export class CompositionOrchestrator {
         interactionState: 'NEEDS_INPUT',
         responseType: 'MISSING_FIELDS_CARD',
         payload: {
-          title: 'Faltan datos para continuar',
-          groups: [
-            {
-              id: 'required',
-              label: 'Datos requeridos',
-              fields: plan.missingEntities.map((item) => ({
-                key: item.entity,
-                question: item.question,
-              })),
-            },
-          ],
-          message: `${preface} Faltan algunos datos.`,
+          ...payload,
           unchanged: 'No se ejecutó la acción principal.',
-          nextAction: 'Completa los campos indicados. La dependencia ya quedó resuelta.',
         },
         warnings: plan.warnings ?? [],
         suggestedActions: [],
