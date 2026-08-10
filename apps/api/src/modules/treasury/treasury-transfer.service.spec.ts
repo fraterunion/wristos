@@ -33,6 +33,7 @@ type TreasRow = {
   description: string | null;
   provenanceKey: string;
   deletedAt: Date | null;
+  reversalIdempotencyKey?: string | null;
 };
 
 describe('TreasuryTransferService — canonical internal liquidity transfer', () => {
@@ -97,6 +98,22 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
           const row = treasury.get(where.id);
           if (!row) throw new Error('missing');
           Object.assign(row, data);
+          return { ...row };
+        }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          let count = 0;
+          for (const t of treasury.values()) {
+            if (where.id && t.id !== where.id) continue;
+            if (where.tenantId && t.tenantId !== where.tenantId) continue;
+            if (where.deletedAt === null && t.deletedAt) continue;
+            Object.assign(t, data);
+            count += 1;
+          }
+          return { count };
+        }),
+        findFirstOrThrow: jest.fn(async ({ where }: any) => {
+          const row = treasury.get(where.id);
+          if (!row) throw new Error('missing');
           return { ...row };
         }),
       },
@@ -367,12 +384,121 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
 
     const rev = await ctx.service.reverse('t1', reg.transferId);
     expect(rev.reversed).toBe(true);
+    expect(rev.causality).toBe('APPLIED');
     expect(ctx.liveLegs()).toHaveLength(0);
     expect(ctx.totalLiquidity().toString()).toBe('0');
 
     const again = await ctx.service.reverse('t1', reg.transferId);
     expect(again.alreadyReversed).toBe(true);
     expect(again.reversed).toBe(false);
+    expect(again.causality).toBe('EXTERNAL');
+  });
+
+  it('reverse causality: SAME_COMMAND vs EXTERNAL', async () => {
+    const ctx = build();
+    const reg = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 50000,
+      registerIdempotencyKey: 'rev-causality-1',
+    });
+    const key = 'ai-action-run:ar-transfer-rev-1';
+    const first = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: key,
+    });
+    expect(first.causality).toBe('APPLIED');
+    expect(first.outflowEntry?.reversalIdempotencyKey).toBe(key);
+    expect(first.inflowEntry?.reversalIdempotencyKey).toBe(key);
+
+    const same = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: key,
+    });
+    expect(same.alreadyReversed).toBe(true);
+    expect(same.causality).toBe('SAME_COMMAND');
+
+    const other = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: 'ai-action-run:other',
+    });
+    expect(other.alreadyReversed).toBe(true);
+    expect(other.causality).toBe('EXTERNAL');
+  });
+
+  it('crash recovery + manual-before-retry + mismatched keys invariant', async () => {
+    const ctx = build();
+    const reg = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 12000,
+      registerIdempotencyKey: 'xfer-crash',
+    });
+    const k = 'ai-action-run:xfer-crash-1';
+    await ctx.service.reverse('t1', reg.transferId, { reversalIdempotencyKey: k });
+    expect((await ctx.service.classifyReversal('t1', reg.transferId, k)).kind).toBe(
+      'SAME_COMMAND',
+    );
+    const replay = await ctx.service.reverse('t1', reg.transferId, {
+      reversalIdempotencyKey: k,
+    });
+    expect(replay.causality).toBe('SAME_COMMAND');
+
+    const manual = await ctx.service.register('t1', {
+      sourceAccount: 'CASH',
+      destinationAccount: 'CESAR',
+      amount: 8000,
+      registerIdempotencyKey: 'xfer-manual',
+    });
+    await ctx.service.reverse('t1', manual.transferId);
+    expect((await ctx.service.classifyReversal('t1', manual.transferId, k)).kind).toBe(
+      'EXTERNAL',
+    );
+
+    // Force mismatched keys on a reversed pair → INVARIANT
+    const bad = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CESAR',
+      amount: 9000,
+      registerIdempotencyKey: 'xfer-mismatch',
+    });
+    await ctx.service.reverse('t1', bad.transferId, {
+      reversalIdempotencyKey: 'ai-action-run:match-a',
+    });
+    for (const t of ctx.treasury.values()) {
+      if (t.provenanceKey?.includes(bad.transferId) && t.direction === 'INFLOW') {
+        t.reversalIdempotencyKey = 'ai-action-run:match-b';
+      }
+    }
+    await expect(
+      ctx.service.reverse('t1', bad.transferId, {
+        reversalIdempotencyKey: 'ai-action-run:match-a',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect((await ctx.service.classifyReversal('t1', bad.transferId, k)).kind).toBe(
+      'INVARIANT',
+    );
+  });
+
+  it('different-key race: one APPLIED, one EXTERNAL, liquidity once', async () => {
+    const ctx = build();
+    const reg = await ctx.service.register('t1', {
+      sourceAccount: 'BANK',
+      destinationAccount: 'CASH',
+      amount: 44000,
+      registerIdempotencyKey: 'xfer-race',
+    });
+    const [a, b] = await Promise.all([
+      ctx.service.reverse('t1', reg.transferId, {
+        reversalIdempotencyKey: 'ai-action-run:race-1',
+      }),
+      ctx.service.reverse('t1', reg.transferId, {
+        reversalIdempotencyKey: 'ai-action-run:race-2',
+      }),
+    ]);
+    const applied = [a, b].filter((r) => r.causality === 'APPLIED');
+    const external = [a, b].filter((r) => r.causality === 'EXTERNAL');
+    expect(applied).toHaveLength(1);
+    expect(external).toHaveLength(1);
+    expect(ctx.liveLegs()).toHaveLength(0);
+    expect(ctx.totalLiquidity().toString()).toBe('0');
   });
 
   it('reverse missing transfer → NotFound', async () => {

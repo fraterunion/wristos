@@ -66,6 +66,17 @@ describe('ExpenseRegistrationService — canonical paid expense', () => {
           Object.assign(row, data);
           return row;
         }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          let count = 0;
+          for (const e of expenses.values()) {
+            if (where.id && e.id !== where.id) continue;
+            if (where.tenantId && e.tenantId !== where.tenantId) continue;
+            if (where.deletedAt === null && e.deletedAt) continue;
+            Object.assign(e, data);
+            count += 1;
+          }
+          return { count };
+        }),
       },
       treasuryEntry: {
         findFirst: jest.fn(async ({ where }: any) => {
@@ -114,6 +125,9 @@ describe('ExpenseRegistrationService — canonical paid expense', () => {
         for (const t of treasury.values()) {
           if (t.provenanceKey === key && !t.deletedAt) {
             t.deletedAt = new Date();
+            if (args.reversalIdempotencyKey) {
+              t.reversalIdempotencyKey = args.reversalIdempotencyKey;
+            }
             return t;
           }
         }
@@ -278,12 +292,72 @@ describe('ExpenseRegistrationService — canonical paid expense', () => {
     const created = await service.register('t1', baseInput);
     const reversed = await service.reverse('t1', created.expense.id);
     expect(reversed.alreadyReversed).toBe(false);
+    expect(reversed.causality).toBe('APPLIED');
     expect(reversed.expense.deletedAt).toBeTruthy();
     expect(treasuryService.softDeleteOperatingExpenseOutflow).toHaveBeenCalledWith(
       expect.objectContaining({ operatingExpenseId: created.expense.id }),
     );
     const again = await service.reverse('t1', created.expense.id);
     expect(again.alreadyReversed).toBe(true);
+    expect(again.causality).toBe('EXTERNAL');
+  });
+
+  it('reverse causality: SAME_COMMAND vs EXTERNAL', async () => {
+    const { service } = build();
+    const created = await service.register('t1', baseInput);
+    const key = 'ai-action-run:ar-rev-1';
+    const first = await service.reverse('t1', created.expense.id, {
+      reversalIdempotencyKey: key,
+    });
+    expect(first.causality).toBe('APPLIED');
+    expect(first.expense.reversalIdempotencyKey).toBe(key);
+
+    const same = await service.reverse('t1', created.expense.id, {
+      reversalIdempotencyKey: key,
+    });
+    expect(same.alreadyReversed).toBe(true);
+    expect(same.causality).toBe('SAME_COMMAND');
+
+    const other = await service.reverse('t1', created.expense.id, {
+      reversalIdempotencyKey: 'ai-action-run:other',
+    });
+    expect(other.alreadyReversed).toBe(true);
+    expect(other.causality).toBe('EXTERNAL');
+  });
+
+  it('crash recovery: commit then same K → SAME_COMMAND; human then K → EXTERNAL', async () => {
+    const { service } = build();
+    const a = await service.register('t1', { ...baseInput, amount: 1111, notes: 'crash-a' });
+    const k = 'ai-action-run:crash-1';
+    await service.reverse('t1', a.expense.id, { reversalIdempotencyKey: k });
+    expect((await service.classifyReversal('t1', a.expense.id, k)).kind).toBe('SAME_COMMAND');
+    const replay = await service.reverse('t1', a.expense.id, { reversalIdempotencyKey: k });
+    expect(replay.causality).toBe('SAME_COMMAND');
+
+    const b = await service.register('t1', { ...baseInput, amount: 2222, notes: 'human-b' });
+    await service.reverse('t1', b.expense.id); // manual, no key
+    expect((await service.classifyReversal('t1', b.expense.id, k)).kind).toBe('EXTERNAL');
+    const afterHuman = await service.reverse('t1', b.expense.id, { reversalIdempotencyKey: k });
+    expect(afterHuman.causality).toBe('EXTERNAL');
+  });
+
+  it('different-key race: loser is EXTERNAL and liquidity restored once', async () => {
+    const { service, treasury } = build();
+    const created = await service.register('t1', { ...baseInput, amount: 3333, notes: 'race' });
+    const [r1, r2] = await Promise.all([
+      service.reverse('t1', created.expense.id, {
+        reversalIdempotencyKey: 'ai-action-run:k1',
+      }),
+      service.reverse('t1', created.expense.id, {
+        reversalIdempotencyKey: 'ai-action-run:k2',
+      }),
+    ]);
+    const applied = [r1, r2].filter((r) => r.causality === 'APPLIED');
+    const external = [r1, r2].filter((r) => r.causality === 'EXTERNAL');
+    expect(applied).toHaveLength(1);
+    expect(external).toHaveLength(1);
+    const deletedTreasury = [...treasury.values()].filter((t) => t.deletedAt);
+    expect(deletedTreasury).toHaveLength(1);
   });
 
   it('legacy expense without Treasury soft-deletes without inventing reversal', async () => {
