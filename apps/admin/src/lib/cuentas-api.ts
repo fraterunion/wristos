@@ -186,8 +186,13 @@ export function createAccountEntry(payload: {
   dueDate?: string;
   notes?: string;
   clientId?: string;
+  registerIdempotencyKey?: string;
 }) {
-  return apiPost<AccountEntry>('/cuentas/entries', payload, AUTH);
+  // Commit 25B: explicit canonical routes (MANUAL source only).
+  const path =
+    payload.type === 'RECEIVABLE' ? '/cuentas/receivables' : '/cuentas/payables';
+  const { type: _type, ...body } = payload;
+  return apiPost<AccountEntry & { replayed?: boolean }>(path, body, AUTH);
 }
 
 export function updateAccountEntry(

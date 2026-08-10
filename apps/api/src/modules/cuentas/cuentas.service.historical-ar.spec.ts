@@ -40,6 +40,7 @@ describe('CuentasService.syncDealReceivable — historical exclusion', () => {
       } as never,
       { register: jest.fn() } as never,
       { register: jest.fn(), reverse: jest.fn() } as never,
+      { createReceivable: jest.fn(), createPayable: jest.fn(), cancelUnpaidManual: jest.fn() } as never,
     );
     return { service, prisma, accountEntry };
   }

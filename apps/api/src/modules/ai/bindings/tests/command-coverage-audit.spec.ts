@@ -98,4 +98,12 @@ describe('Command Coverage Audit 25A (architecture-only)', () => {
     expect(doc).toContain('CREATE_RECEIVABLE');
     expect(doc).toContain('no runtime capabilities added');
   });
+
+  it('keeps CREATE_RECEIVABLE / CREATE_PAYABLE unbound after domain gate 25B', () => {
+    const src = readFileSync(REGISTRY, 'utf8');
+    expect(src).not.toContain('CREATE_RECEIVABLE');
+    expect(src).not.toContain('CREATE_PAYABLE');
+    expect(src).not.toMatch(/CreateReceivableWriteBinding|CreatePayableWriteBinding/);
+    expect(src).toContain('this.bindings.size !== 10');
+  });
 });
