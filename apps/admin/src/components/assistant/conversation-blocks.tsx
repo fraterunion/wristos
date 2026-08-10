@@ -36,12 +36,12 @@ function MissingFieldsForm({
   };
 
   return (
-    <form className="mt-1 space-y-2.5" onSubmit={submit}>
+    <form className="mt-2 space-y-3" onSubmit={submit}>
       {fields.map((field) => (
         <label key={field.key} className="block">
-          <span className="mb-1 block text-[11px] font-medium text-white/50">{field.question}</span>
+          <span className="mb-1.5 block text-[13.5px] leading-5 text-white/75">{field.question}</span>
           <input
-            className="w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm outline-none ring-emerald-400/30 focus:ring-2"
+            className="w-full rounded-xl bg-white/[0.05] px-3 py-2.5 text-sm outline-none ring-1 ring-white/10 transition focus:ring-white/25"
             value={values[field.key] ?? ''}
             onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
             required
@@ -49,7 +49,7 @@ function MissingFieldsForm({
           />
         </label>
       ))}
-      <button type="submit" disabled={busy} className="min-h-9 rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-black disabled:opacity-50">
+      <button type="submit" disabled={busy} className="min-h-10 rounded-full bg-white px-4 py-2 text-[13px] font-semibold text-black disabled:opacity-50">
         Continuar
       </button>
     </form>
@@ -178,7 +178,9 @@ export function ConversationBlocks({
                     block.ctaKind === 'CONFIRM_EXPENSE' ||
                     block.ctaKind === 'CONFIRM_CLIENT' ||
                     block.ctaKind === 'CONFIRM_CLIENT_UPDATE' ||
-                    block.ctaKind === 'CONFIRM_PURCHASE') &&
+                    block.ctaKind === 'CONFIRM_PURCHASE' ||
+                    block.ctaKind === 'CONFIRM_RECEIVABLE' ||
+                    block.ctaKind === 'CONFIRM_PAYABLE') &&
                   block.actionRunId &&
                   block.planFingerprint &&
                   onConfirmSale

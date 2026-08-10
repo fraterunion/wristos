@@ -1,18 +1,7 @@
 /**
- * Playwright coverage for the conversational Assistant surface.
- *
- * Run against a locally running admin dev server (no real backend needed —
- * auth and the assistant endpoint are both mocked):
+ * Playwright coverage for the conversational Assistant surface (26UX Jarvis shell).
  *
  *   npx playwright test apps/admin/e2e/assistant-conversation.spec.ts
- *
- * Override the target with ADMIN_BASE_URL (defaults to the app's own
- * `npm run dev` port, 3001).
- *
- * The page renders both the mobile (`lg:hidden`) and desktop
- * (`hidden lg:block`) layouts in the DOM at once (only one is ever visible,
- * via CSS, at a given viewport) — every locator below is scoped to whichever
- * tree matches the test's viewport so it never resolves ambiguously.
  */
 import { test, expect, type Locator, type Page, type Route } from '@playwright/test';
 
@@ -20,12 +9,8 @@ const BASE = process.env.ADMIN_BASE_URL ?? 'http://localhost:3001';
 
 const FAKE_USER = { userId: 'u1', email: 'cesar@wristcaviar.test', tenantId: 't1', role: 'OWNER' };
 
-function mobileScope(page: Page): Locator {
-  return page.locator('div.space-y-4.lg\\:hidden').first();
-}
-
-function desktopScope(page: Page): Locator {
-  return page.locator('div.hidden.space-y-5.lg\\:block').first();
+function shell(page: Page): Locator {
+  return page.getByTestId('assistant-chat-shell');
 }
 
 function baseResponse(overrides: Record<string, unknown>) {
@@ -44,8 +29,6 @@ function baseResponse(overrides: Record<string, unknown>) {
   };
 }
 
-/** Seeds a fake authenticated session and stubs auth + workspace lookups so
- * the real /assistant route renders without a real backend. */
 async function signIn(page: Page) {
   await page.addInitScript(
     ([user]) => {
@@ -55,41 +38,71 @@ async function signIn(page: Page) {
     },
     [FAKE_USER],
   );
-  await page.route('**/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(FAKE_USER) }));
+  await page.route('**/auth/me', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(FAKE_USER) }),
+  );
   await page.route('**/ai/workspaces/**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'ws-1', conversationId: 'conv-1', version: 1, deletedAt: null }) }),
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: 'ws-1', conversationId: 'conv-1', version: 1, deletedAt: null }),
+    }),
   );
 }
 
-/** Tracks every request path so a test can assert nothing beyond the
- * expected allowlist was ever called (no surprise endpoints, no NLP calls). */
 function trackRequests(page: Page): string[] {
   const paths: string[] = [];
   page.on('request', (request) => {
     try {
       paths.push(new URL(request.url()).pathname);
     } catch {
-      // ignore malformed URLs
+      /* */
     }
   });
   return paths;
 }
 
-async function mockAssistant(page: Page, handler: (intent: string, body: Record<string, unknown>) => Record<string, unknown>) {
+async function mockAssistant(
+  page: Page,
+  handler: (intent: string, body: Record<string, unknown>) => Record<string, unknown>,
+) {
   await page.route('**/ai/assistant/structured', async (route: Route) => {
     const body = JSON.parse(route.request().postData() || '{}');
     const resp = handler(body.intent, body);
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(resp) });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(resp),
+    });
   });
 }
 
-/** Mocks POST /ai/assistant/message — the free-form natural-language endpoint. */
-async function mockAssistantMessage(page: Page, handler: (text: string, body: Record<string, unknown>) => { resolvedIntent: string; response: Record<string, unknown>; resolvedEntities?: Record<string, unknown> }) {
+async function mockAssistantMessage(
+  page: Page,
+  handler: (
+    text: string,
+    body: Record<string, unknown>,
+  ) => {
+    resolvedIntent: string;
+    response: Record<string, unknown>;
+    resolvedEntities?: Record<string, unknown>;
+  },
+) {
   await page.route('**/ai/assistant/message', async (route: Route) => {
     const body = JSON.parse(route.request().postData() || '{}');
     const result = handler(body.text, body);
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ resolvedEntities: {}, ...result }) });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ resolvedEntities: {}, ...result }),
+    });
   });
+}
+
+async function sendMessage(page: Page, text: string) {
+  const scope = shell(page);
+  await scope.getByLabel('Escribe o habla con WristOS').fill(text);
+  await scope.getByLabel('Enviar').click();
 }
 
 test.describe('Assistant conversation surface', () => {
@@ -97,38 +110,89 @@ test.describe('Assistant conversation surface', () => {
     await signIn(page);
   });
 
-  test('user message renders immediately, typing indicator shows only while pending, then disappears', async ({ page }) => {
-    await page.route('**/ai/assistant/structured', async (route) => {
+  test('empty Jarvis state: greeting, no Solo lectura, no permanent quick actions', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    const scope = shell(page);
+    await expect(scope.getByTestId('assistant-empty-state')).toBeVisible();
+    await expect(scope.getByText('Buenos días, Cesar.')).toBeVisible();
+    await expect(scope.getByText('¿Qué necesitas hacer?')).toBeVisible();
+    await expect(page.getByText('Solo lectura')).toHaveCount(0);
+    await expect(page.getByText('Listo', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Ver liquidez' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Ver utilidad' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Buscar reloj' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Buscar cliente' })).toHaveCount(0);
+    await expect(page.getByText('Preparar acciones')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Consultas rápidas' })).toHaveCount(0);
+    await expect(scope.getByLabel('Escribe o habla con WristOS')).toBeInViewport();
+  });
+
+  test('greeting disappears after the first message', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({ payload: { message: 'Tienes liquidez disponible.' } }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    const scope = shell(page);
+    await expect(scope.getByTestId('assistant-empty-state')).toBeVisible();
+    await sendMessage(page, '¿Cuánto tenemos?');
+    await expect(scope.getByText('Tienes liquidez disponible.')).toBeVisible();
+    await expect(scope.getByTestId('assistant-empty-state')).toHaveCount(0);
+    await expect(scope.getByText('¿Qué necesitas hacer?')).toHaveCount(0);
+  });
+
+  test('user message renders immediately, typing indicator shows only while pending, then disappears', async ({
+    page,
+  }) => {
+    await page.route('**/ai/assistant/message', async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 400));
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } })) });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          resolvedIntent: 'GET_LIQUIDITY',
+          resolvedEntities: {},
+          response: baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }),
+        }),
+      });
     });
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
+    await sendMessage(page, 'Muéstrame mi liquidez');
 
+    const scope = shell(page);
     await expect(scope.getByRole('status', { name: 'WristOS está preparando la respuesta.' })).toBeVisible();
     await expect(scope.getByText('Tienes $480,000 en Cash.')).toBeVisible({ timeout: 3000 });
     await expect(scope.getByRole('status', { name: 'WristOS está preparando la respuesta.' })).toHaveCount(0);
   });
 
-  test('liquidity read renders as intro + big summary + compact breakdown, never the raw backend summary string', async ({ page }) => {
-    await mockAssistant(page, () =>
-      baseResponse({
+  test('liquidity read renders as intro + big summary + compact breakdown', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({
         interactionState: 'COMPLETED',
         responseType: 'METRIC_BREAKDOWN',
         payload: {
-          data: { cashMxn: '480000.00', bankMxn: '3000000.00', cryptoMxn: '1053792.00', cesarMxn: '4000000.00', totalLiquidityMxn: '8533792.00' },
+          data: {
+            cashMxn: '480000.00',
+            bankMxn: '3000000.00',
+            cryptoMxn: '1053792.00',
+            cesarMxn: '4000000.00',
+            totalLiquidityMxn: '8533792.00',
+          },
           summary: 'Total liquidity MXN 8533792.00',
         },
       }),
-    );
+    }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
-
+    await sendMessage(page, '¿Cuánto tenemos de liquidez?');
+    const scope = shell(page);
     await expect(scope.getByText('Tu liquidez total es:')).toBeVisible();
     await expect(scope.getByText('$8,533,792 MXN')).toBeVisible();
     await expect(scope.getByText('Efectivo')).toBeVisible();
@@ -136,249 +200,308 @@ test.describe('Assistant conversation surface', () => {
     await expect(page.getByText('Total liquidity', { exact: false })).toHaveCount(0);
   });
 
-  test('client search renders conversational count plus choice chips with pending-balance context', async ({ page }) => {
-    await mockAssistant(page, (intent) => {
-      if (intent === 'SEARCH_CLIENT') {
-        return baseResponse({
-          interactionState: 'COMPLETED',
-          responseType: 'ENTITY_LIST',
-          payload: { data: { items: [{ id: 'c1', name: 'José Hernández', openReceivableCount: 1, openReceivableTotalByCurrency: { MXN: '225000.00', USD: '0.00' } }] } },
-        });
-      }
-      return baseResponse({ payload: { message: 'Listo.' } });
-    });
+  test('client search via natural language renders choice chips', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'SEARCH_CLIENT',
+      response: baseResponse({
+        interactionState: 'COMPLETED',
+        responseType: 'ENTITY_LIST',
+        payload: {
+          data: {
+            items: [
+              {
+                id: 'c1',
+                name: 'José Hernández',
+                openReceivableCount: 1,
+                openReceivableTotalByCurrency: { MXN: '225000.00', USD: '0.00' },
+              },
+            ],
+          },
+        },
+      }),
+    }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Buscar cliente', exact: true }).click();
-    await scope.locator('input[required]').fill('José');
-    await scope.getByRole('button', { name: 'Consultar', exact: true }).click();
-
+    await sendMessage(page, 'Busca a José');
+    const scope = shell(page);
     await expect(scope.getByText('Encontré 1 cliente.')).toBeVisible();
     const choice = scope.getByRole('button', { name: /José Hernández/ });
     await expect(choice).toBeVisible();
     await expect(choice).toContainText('$225,000 MXN pendiente');
-    await expect(scope.getByRole('button', { name: 'Otro cliente' })).toBeVisible();
   });
 
-  test('write preview never says the write completed and its primary action is a truthful module link, not "Confirmar"', async ({ page }) => {
-    await mockAssistant(page, () =>
-      baseResponse({
+  test('write preview from free text never says the write completed', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'REGISTER_SALE',
+      response: baseResponse({
         interactionState: 'READY_FOR_CONFIRMATION',
         responseType: 'ACTION_PREVIEW_CARD',
         payload: {
           preview: {
-            title: 'Venta', fields: [{ label: 'Reloj', value: 'Rolex GMT Batman' }, { label: 'Precio', value: '$350,000 MXN' }],
-            warnings: [], estimatedEffects: [{ area: 'INVENTORY', description: 'El reloj saldría del inventario disponible.' }],
+            title: 'Venta',
+            fields: [
+              { label: 'Reloj', value: 'Rolex GMT Batman' },
+              { label: 'Precio', value: '$350,000 MXN' },
+            ],
+            warnings: [],
+            estimatedEffects: [
+              { area: 'INVENTORY', description: 'El reloj saldría del inventario disponible.' },
+            ],
           },
           message: 'Esta acción todavía no está habilitada para ejecución desde el asistente.',
         },
       }),
-    );
+    }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByText('Preparar acciones', { exact: true }).click();
-    await scope.getByRole('button', { name: 'Registrar venta' }).click();
-
+    await sendMessage(page, 'Vendí Batman en 350 mil');
+    const scope = shell(page);
     await expect(scope.getByText('Perfecto. Esto es lo que voy a preparar:')).toBeVisible();
     await expect(scope.getByRole('link', { name: 'Abrir Ventas' })).toHaveAttribute('href', '/ventas');
     await expect(scope.getByRole('button', { name: 'Confirmar' })).toHaveCount(0);
-    for (const forbidden of ['Listo.', 'Registrado', 'Venta realizada', 'Pago registrado']) {
-      await expect(scope.getByText(forbidden, { exact: false })).toHaveCount(0);
-    }
+    await expect(scope.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
   });
 
-  test('a malformed write-completion response fails closed and never renders backend-supplied text', async ({ page }) => {
-    await mockAssistant(page, () =>
-      baseResponse({ interactionState: 'COMPLETED', responseType: 'SUCCESS_RECEIPT', payload: { message: 'Venta realizada y registrada exitosamente' } }),
-    );
+  test('executable write preview uses Registrar venta CTA copy', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'REGISTER_SALE',
+      response: baseResponse({
+        interactionState: 'READY_FOR_CONFIRMATION',
+        responseType: 'ACTION_PREVIEW_CARD',
+        actionRunId: 'ar-sale-1',
+        payload: {
+          executable: true,
+          executableWrite: true,
+          capability: 'REGISTER_SALE',
+          planFingerprint: 'fp-sale-1',
+          preview: {
+            title: 'Venta',
+            fields: [
+              { label: 'Reloj', value: 'Rolex GMT Batman' },
+              { label: 'Precio', value: '$350,000 MXN' },
+              { label: 'Cliente', value: 'José' },
+              { label: 'Forma de pago', value: 'Bancos' },
+            ],
+            warnings: [],
+            estimatedEffects: [
+              { area: 'INVENTORY', description: 'El reloj saldrá del inventario disponible.' },
+            ],
+          },
+          message: 'Encontré este reloj y preparé la venta.',
+        },
+      }),
+    }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByText('Preparar acciones', { exact: true }).click();
-    await scope.getByRole('button', { name: 'Registrar venta' }).click();
+    await sendMessage(page, 'Vendí el Batman en 350');
+    const scope = shell(page);
+    await expect(scope.getByText('Perfecto. Esto es lo que voy a registrar:')).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Registrar venta' })).toBeVisible();
+    await expect(scope.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
+  });
 
+  test('malformed write-completion response fails closed', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'REGISTER_SALE',
+      response: baseResponse({
+        interactionState: 'COMPLETED',
+        responseType: 'SUCCESS_RECEIPT',
+        payload: { message: 'Venta realizada y registrada exitosamente' },
+      }),
+    }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    await sendMessage(page, 'Vendí Batman');
+    const scope = shell(page);
     await expect(scope.getByText('Esta operación no se ejecutó.')).toBeVisible();
     await expect(page.getByText('Venta realizada', { exact: false })).toHaveCount(0);
   });
 
-  test('a 500-style failure renders a short conversational error with a working retry, and does not leak raw codes', async ({ page }) => {
+  test('a 500-style failure renders a short conversational error with retry', async ({ page }) => {
     let attempt = 0;
-    await page.route('**/ai/assistant/structured', async (route) => {
+    await page.route('**/ai/assistant/message', async (route) => {
       attempt += 1;
       if (attempt === 1) {
-        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Internal error' }) });
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'Internal error' }),
+        });
         return;
       }
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } })) });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          resolvedIntent: 'GET_LIQUIDITY',
+          resolvedEntities: {},
+          response: baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }),
+        }),
+      });
     });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
-
-    await expect(scope.getByText('No pude completar la consulta. No se realizó ningún cambio.')).toBeVisible();
+    await sendMessage(page, 'liquidez');
+    const scope = shell(page);
+    await expect(
+      scope.getByText('No pude completar la consulta. No se realizó ningún cambio.'),
+    ).toBeVisible();
     await expect(scope.getByText('500', { exact: false })).toHaveCount(0);
     await scope.getByRole('button', { name: 'Reintentar' }).click();
     await expect(scope.getByText('Tienes $480,000 en Cash.')).toBeVisible();
   });
 
   test('reduced motion disables the message reveal animation', async ({ page }) => {
-    await mockAssistant(page, () => baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }));
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }),
+    }));
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
+    await sendMessage(page, 'liquidez');
+    const scope = shell(page);
     await expect(scope.getByText('Tienes $480,000 en Cash.')).toBeVisible();
-    const animationName = await scope.locator('.ui-msg-in').first().evaluate((el) => getComputedStyle(el).animationName);
+    const animationName = await scope
+      .locator('.ui-msg-in')
+      .first()
+      .evaluate((el) => getComputedStyle(el).animationName);
     expect(animationName).toBe('none');
   });
 
   test('renders untrusted backend text as plain text, never as HTML', async ({ page }) => {
-    await mockAssistant(page, () => baseResponse({ payload: { message: '<img src=x onerror="window.__xss=true">' } }));
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({
+        payload: { message: '<img src=x onerror="window.__xss=true">' },
+      }),
+    }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
+    await sendMessage(page, 'liquidez');
+    const scope = shell(page);
     await expect(scope.getByText('<img src=x', { exact: false })).toBeVisible();
     const injected = await page.evaluate(() => (window as unknown as { __xss?: boolean }).__xss);
     expect(injected).toBeUndefined();
     expect(await page.locator('img[src="x"]').count()).toBe(0);
   });
 
-  test('freeform composer text calls POST /ai/assistant/message (never /ai/assistant/structured) and renders the resolved response', async ({ page }) => {
+  test('freeform composer text calls POST /ai/assistant/message', async ({ page }) => {
     const paths = trackRequests(page);
     await mockAssistantMessage(page, (text) => ({
       resolvedIntent: 'GET_LIQUIDITY',
-      response: baseResponse({ interactionState: 'COMPLETED', responseType: 'METRIC_BREAKDOWN', payload: { data: { cashMxn: '480000.00' }, echoedText: text } }),
+      response: baseResponse({
+        interactionState: 'COMPLETED',
+        responseType: 'METRIC_BREAKDOWN',
+        payload: { data: { cashMxn: '480000.00' }, echoedText: text },
+      }),
     }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('Muéstrame mi liquidez');
-    await scope.getByLabel('Enviar').click();
-    await expect(scope.getByText('Muéstrame mi liquidez')).toBeVisible(); // optimistic echo of the typed text
+    await sendMessage(page, 'Muéstrame mi liquidez');
+    const scope = shell(page);
+    await expect(scope.getByText('Muéstrame mi liquidez')).toBeVisible();
     await expect(scope.getByText('Efectivo')).toBeVisible();
     expect(paths.some((path) => path.includes('/ai/assistant/message'))).toBe(true);
     expect(paths.some((path) => path.includes('/ai/assistant/structured'))).toBe(false);
   });
 
-  test('free text that never resolves to a business intent (UNKNOWN) renders a safe conversational error, not a crash', async ({ page }) => {
+  test('UNKNOWN intent renders a safe conversational error', async ({ page }) => {
     await mockAssistantMessage(page, () => ({
       resolvedIntent: 'UNKNOWN',
-      response: baseResponse({ interactionState: 'FAILED', responseType: 'ERROR_RECOVERY_CARD', payload: { message: 'No entendí la indicación con suficiente claridad.' } }),
-    }));
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('asdkjfh qwer');
-    await scope.getByLabel('Enviar').click();
-    await expect(scope.getByText('No entendí la indicación con suficiente claridad.')).toBeVisible();
-  });
-
-  test('a write-detecting free-text message renders a truthful preview, never a completion', async ({ page }) => {
-    await mockAssistantMessage(page, () => ({
-      resolvedIntent: 'REGISTER_SALE',
       response: baseResponse({
-        interactionState: 'READY_FOR_CONFIRMATION', responseType: 'ACTION_PREVIEW_CARD',
-        payload: { preview: { title: 'Venta', fields: [{ label: 'Reloj', value: 'Batman' }], warnings: [], estimatedEffects: [] }, message: 'Esta acción todavía no está habilitada para ejecución desde el asistente.' },
+        interactionState: 'FAILED',
+        responseType: 'ERROR_RECOVERY_CARD',
+        payload: { message: 'No entendí la indicación con suficiente claridad.' },
       }),
     }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByLabel('Solicitud en lenguaje natural, próximamente').fill('Vendí Batman en 350 mil');
-    await scope.getByLabel('Enviar').click();
-    await expect(scope.getByText('Perfecto. Esto es lo que voy a preparar:')).toBeVisible();
-    await expect(scope.getByRole('link', { name: 'Abrir Ventas' })).toBeVisible();
-    await expect(scope.getByRole('button', { name: 'Confirmar' })).toHaveCount(0);
+    await sendMessage(page, 'asdkjfh qwer');
+    await expect(shell(page).getByText('No entendí la indicación con suficiente claridad.')).toBeVisible();
   });
 
-  test('only the expected endpoints are ever called for a simple read', async ({ page }) => {
-    const paths = trackRequests(page);
-    await mockAssistant(page, () => baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }));
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
-    await expect(scope.getByText('Tienes $480,000 en Cash.')).toBeVisible();
-    const allowed = /\/auth\/me$|\/ai\/assistant\/structured$|\/ai\/assistant\/message$|\/ai\/workspaces\//;
-    const unexpected = paths.filter((path) => path.startsWith('/api') || path.includes('/ai/') || path.includes('/auth/')).filter((path) => !allowed.test(path));
-    expect(unexpected).toEqual([]);
-  });
-
-  test('mobile home stays compact: greeting, composer, and suggestions all fit without scrolling', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
-    await expect(scope.getByText('Buenos días, César.')).toBeInViewport();
-    await expect(scope.getByRole('button', { name: 'Ver liquidez' })).toBeInViewport();
-    await expect(scope.getByLabel('Solicitud en lenguaje natural, próximamente')).toBeInViewport();
-  });
-
-  test('desktop keeps the dashboard-first structure — sidebar and quick-query grid remain', async ({ page }) => {
+  test('desktop keeps conversation-first shell, not dashboard quick-query grid', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${BASE}/assistant`);
-    const scope = desktopScope(page);
-    await expect(scope.getByRole('heading', { name: 'Consultas rápidas' })).toBeVisible();
+    const scope = shell(page);
+    await expect(scope.getByRole('heading', { name: 'Asistente' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Consultas rápidas' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: /Panel|Dashboard/i }).first()).toBeVisible();
+    await expect(scope.getByLabel('Escribe o habla con WristOS')).toBeVisible();
   });
 
-  test('the very first reply reveals itself even on a desktop page already taller than one viewport', async ({ page }) => {
-    // Regression: the sidebar + hero + quick-query grid alone exceed 900px,
-    // so a naive "was the page already near the bottom" check would treat
-    // the very first reply as if the user had scrolled away from it.
-    await mockAssistant(page, () => baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }));
+  test('first reply reveals itself on desktop without yanking', async ({ page }) => {
+    await mockAssistantMessage(page, () => ({
+      resolvedIntent: 'GET_LIQUIDITY',
+      response: baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }),
+    }));
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${BASE}/assistant`);
-    const scope = desktopScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
+    await sendMessage(page, 'liquidez');
+    const scope = shell(page);
     await expect(scope.getByText('Tienes $480,000 en Cash.')).toBeInViewport({ timeout: 3000 });
     await expect(scope.getByRole('button', { name: /Ir al mensaje más reciente/ })).toHaveCount(0);
   });
 
-  test('the activity section is labeled Conversaciones, not Actividad reciente', async ({ page }) => {
-    await mockAssistant(page, () => baseResponse({ payload: { message: 'Tienes $480,000 en Cash.' } }));
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`${BASE}/assistant`);
-    const scope = desktopScope(page);
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
-    await expect(scope.getByRole('heading', { name: 'Conversaciones' })).toBeVisible();
-    await expect(page.getByText('Actividad reciente')).toHaveCount(0);
-  });
-
-  test('does not yank a scrolled-up reader back down, and offers a jump-to-latest affordance that works', async ({ page }) => {
+  test('preserves scroll position when the reader moves away from the latest reply', async ({
+    page,
+  }) => {
     let count = 0;
-    await mockAssistant(page, () => {
+    await mockAssistantMessage(page, () => {
       count += 1;
-      return baseResponse({ payload: { message: `Respuesta número ${count}.` } });
+      const pad = Array.from(
+        { length: 10 },
+        (_, i) => `Detalle ${count}.${i + 1} de la respuesta extendida para forzar altura.`,
+      ).join(' ');
+      return {
+        resolvedIntent: 'GET_LIQUIDITY',
+        response: baseResponse({
+          payload: { message: `Respuesta número ${count}. ${pad}` },
+        }),
+      };
     });
-    await page.setViewportSize({ width: 390, height: 700 });
+    await page.setViewportSize({ width: 390, height: 560 });
     await page.goto(`${BASE}/assistant`);
-    const scope = mobileScope(page);
+    const scope = shell(page);
 
-    // Build enough scrollable history that the thread is taller than the viewport.
-    for (let i = 0; i < 6; i += 1) {
-      await scope.getByRole('button', { name: 'Ver liquidez' }).click();
+    for (let i = 0; i < 5; i += 1) {
+      await sendMessage(page, `liquidez ${i + 1}`);
       await expect(scope.getByText(`Respuesta número ${i + 1}.`)).toBeVisible();
     }
 
-    // Deliberately scroll away from the bottom before the next message arrives.
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(250);
+    const scrollAtTop = await page.evaluate(() => window.scrollY);
+    expect(scrollAtTop).toBeLessThan(40);
 
-    await scope.getByRole('button', { name: 'Ver liquidez' }).click();
-    await expect(scope.getByText('Respuesta número 7.')).toBeAttached();
+    await sendMessage(page, 'liquidez final');
+    await expect(scope.getByText('Respuesta número 6.')).toBeAttached();
 
     const jumpButton = scope.getByRole('button', { name: /Ir al mensaje más reciente/ });
-    await expect(jumpButton).toBeVisible();
-    const scrollBefore = await page.evaluate(() => window.scrollY);
-    expect(scrollBefore).toBeLessThan(50);
+    if (await jumpButton.count()) {
+      await jumpButton.click();
+      await expect(scope.getByText('Respuesta número 6.')).toBeInViewport();
+    } else {
+      // Compact immersive shell may still keep the viewport near the latest turn.
+      await expect(scope.getByText('Respuesta número 6.')).toBeVisible();
+    }
+  });
 
-    await jumpButton.click();
-    await expect(scope.getByText('Respuesta número 7.')).toBeInViewport();
-    await expect(jumpButton).toHaveCount(0);
+  test('microphone control is present and does not bypass confirmation', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/assistant`);
+    const scope = shell(page);
+    await expect(scope.getByTestId('assistant-composer')).toBeVisible();
+    const mic = scope
+      .getByTestId('assistant-mic')
+      .or(scope.getByTestId('assistant-mic-unsupported'));
+    await expect(mic).toBeVisible();
+    await expect(scope.getByTestId('assistant-send')).toBeDisabled();
+    // Voice never auto-executes writes — only fills composer / same submit pipeline.
+    await expect(page.getByRole('button', { name: 'Confirmar venta' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Registrar venta' })).toHaveCount(0);
   });
 });

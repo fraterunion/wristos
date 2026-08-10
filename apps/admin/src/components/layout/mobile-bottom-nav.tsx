@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Bot, Boxes, LayoutDashboard, Menu, WalletCards, X } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import { useAuthContext } from '@/lib/auth-context';
 
 const primary = [
   { href: '/assistant', label: 'Asistente', icon: Bot },
@@ -19,7 +21,18 @@ const more = [
 
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { logout } = useAuthContext();
   const [open, setOpen] = useState(false);
+
+  const onLogout = async () => {
+    setOpen(false);
+    await logout();
+    router.replace('/login');
+  };
+
+  const onAssistant =
+    pathname === '/assistant' || pathname.startsWith('/assistant/');
 
   return (
     <>
@@ -43,19 +56,52 @@ export function MobileBottomNav() {
                 </Link>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={() => void onLogout()}
+              className="mt-3 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-white/70"
+            >
+              Cerrar sesión
+            </button>
           </section>
         </div>
       ) : null}
-      <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t border-white/10 bg-panel/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden" aria-label="Navegación principal">
+      <nav
+        className={`fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden ${
+          onAssistant
+            ? 'border-t border-white/[0.06] bg-surface/90'
+            : 'border-t border-white/10 bg-panel/95'
+        }`}
+        aria-label="Navegación principal"
+      >
         {primary.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <Link key={href} href={href} className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${active ? 'text-emerald-300' : 'text-white/55'}`}>
+            <Link
+              key={href}
+              href={href}
+              className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${
+                active
+                  ? onAssistant
+                    ? 'text-emerald-300/90'
+                    : 'text-emerald-300'
+                  : onAssistant
+                    ? 'text-white/40'
+                    : 'text-white/55'
+              }`}
+            >
               <Icon className="h-5 w-5" aria-hidden /><span>{label}</span>
             </Link>
           );
         })}
-        <button type="button" onClick={() => setOpen((value) => !value)} className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${open ? 'text-emerald-300' : 'text-white/55'}`} aria-expanded={open}>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className={`flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] ${
+            open ? 'text-emerald-300' : onAssistant ? 'text-white/40' : 'text-white/55'
+          }`}
+          aria-expanded={open}
+        >
           <Menu className="h-5 w-5" aria-hidden /><span>Más</span>
         </button>
       </nav>

@@ -139,7 +139,7 @@ describe('responseToConversationBlocks', () => {
     }
   });
 
-  it('maps executable REGISTER_SALE preview to Confirmar venta CTA', () => {
+  it('maps executable REGISTER_SALE preview to Registrar venta CTA', () => {
     const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       executable: true,
       planFingerprint: 'a'.repeat(64),
@@ -153,12 +153,12 @@ describe('responseToConversationBlocks', () => {
     (candidate as { actionRunId?: string }).actionRunId = 'run-1';
     const blocks = responseToConversationBlocks('REGISTER_SALE', candidate);
     const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
-    assert.equal(preview.ctaLabel, 'Confirmar venta');
+    assert.equal(preview.ctaLabel, 'Registrar venta');
     assert.equal(preview.ctaKind, 'CONFIRM_SALE');
     assert.equal(preview.intro, 'Perfecto. Esto es lo que voy a registrar:');
   });
 
-  it('maps executable REGISTER_RECEIVABLE_PAYMENT preview to Confirmar pago CTA', () => {
+  it('maps executable REGISTER_RECEIVABLE_PAYMENT preview to Registrar pago CTA', () => {
     const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       executable: true,
       planFingerprint: 'b'.repeat(64),
@@ -176,12 +176,12 @@ describe('responseToConversationBlocks', () => {
     (candidate as { actionRunId?: string }).actionRunId = 'run-pay';
     const blocks = responseToConversationBlocks('REGISTER_RECEIVABLE_PAYMENT', candidate);
     const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
-    assert.equal(preview.ctaLabel, 'Confirmar pago');
+    assert.equal(preview.ctaLabel, 'Registrar pago');
     assert.equal(preview.ctaKind, 'CONFIRM_PAYMENT');
     assert.equal(preview.intro, 'Voy a registrar este pago:');
   });
 
-  it('maps executable REGISTER_EXPENSE preview to Confirmar gasto CTA', () => {
+  it('maps executable REGISTER_EXPENSE preview to Registrar gasto CTA', () => {
     const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       executable: true,
       planFingerprint: 'c'.repeat(64),
@@ -200,12 +200,12 @@ describe('responseToConversationBlocks', () => {
     (candidate as { actionRunId?: string }).actionRunId = 'run-exp';
     const blocks = responseToConversationBlocks('REGISTER_EXPENSE', candidate);
     const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
-    assert.equal(preview.ctaLabel, 'Confirmar gasto');
+    assert.equal(preview.ctaLabel, 'Registrar gasto');
     assert.equal(preview.ctaKind, 'CONFIRM_EXPENSE');
     assert.equal(preview.intro, 'Voy a registrar este gasto:');
   });
 
-  it('maps executable REGISTER_PURCHASE preview to Confirmar compra CTA', () => {
+  it('maps executable REGISTER_PURCHASE preview to Registrar compra CTA', () => {
     const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
       executable: true,
       planFingerprint: 'd'.repeat(64),
@@ -222,9 +222,39 @@ describe('responseToConversationBlocks', () => {
     (candidate as { actionRunId?: string }).actionRunId = 'run-purchase';
     const blocks = responseToConversationBlocks('REGISTER_PURCHASE', candidate);
     const preview = blocks[0] as { ctaLabel: string; ctaKind: string; intro: string };
-    assert.equal(preview.ctaLabel, 'Confirmar compra');
+    assert.equal(preview.ctaLabel, 'Registrar compra');
     assert.equal(preview.ctaKind, 'CONFIRM_PURCHASE');
     assert.equal(preview.intro, 'Voy a registrar esta compra:');
+  });
+
+  it('maps executable CREATE_RECEIVABLE preview to Crear cuenta por cobrar CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      executableWrite: true,
+      capability: 'CREATE_RECEIVABLE',
+      actionRunId: 'ar-cxc',
+      planFingerprint: 'fp-cxc',
+      preview: { title: 'Cuenta por cobrar', fields: [], warnings: [], estimatedEffects: [] },
+    });
+    const blocks = responseToConversationBlocks('CREATE_RECEIVABLE', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string };
+    assert.equal(preview.ctaLabel, 'Crear cuenta por cobrar');
+    assert.equal(preview.ctaKind, 'CONFIRM_RECEIVABLE');
+  });
+
+  it('maps executable CREATE_PAYABLE preview to Crear cuenta por pagar CTA', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      executableWrite: true,
+      capability: 'CREATE_PAYABLE',
+      actionRunId: 'ar-cxp',
+      planFingerprint: 'fp-cxp',
+      preview: { title: 'Cuenta por pagar', fields: [], warnings: [], estimatedEffects: [] },
+    });
+    const blocks = responseToConversationBlocks('CREATE_PAYABLE', candidate);
+    const preview = blocks[0] as { ctaLabel: string; ctaKind: string };
+    assert.equal(preview.ctaLabel, 'Crear cuenta por pagar');
+    assert.equal(preview.ctaKind, 'CONFIRM_PAYABLE');
   });
 
   it('maps executable CREATE_CLIENT preview to Crear cliente CTA', () => {
