@@ -48,9 +48,11 @@ export function AssistantMessage({
         W
       </span>
       <div
-        className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-[13.5px] leading-5 sm:max-w-[72%] ${
-          showAvatar ? 'rounded-tl-md' : ''
-        } ${tone === 'error' ? 'bg-rose-500/[0.08] text-rose-100' : 'bg-panel text-white/85'}`}
+        className={`max-w-[88%] px-1 py-0.5 text-[14px] leading-6 sm:max-w-[72%] ${
+          tone === 'error'
+            ? 'rounded-2xl rounded-tl-md bg-rose-500/[0.08] px-3.5 py-2.5 text-rose-100'
+            : 'text-white/88'
+        }`}
       >
         {children}
       </div>
