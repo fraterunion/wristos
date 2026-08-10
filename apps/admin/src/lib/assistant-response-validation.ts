@@ -38,6 +38,8 @@ const manualRoutes: Readonly<Record<WritePreviewAction, string>> = {
   REGISTER_EXPENSE: '/expenses',
   CREATE_CLIENT: '/crm',
   UPDATE_CLIENT: '/crm',
+  CREATE_RECEIVABLE: '/cuentas',
+  CREATE_PAYABLE: '/cuentas',
   REGISTER_SETTLEMENT: '/cuentas',
   REGISTER_CRYPTO_POSITION: '/crypto',
   REGISTER_CRYPTO_PRICE: '/crypto',
@@ -191,6 +193,50 @@ function isCanonicalCapitalDistributionSuccess(
   return true;
 }
 
+function isCanonicalCreateReceivableSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'CREATE_RECEIVABLE') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.accountEntryId !== 'string' || !receipt.accountEntryId) return false;
+  if (receipt.type !== 'RECEIVABLE') return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (receipt.treasuryChanged !== false) return false;
+  if (receipt.pnlChanged !== false) return false;
+  if (payload.executableWrite !== true && payload.capability !== 'CREATE_RECEIVABLE') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
+function isCanonicalCreatePayableSuccess(
+  intent: BusinessActionId,
+  response: Partial<StructuredAssistantResponse>,
+): boolean {
+  if (intent !== 'CREATE_PAYABLE') return false;
+  if (response.interactionState !== 'COMPLETED') return false;
+  if (response.responseType !== 'SUCCESS_RECEIPT') return false;
+  const payload = response.payload;
+  if (!isRecord(payload)) return false;
+  const receipt = isRecord(payload.receipt) ? payload.receipt : null;
+  if (!receipt) return false;
+  if (typeof receipt.accountEntryId !== 'string' || !receipt.accountEntryId) return false;
+  if (receipt.type !== 'PAYABLE') return false;
+  if (typeof receipt.amount !== 'string' && typeof receipt.amount !== 'number') return false;
+  if (receipt.treasuryChanged !== false) return false;
+  if (receipt.pnlChanged !== false) return false;
+  if (payload.executableWrite !== true && payload.capability !== 'CREATE_PAYABLE') {
+    if (typeof payload.message !== 'string') return false;
+  }
+  return true;
+}
+
 function isCanonicalExpenseSuccess(
   intent: BusinessActionId,
   response: Partial<StructuredAssistantResponse>,
@@ -283,6 +329,8 @@ function isCanonicalExecutableWriteSuccess(
     isCanonicalTreasuryTransferSuccess(intent, response) ||
     isCanonicalCapitalContributionSuccess(intent, response) ||
     isCanonicalCapitalDistributionSuccess(intent, response) ||
+    isCanonicalCreateReceivableSuccess(intent, response) ||
+    isCanonicalCreatePayableSuccess(intent, response) ||
     isCanonicalExpenseSuccess(intent, response) ||
     isCanonicalPurchaseSuccess(intent, response) ||
     isCanonicalCreateClientSuccess(intent, response) ||
@@ -328,6 +376,8 @@ export function validateAssistantResponse(
           intent === 'REGISTER_TREASURY_TRANSFER' ||
           intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
           intent === 'REGISTER_CAPITAL_DISTRIBUTION' ||
+          intent === 'CREATE_RECEIVABLE' ||
+          intent === 'CREATE_PAYABLE' ||
           intent === 'REGISTER_EXPENSE' ||
           intent === 'REGISTER_PURCHASE' ||
           intent === 'CREATE_CLIENT' ||

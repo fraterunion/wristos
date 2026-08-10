@@ -36,6 +36,8 @@ export const WRITE_INTENTS = [
   'REGISTER_EXPENSE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
+  'CREATE_RECEIVABLE',
+  'CREATE_PAYABLE',
   'REGISTER_SETTLEMENT',
   'REGISTER_CRYPTO_POSITION',
   'REGISTER_CRYPTO_PRICE',
@@ -408,6 +410,54 @@ export const entitySchemas = {
       setBudgetRange: z.string().trim().min(1).max(80).optional(),
       operations: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
       // Trusted client ids are merged server-side — never from LLM.
+    })
+    .strip(),
+
+  CREATE_RECEIVABLE: z
+    .object({
+      amount: money.optional(),
+      currency: currency.optional(),
+      counterpartyName: z.string().trim().min(1).max(160).optional(),
+      customerName: z.string().trim().min(1).max(160).optional(),
+      supplierName: z.string().trim().min(1).max(160).optional(),
+      name: z.string().trim().min(1).max(160).optional(),
+      clientQuery: query.optional(),
+      customerQuery: query.optional(),
+      supplierQuery: query.optional(),
+      counterpartyQuery: query.optional(),
+      concept: z.string().trim().min(1).max(200).optional(),
+      notes: z.string().trim().max(2000).optional(),
+      issuedAt: isoDate.optional(),
+      dueDate: isoDate.optional(),
+      effectiveDate: isoDate.optional(),
+      date: isoDate.optional(),
+      // Never trust provider IDs — stripped before resolution; kept optional for schema parse only.
+      clientId: z.string().trim().min(1).max(64).optional(),
+      selectedClientId: z.string().trim().min(1).max(64).optional(),
+    })
+    .strip(),
+
+  CREATE_PAYABLE: z
+    .object({
+      amount: money.optional(),
+      currency: currency.optional(),
+      counterpartyName: z.string().trim().min(1).max(160).optional(),
+      customerName: z.string().trim().min(1).max(160).optional(),
+      supplierName: z.string().trim().min(1).max(160).optional(),
+      name: z.string().trim().min(1).max(160).optional(),
+      clientQuery: query.optional(),
+      customerQuery: query.optional(),
+      supplierQuery: query.optional(),
+      counterpartyQuery: query.optional(),
+      concept: z.string().trim().min(1).max(200).optional(),
+      notes: z.string().trim().max(2000).optional(),
+      issuedAt: isoDate.optional(),
+      dueDate: isoDate.optional(),
+      effectiveDate: isoDate.optional(),
+      date: isoDate.optional(),
+      // Never trust provider IDs — stripped before resolution; kept optional for schema parse only.
+      clientId: z.string().trim().min(1).max(64).optional(),
+      selectedClientId: z.string().trim().min(1).max(64).optional(),
     })
     .strip(),
 

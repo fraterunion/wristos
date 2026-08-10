@@ -33,8 +33,10 @@ function fakeCapitalAccount(fragment: string): 'CASH' | 'BANK' | 'CESAR_ACCOUNT'
 }
 
 function classifyCapitalDistribution(t: string): FakeOutput | null {
-  // Payable debt language is not a capital distribution.
-  if (/\b(?:que le debemos|cuenta por pagar|cxp)\b/.test(t)) return null;
+  // Payable / receivable debt language is not a capital distribution.
+  if (/\b(?:que le debemos|cuenta por pagar|cuenta por cobrar|cxp|cxc|nos debe)\b/.test(t)) {
+    return null;
+  }
   // Treasury transfer phrasing.
   if (/\b(?:pasa|pasar|mueve|mover|transfiere|transferir)\b/.test(t)) return null;
   if (
@@ -204,6 +206,140 @@ function classifyCapitalContribution(t: string): FakeOutput | null {
 
   return {
     intent: 'REGISTER_CAPITAL_CONTRIBUTION',
+    entities,
+    missingEntities: missing,
+    ambiguities: [],
+    confidence: missing.length ? 'MEDIUM' : 'HIGH',
+    language: 'es',
+  };
+}
+
+function classifyCreateReceivable(t: string): FakeOutput | null {
+  // Settlement netting must stay REGISTER_SETTLEMENT (unbound) — not create CxC.
+  if (/\bcompensa|\bcompensa(?:r|ción)?\b|aplica.*(?:saldo a favor|cuenta a favor)/.test(t)) {
+    return null;
+  }
+  // Payment / collection language is REGISTER_RECEIVABLE_PAYMENT, not create.
+  if (
+    /\b(?:pag[oó]|me pag[oó]|cobr[eé]|recib[ií]|deposit[oó]|vendimos|vend[ií])\b/.test(t)
+  ) {
+    return null;
+  }
+  if (
+    !/(?:nos debe|cuenta por cobrar|\bcxc\b|registra(?:r)?\s+una\s+cuenta\s+por\s+cobrar)/.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+
+  const amountMatch = t.match(/([\d.,]+ ?(mil|k|millones)?)/);
+  let amount: string | undefined;
+  if (amountMatch) {
+    amount = String(parseFakeAmount(amountMatch[1]!));
+  }
+
+  let counterpartyName: string | undefined;
+  const subjectBefore = t.match(
+    /^([a-záéíóúñü][a-záéíóúñü\s.'-]{1,40}?)\s+nos debe/i,
+  );
+  if (subjectBefore?.[1]) {
+    counterpartyName = subjectBefore[1].trim().replace(/\s+/g, ' ');
+  }
+  if (!counterpartyName) {
+    const aPara = t.match(
+      /(?:a|para)\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,40}?)(?:\s+(?:nos debe|de|,|\.|$))/i,
+    );
+    if (aPara?.[1]) counterpartyName = aPara[1].trim().replace(/\s+/g, ' ');
+  }
+  if (!counterpartyName) {
+    const de = t.match(
+      /cuenta por cobrar\s+(?:de|a)\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,40}?)(?:\s|$)/i,
+    );
+    if (de?.[1]) counterpartyName = de[1].trim().replace(/\s+/g, ' ');
+  }
+
+  const entities: Record<string, string> = { currency: 'MXN' };
+  if (amount) entities.amount = amount;
+  if (counterpartyName) {
+    entities.counterpartyName = counterpartyName;
+    entities.clientQuery = counterpartyName;
+  }
+  if (/d[oó]lares|\busd\b/.test(t)) entities.currency = 'USD';
+
+  const missing: string[] = [];
+  if (!amount) missing.push('amount');
+  if (!counterpartyName) missing.push('counterpartyName');
+
+  return {
+    intent: 'CREATE_RECEIVABLE',
+    entities,
+    missingEntities: missing,
+    ambiguities: [],
+    confidence: missing.length ? 'MEDIUM' : 'HIGH',
+    language: 'es',
+  };
+}
+
+function classifyCreatePayable(t: string): FakeOutput | null {
+  // Settlement netting must stay REGISTER_SETTLEMENT (unbound) — not create CxP.
+  if (/\bcompensa|\bcompensa(?:r|ción)?\b|aplica.*(?:saldo a favor|cuenta a favor)/.test(t)) {
+    return null;
+  }
+  // Cash payment language is REGISTER_PAYABLE_PAYMENT, not create.
+  if (
+    /\b(?:p[aá]gale|paga\s|transfer|compramos\s+a\s+cr[eé]dito|compr[eé])\b/.test(t)
+  ) {
+    return null;
+  }
+  if (
+    !/(?:le debemos|debemos|cuenta por pagar|\bcxp\b|registra(?:r)?\s+una\s+cuenta\s+por\s+pagar)/.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+  // Avoid bare "debemos" matching capital / utility language.
+  if (/utilidad|socio|aportaci[oó]n|distribuci[oó]n/.test(t)) return null;
+
+  const amountMatch = t.match(/([\d.,]+ ?(mil|k|millones)?)/);
+  let amount: string | undefined;
+  if (amountMatch) {
+    amount = String(parseFakeAmount(amountMatch[1]!));
+  }
+
+  let counterpartyName: string | undefined;
+  const aPara = t.match(
+    /(?:a|para)\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,40}?)(?:\s+(?:le debemos|debemos|,|\.|$))/i,
+  );
+  if (aPara?.[1]) counterpartyName = aPara[1].trim().replace(/\s+/g, ' ');
+  if (!counterpartyName) {
+    const debemosA = t.match(
+      /(?:le\s+)?debemos\s+(?:[\d.,]+ ?(?:mil|k)?\s+)?a\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,40}?)(?:\s|$)/i,
+    );
+    if (debemosA?.[1]) counterpartyName = debemosA[1].trim().replace(/\s+/g, ' ');
+  }
+  if (!counterpartyName) {
+    const de = t.match(
+      /cuenta por pagar\s+(?:de|a)\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{1,40}?)(?:\s|$)/i,
+    );
+    if (de?.[1]) counterpartyName = de[1].trim().replace(/\s+/g, ' ');
+  }
+
+  const entities: Record<string, string> = { currency: 'MXN' };
+  if (amount) entities.amount = amount;
+  if (counterpartyName) {
+    entities.counterpartyName = counterpartyName;
+    entities.clientQuery = counterpartyName;
+  }
+  if (/d[oó]lares|\busd\b/.test(t)) entities.currency = 'USD';
+
+  const missing: string[] = [];
+  if (!amount) missing.push('amount');
+  if (!counterpartyName) missing.push('counterpartyName');
+
+  return {
+    intent: 'CREATE_PAYABLE',
     entities,
     missingEntities: missing,
     ambiguities: [],
@@ -534,6 +670,28 @@ function classify(
     if (contribution) return contribution;
   }
 
+  // Settlement before CREATE_RECEIVABLE/CREATE_PAYABLE — "compensa lo que nos debe…"
+  // contains "nos debe" / "debemos" and must not become manual CxC/CxP.
+  if (/compensa|aplica.*(saldo a favor|cuenta a favor)|compensa.*(debe|debemos)/.test(t)) {
+    return {
+      intent: 'REGISTER_SETTLEMENT',
+      entities: {},
+      missingEntities: ['sourceAccountId', 'destinationAccountId', 'amount', 'currency'],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
+  {
+    const receivable = classifyCreateReceivable(t);
+    if (receivable) return receivable;
+  }
+  {
+    const payable = classifyCreatePayable(t);
+    if (payable) return payable;
+  }
+
   // CREATE_CLIENT — before SEARCH_CLIENT / payment / purchase to avoid collisions.
   if (
     context?.lastIntent === 'CREATE_CLIENT' &&
@@ -553,7 +711,7 @@ function classify(
   );
   if (
     createClientMatch &&
-    !/busca|pag[oó]|vend[ií]|compr[eé]|gast[eé]|transfer|utilidad|distribuci[oó]n|aportaci[oó]n|reloj|cat[aá]logo|usdt|bitcoin|inventario/.test(
+    !/busca|pag[oó]|vend[ií]|compr[eé]|gast[eé]|transfer|utilidad|distribuci[oó]n|aportaci[oó]n|cuenta por cobrar|cuenta por pagar|\bcxc\b|\bcxp\b|nos debe|debemos|reloj|cat[aá]logo|usdt|bitcoin|inventario/.test(
       t,
     )
   ) {

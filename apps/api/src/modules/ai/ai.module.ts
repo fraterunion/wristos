@@ -29,6 +29,9 @@ import { RegisterTreasuryTransferWriteBinding } from './bindings/write/register-
 import { CapitalInvestorEntityResolver } from './bindings/write/capital-investor-entity-resolver.service';
 import { CreateClientEntityResolver } from './bindings/write/create-client-entity-resolver.service';
 import { CreateClientWriteBinding } from './bindings/write/create-client.binding';
+import { CreateManualAccountEntityResolver } from './bindings/write/create-manual-account-entity-resolver.service';
+import { CreatePayableWriteBinding } from './bindings/write/create-payable.binding';
+import { CreateReceivableWriteBinding } from './bindings/write/create-receivable.binding';
 import { PurchaseEntityResolver } from './bindings/write/purchase-entity-resolver.service';
 import { RegisterCapitalContributionWriteBinding } from './bindings/write/register-capital-contribution.binding';
 import { RegisterCapitalDistributionWriteBinding } from './bindings/write/register-capital-distribution.binding';
@@ -93,6 +96,8 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,
     UpdateClientWriteBinding,
+    CreateReceivableWriteBinding,
+    CreatePayableWriteBinding,
     ReceivablePaymentEntityResolver,
     PayablePaymentEntityResolver,
     PurchaseEntityResolver,
@@ -100,6 +105,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     CreateClientEntityResolver,
     UpdateClientEntityResolver,
     CapitalInvestorEntityResolver,
+    CreateManualAccountEntityResolver,
     CompositionService,
     CompositionOrchestrator,
     WriteCapabilityBindingRegistry,

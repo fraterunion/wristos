@@ -6,6 +6,11 @@ import { CapitalInvestorEntityResolver } from '../bindings/write/capital-investo
 import { enrichCapitalContributionEntities } from '../bindings/write/capital-contribution-entity-enricher';
 import { enrichCapitalDistributionEntities } from '../bindings/write/capital-distribution-entity-enricher';
 import { CreateClientEntityResolver } from '../bindings/write/create-client-entity-resolver.service';
+import {
+  enrichCreatePayableEntities,
+  enrichCreateReceivableEntities,
+} from '../bindings/write/create-manual-account-entity-enricher';
+import { CreateManualAccountEntityResolver } from '../bindings/write/create-manual-account-entity-resolver.service';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
 import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
@@ -35,6 +40,8 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
+  'CREATE_RECEIVABLE',
+  'CREATE_PAYABLE',
 ]);
 
 @Injectable()
@@ -51,6 +58,7 @@ export class StructuredAssistantService {
     private readonly createClientEntityResolver: CreateClientEntityResolver,
     private readonly updateClientEntityResolver: UpdateClientEntityResolver,
     private readonly capitalInvestorEntityResolver: CapitalInvestorEntityResolver,
+    private readonly createManualAccountEntityResolver: CreateManualAccountEntityResolver,
     private readonly capital: CapitalService,
     private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
@@ -621,6 +629,93 @@ export class StructuredAssistantService {
             actor.tenantId,
             entities as Record<string, JsonValue>,
           )) as typeof entities;
+        }
+      }
+      if (
+        input.intent === 'CREATE_RECEIVABLE' ||
+        input.intent === 'CREATE_PAYABLE'
+      ) {
+        entities =
+          input.intent === 'CREATE_RECEIVABLE'
+            ? (enrichCreateReceivableEntities(
+                entities as Record<string, unknown>,
+                request.receivedAt,
+              ) as typeof entities)
+            : (enrichCreatePayableEntities(
+                entities as Record<string, unknown>,
+                request.receivedAt,
+              ) as typeof entities);
+        const resolved = await this.createManualAccountEntityResolver.resolve(
+          actor.tenantId,
+          entities as Record<string, JsonValue>,
+          input.intent === 'CREATE_RECEIVABLE' ? 'RECEIVABLE' : 'PAYABLE',
+        );
+        entities = resolved.entities as typeof entities;
+        if (resolved.kind === 'CLARIFY') {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType:
+              resolved.clarify.code === 'AMBIGUOUS_CLIENT'
+                ? 'ENTITY_AMBIGUITY'
+                : 'MISSING_FIELD',
+            clarificationReason: resolved.clarify.code ?? 'manual_account_clarify',
+            candidateCount: resolved.clarify.items?.length,
+            multipleCandidates: (resolved.clarify.items?.length ?? 0) > 1,
+            entityPickerUsed: resolved.clarify.code === 'AMBIGUOUS_CLIENT',
+          });
+          if (
+            resolved.clarify.code === 'AMBIGUOUS_CLIENT' &&
+            resolved.clarify.items.length > 0
+          ) {
+            const response = this.accountDisambiguationResponse(
+              request.id,
+              request.traceId,
+              prepared,
+              resolved.clarify.message,
+              resolved.clarify.items,
+              'CLIENT',
+            );
+            return this.persistence.complete(
+              request.id,
+              actor,
+              response,
+              prepared.workspaceVersion,
+              AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+              AIRequestStatus.NEEDS_CLARIFICATION,
+              { intent: input.intent, entities },
+            );
+          }
+          const response = this.responseBase(
+            request.id,
+            request.traceId,
+            prepared,
+            '',
+            'NEEDS_INPUT',
+            'MISSING_FIELDS_CARD',
+            {
+              message: resolved.clarify.message,
+              missing: [resolved.clarify.field],
+              unchanged: 'No se ejecutó ninguna acción.',
+              nextAction: 'Completa el dato faltante e intenta de nuevo.',
+            },
+            this.planner.plan(
+              { intent: input.intent, entities },
+              { workspaceVersion: prepared.workspaceVersion, entityVersions: {} },
+            ),
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
         }
       }
 

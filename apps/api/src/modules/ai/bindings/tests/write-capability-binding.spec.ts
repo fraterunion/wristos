@@ -9,6 +9,8 @@ import { RegisterSaleWriteBinding } from '../write/register-sale.binding';
 import { RegisterTreasuryTransferWriteBinding } from '../write/register-treasury-transfer.binding';
 import { RegisterCapitalContributionWriteBinding } from '../write/register-capital-contribution.binding';
 import { RegisterCapitalDistributionWriteBinding } from '../write/register-capital-distribution.binding';
+import { CreateReceivableWriteBinding } from '../write/create-receivable.binding';
+import { CreatePayableWriteBinding } from '../write/create-payable.binding';
 import { UpdateClientWriteBinding } from '../write/update-client.binding';
 
 function buildRegistry() {
@@ -87,6 +89,24 @@ function buildRegistry() {
       bindingName: 'register_capital_distribution_canonical@1.0.0',
     },
   );
+  const createReceivable = Object.assign(
+    new CreateReceivableWriteBinding({} as never, {} as never),
+    {
+      capability: 'CREATE_RECEIVABLE',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'create_receivable_canonical@1.0.0',
+    },
+  );
+  const createPayable = Object.assign(
+    new CreatePayableWriteBinding({} as never, {} as never),
+    {
+      capability: 'CREATE_PAYABLE',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'create_payable_canonical@1.0.0',
+    },
+  );
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
@@ -98,18 +118,22 @@ function buildRegistry() {
     treasuryTransfer,
     capitalContribution,
     capitalDistribution,
+    createReceivable,
+    createPayable,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly ten WRITE bindings including REGISTER_CAPITAL_DISTRIBUTION', () => {
+  it('contains exactly twelve WRITE bindings including CREATE_RECEIVABLE and CREATE_PAYABLE', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(10);
+    expect(bindings).toHaveLength(12);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
+      'CREATE_PAYABLE',
+      'CREATE_RECEIVABLE',
       'REGISTER_CAPITAL_CONTRIBUTION',
       'REGISTER_CAPITAL_DISTRIBUTION',
       'REGISTER_EXPENSE',
@@ -188,6 +212,20 @@ describe('WriteCapabilityBindingRegistry', () => {
         mode: 'WRITE',
       },
     );
+    const createReceivable = Object.assign(
+      new CreateReceivableWriteBinding({} as never, {} as never),
+      {
+        capability: 'CREATE_RECEIVABLE',
+        mode: 'WRITE',
+      },
+    );
+    const createPayable = Object.assign(
+      new CreatePayableWriteBinding({} as never, {} as never),
+      {
+        capability: 'CREATE_PAYABLE',
+        mode: 'WRITE',
+      },
+    );
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
@@ -205,9 +243,11 @@ describe('WriteCapabilityBindingRegistry', () => {
       treasuryTransfer,
       capitalContribution,
       capitalDistribution,
+      createReceivable,
+      createPayable,
     );
     expect(() => registry.onModuleInit()).toThrow(
-      /REGISTER_CAPITAL_DISTRIBUTION/,
+      /CREATE_PAYABLE/,
     );
   });
 });

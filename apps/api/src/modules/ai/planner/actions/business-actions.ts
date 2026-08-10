@@ -38,6 +38,7 @@ const questions: Record<string, string> = {
   investorId: '¿De qué socio es la aportación?',
   account: '¿Cuál es la cuenta de referencia? (Efectivo, Bancos o Cuenta César)',
   contributedAt: '¿Qué fecha tiene la aportación?',
+  counterpartyName: '¿Quién es la contraparte de la cuenta?',
 };
 
 interface ActionOptions {
@@ -460,6 +461,115 @@ function registerCapitalContributionConditionalMissing(
       entity: 'currency',
       question:
         'Las aportaciones de capital V1 son solo en MXN. ¿Confirmas el monto en pesos mexicanos?',
+    });
+  }
+  return missing;
+}
+
+function createReceivableEffects(
+  entities: StructuredEntities,
+): Array<{ area: string; description: string }> {
+  const amount = formatMoneyPreview(entities.amount, entities.currency ?? 'MXN');
+  return [
+    { area: 'Accounts', description: `CxC: +${amount}` },
+    { area: 'Accounts', description: 'Cobrado: $0' },
+    { area: 'Accounts', description: `Pendiente: ${amount}` },
+    { area: 'Treasury', description: 'Tesorería: Sin cambio' },
+    { area: 'P&L', description: 'P&L: Sin cambio' },
+    {
+      area: 'Correction',
+      description:
+        'Después de crearla, cualquier corrección económica se realiza desde Cuentas (cancela y crea de nuevo).',
+    },
+  ];
+}
+
+function createPayableEffects(
+  entities: StructuredEntities,
+): Array<{ area: string; description: string }> {
+  const amount = formatMoneyPreview(entities.amount, entities.currency ?? 'MXN');
+  return [
+    { area: 'Accounts', description: `CxP: +${amount}` },
+    { area: 'Accounts', description: 'Pagado: $0' },
+    { area: 'Accounts', description: `Pendiente: ${amount}` },
+    { area: 'Treasury', description: 'Tesorería: Sin cambio' },
+    { area: 'P&L', description: 'P&L: Sin cambio' },
+    {
+      area: 'Correction',
+      description:
+        'Después de crearla, cualquier corrección económica se realiza desde Cuentas (cancela y crea de nuevo).',
+    },
+  ];
+}
+
+function createManualAccountPreviewFields(
+  entities: StructuredEntities,
+): Array<{ label: string; value: JsonValue }> {
+  const rows: Array<{ label: string; value: JsonValue }> = [];
+  const counterparty =
+    (typeof entities.counterpartyLabel === 'string' && entities.counterpartyLabel) ||
+    (typeof entities.counterpartyName === 'string' && entities.counterpartyName) ||
+    null;
+  if (counterparty) rows.push({ label: 'Contraparte', value: counterparty });
+  if (present(entities.amount)) {
+    rows.push({
+      label: 'Monto',
+      value: formatMoneyPreview(entities.amount, entities.currency ?? 'MXN'),
+    });
+  }
+  if (present(entities.concept)) {
+    rows.push({ label: 'Concepto', value: entities.concept ?? null });
+  }
+  if (present(entities.issuedAt) || present(entities.date)) {
+    rows.push({
+      label: 'Fecha',
+      value: entities.issuedAt ?? entities.date ?? null,
+    });
+  }
+  if (present(entities.dueDate)) {
+    rows.push({ label: 'Vence', value: entities.dueDate ?? null });
+  }
+  if (entities.hasClient === true || entities.hasClient === 'true') {
+    rows.push({ label: 'Cliente CRM', value: 'Sí' });
+  }
+  return rows;
+}
+
+function createReceivableConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  if (!present(entities.counterpartyName) && !present(entities.counterpartyLabel)) {
+    missing.push({
+      entity: 'counterpartyName',
+      question: '¿Quién nos debe? Puedes darme un nombre o un cliente del CRM.',
+    });
+  }
+  const amount = moneyNumber(entities.amount);
+  if (!present(entities.amount) || amount === null || amount <= 0) {
+    missing.push({
+      entity: 'amount',
+      question: '¿De cuánto es la cuenta por cobrar?',
+    });
+  }
+  return missing;
+}
+
+function createPayableConditionalMissing(
+  entities: StructuredEntities,
+): Array<{ entity: string; question: string }> {
+  const missing: Array<{ entity: string; question: string }> = [];
+  if (!present(entities.counterpartyName) && !present(entities.counterpartyLabel)) {
+    missing.push({
+      entity: 'counterpartyName',
+      question: '¿A quién le debemos? Puedes darme un nombre o un cliente del CRM.',
+    });
+  }
+  const amount = moneyNumber(entities.amount);
+  if (!present(entities.amount) || amount === null || amount <= 0) {
+    missing.push({
+      entity: 'amount',
+      question: '¿De cuánto es la cuenta por pagar?',
     });
   }
   return missing;
@@ -1276,6 +1386,64 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
         'UNIQUE_PAYABLE_SELECTED',
         'Se usó la única cuenta por pagar abierta de este contacto.',
         (e) => e.uniquePayableSelected === true || e.uniquePayableSelected === 'true',
+      ),
+    ],
+  }),
+  define({
+    id: 'CREATE_RECEIVABLE',
+    name: 'Create Receivable',
+    category: 'ACCOUNTS',
+    tier: 'HIGH',
+    required: ['counterpartyName', 'amount', 'currency'],
+    optional: [
+      'clientId',
+      'concept',
+      'notes',
+      'issuedAt',
+      'dueDate',
+      'date',
+      'clientQuery',
+      'counterpartyLabel',
+      'hasClient',
+    ],
+    effectsBuilder: createReceivableEffects,
+    previewFields: createManualAccountPreviewFields,
+    conditionalMissing: createReceivableConditionalMissing,
+    reversibility: 'NONE',
+    warnings: [
+      warning(
+        'LEDGER_ONLY',
+        'Esta cuenta es solo en el libro de Cuentas: la Tesorería no se mueve y no se registra un cobro.',
+        () => true,
+      ),
+    ],
+  }),
+  define({
+    id: 'CREATE_PAYABLE',
+    name: 'Create Payable',
+    category: 'ACCOUNTS',
+    tier: 'HIGH',
+    required: ['counterpartyName', 'amount', 'currency'],
+    optional: [
+      'clientId',
+      'concept',
+      'notes',
+      'issuedAt',
+      'dueDate',
+      'date',
+      'clientQuery',
+      'counterpartyLabel',
+      'hasClient',
+    ],
+    effectsBuilder: createPayableEffects,
+    previewFields: createManualAccountPreviewFields,
+    conditionalMissing: createPayableConditionalMissing,
+    reversibility: 'NONE',
+    warnings: [
+      warning(
+        'LEDGER_ONLY',
+        'Esta cuenta es solo en el libro de Cuentas: la Tesorería no se mueve y no se registra un pago.',
+        () => true,
       ),
     ],
   }),
