@@ -28,9 +28,10 @@ describe('BusinessActionCatalog', () => {
       'REGISTER_SALE', 'REGISTER_RECEIVABLE_PAYMENT', 'REGISTER_PAYABLE_PAYMENT', 'REGISTER_TREASURY_TRANSFER', 'REGISTER_CAPITAL_CONTRIBUTION', 'REGISTER_CAPITAL_DISTRIBUTION', 'REGISTER_PURCHASE', 'REGISTER_EXPENSE', 'CREATE_CLIENT',
       'UPDATE_CLIENT',
       'CREATE_RECEIVABLE', 'CREATE_PAYABLE',
+      'REVERSE_EXPENSE',
       'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',
     ]));
-    expect(ids).toHaveLength(29);
+    expect(ids).toHaveLength(30);
   });
 
   it('rejects unknown actions', () => {
@@ -41,13 +42,14 @@ describe('BusinessActionCatalog', () => {
 describe('BusinessCapabilityCatalog', () => {
   it('contains business meaning for V1 capabilities including operational intelligence', () => {
     const entries = new BusinessCapabilityCatalog().list();
-    expect(entries).toHaveLength(29);
+    expect(entries).toHaveLength(30);
     expect(entries.map((entry) => entry.id)).toContain('REGISTER_SALE');
     expect(entries.map((entry) => entry.id)).toContain('REGISTER_CAPITAL_CONTRIBUTION');
     expect(entries.map((entry) => entry.id)).toContain('CREATE_CLIENT');
     expect(entries.map((entry) => entry.id)).toContain('UPDATE_CLIENT');
     expect(entries.map((entry) => entry.id)).toContain('CREATE_RECEIVABLE');
     expect(entries.map((entry) => entry.id)).toContain('CREATE_PAYABLE');
+    expect(entries.map((entry) => entry.id)).toContain('REVERSE_EXPENSE');
     expect(entries.map((entry) => entry.id)).toContain('GET_ATTENTION_ITEMS');
     expect(entries.map((entry) => entry.id)).toContain('GET_BUSINESS_SUMMARY');
     expect(entries.every((entry) => entry.name && entry.description && entry.category)).toBe(true);

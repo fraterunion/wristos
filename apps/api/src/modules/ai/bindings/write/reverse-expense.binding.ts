@@ -92,6 +92,9 @@ export class ReverseExpenseWriteBinding
     if (resolved.kind === 'NONE') {
       throw new ConflictException('REVERSAL_TARGET_NOT_FOUND');
     }
+    if (resolved.kind === 'CANONICAL_INVARIANT') {
+      throw new ConflictException('REVERSAL_INVARIANT');
+    }
     if (resolved.kind === 'ALREADY_REVERSED') {
       // Distinguish same-command vs external via domain reverse / recovery.
       const expense = await this.prisma.operatingExpense.findFirst({
@@ -158,6 +161,7 @@ export class ReverseExpenseWriteBinding
         conceptLabel: snapshot.conceptLabel,
         hasCanonicalTreasuryOutflow: snapshot.hasCanonicalTreasuryOutflow,
         expenseDate: snapshot.expenseDate,
+        economicClass: snapshot.economicClass,
       },
       causality: result.causality,
       recovered: result.causality === 'SAME_COMMAND',
@@ -186,6 +190,7 @@ export class ReverseExpenseWriteBinding
       conceptLabel: string | null;
       hasCanonicalTreasuryOutflow: boolean;
       expenseDate: string | null;
+      economicClass?: 'LEGACY_VALID' | 'CANONICAL_VALID' | 'CANONICAL_INVARIANT';
     };
     causality: 'APPLIED' | 'SAME_COMMAND' | 'EXTERNAL';
     recovered: boolean;
@@ -199,6 +204,9 @@ export class ReverseExpenseWriteBinding
     const sourceLabel = args.snapshot.sourceAccount
       ? EXPENSE_SOURCE_LABELS[args.snapshot.sourceAccount] ?? args.snapshot.sourceAccount
       : null;
+    const economicClass =
+      args.snapshot.economicClass ??
+      (args.snapshot.hasCanonicalTreasuryOutflow ? 'CANONICAL_VALID' : 'LEGACY_VALID');
     const preview = buildExpenseReversalPreview({
       kind: 'OPERATING_EXPENSE',
       amount: args.snapshot.amount,
@@ -209,6 +217,7 @@ export class ReverseExpenseWriteBinding
       conceptLabel: args.snapshot.conceptLabel,
       hasCanonicalTreasuryOutflow: args.snapshot.hasCanonicalTreasuryOutflow,
       active: false,
+      economicClass,
     });
 
     const affected: BusinessActionResult['affectedEntities'] = [

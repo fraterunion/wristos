@@ -62,6 +62,14 @@ export function isPureReferentialUtterance(text: string): boolean {
   const normalized = text.trim().replace(/\s+/g, ' ');
   if (!detectDeterministicReference(normalized)) return false;
   if (looksLikeAccountsContinuation(normalized)) return false;
+  // 26C.1: undo/delete/reverse verbs are correction intents, not entity deixis.
+  if (
+    /\b(deshaz|deshacer|revierte|revertir|revi[eé]rtelo|deshazlo|borra|borrar|elimina|eliminar|anula|anular|quita|quitar|me equivoqu[eé])\b/i.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
   if (/\b(busca|busc[ae]|vend[ií]|compr[eé]|pag[oó]|muéstr|muestr|registr|agrega|actualiz)\w*\b/i.test(normalized)) {
     return false;
   }

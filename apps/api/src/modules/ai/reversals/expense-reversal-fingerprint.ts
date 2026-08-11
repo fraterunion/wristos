@@ -2,14 +2,21 @@ import { createHash } from 'crypto';
 import { OperatingExpense, TreasuryEntry } from '@prisma/client';
 import { operatingExpenseOutflowProvenanceKey } from '../../treasury/treasury.service';
 import { ExpenseReversalSnapshot } from './financial-reversal.types';
+import {
+  classifyExpenseReversalEconomics,
+  hasActiveCanonicalOutflow,
+  ExpenseReversalEconomicClass,
+} from './expense-reversal-classification';
 
 /**
  * Material fingerprint for REVERSE_EXPENSE targets.
  *
  * Includes: expenseId, amount, category, sourceAccount, expenseDate (UTC day),
- * currency, whether canonical Treasury OUTFLOW provenance exists, active state.
+ * currency, whether an *active* canonical Treasury OUTFLOW exists, active state.
  *
  * Excludes mutable free-form notes so note edits do not stale a valid plan.
+ *
+ * 26C.1: soft-deleted provenance does NOT count as live canonical outflow.
  */
 export type ExpenseFingerprintInput = {
   expenseId: string;
@@ -20,6 +27,7 @@ export type ExpenseFingerprintInput = {
   currency: string;
   hasCanonicalTreasuryOutflow: boolean;
   active: boolean;
+  economicClass: ExpenseReversalEconomicClass;
 };
 
 export function utcDayBucket(value: Date | string | null | undefined): string | null {
@@ -49,9 +57,15 @@ export function buildExpenseFingerprintInput(
     | 'deletedAt'
     | 'notes'
   >,
-  treasuryOutflow: Pick<TreasuryEntry, 'id' | 'deletedAt'> | null,
+  treasuryOutflow: Pick<
+    TreasuryEntry,
+    'id' | 'deletedAt' | 'direction' | 'amountMxn' | 'account'
+  > | null,
 ): ExpenseFingerprintInput {
-  const hasCanonicalTreasuryOutflow = Boolean(treasuryOutflow);
+  const economicClass = classifyExpenseReversalEconomics({
+    expense,
+    treasuryOutflow,
+  });
   return {
     expenseId: expense.id,
     amount: expense.amount.toFixed(2),
@@ -59,8 +73,9 @@ export function buildExpenseFingerprintInput(
     sourceAccount: expense.sourceAccount ?? null,
     expenseDate: utcDayBucket(expense.expenseDate),
     currency: String(expense.currency),
-    hasCanonicalTreasuryOutflow,
+    hasCanonicalTreasuryOutflow: hasActiveCanonicalOutflow(economicClass),
     active: expense.deletedAt == null,
+    economicClass,
   };
 }
 
@@ -82,6 +97,7 @@ export function expenseReversalFingerprint(input: ExpenseFingerprintInput): stri
 export function expenseReversalSnapshot(
   expense: Pick<
     OperatingExpense,
+    | 'id'
     | 'amount'
     | 'category'
     | 'sourceAccount'
@@ -90,12 +106,19 @@ export function expenseReversalSnapshot(
     | 'deletedAt'
     | 'notes'
   >,
-  treasuryOutflow: Pick<TreasuryEntry, 'id'> | null,
+  treasuryOutflow: Pick<
+    TreasuryEntry,
+    'id' | 'deletedAt' | 'direction' | 'amountMxn' | 'account'
+  > | null,
 ): ExpenseReversalSnapshot {
   const notes =
     typeof expense.notes === 'string' && expense.notes.trim()
       ? expense.notes.trim().slice(0, 80)
       : null;
+  const economicClass = classifyExpenseReversalEconomics({
+    expense,
+    treasuryOutflow,
+  });
   return {
     kind: 'OPERATING_EXPENSE',
     amount: expense.amount.toFixed(2),
@@ -104,8 +127,9 @@ export function expenseReversalSnapshot(
     sourceAccount: (expense.sourceAccount as ExpenseReversalSnapshot['sourceAccount']) ?? null,
     expenseDate: utcDayBucket(expense.expenseDate),
     conceptLabel: notes,
-    hasCanonicalTreasuryOutflow: Boolean(treasuryOutflow),
+    hasCanonicalTreasuryOutflow: hasActiveCanonicalOutflow(economicClass),
     active: expense.deletedAt == null,
+    economicClass,
   };
 }
 

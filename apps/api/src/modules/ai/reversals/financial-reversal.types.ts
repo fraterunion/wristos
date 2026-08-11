@@ -8,6 +8,10 @@
  * REVERSE_TREASURY_TRANSFER remains AI-UNBOUND.
  */
 
+import type { ExpenseReversalEconomicClass } from './expense-reversal-classification';
+
+export type { ExpenseReversalEconomicClass };
+
 export const REVERSAL_FRAMEWORK_VERSION = '1.0.0';
 
 /** All reversal capabilities in the framework (bound + unbound). */
@@ -49,8 +53,11 @@ export type ExpenseReversalSnapshot = {
   sourceAccount: 'CASH' | 'BANK' | 'CESAR' | null;
   expenseDate: string | null;
   conceptLabel: string | null;
+  /** True only for CANONICAL_VALID with an active OUTFLOW leg. */
   hasCanonicalTreasuryOutflow: boolean;
   active: boolean;
+  /** 26C.1 positive classification — never infer legacy from a missing active leg alone. */
+  economicClass: ExpenseReversalEconomicClass;
 };
 
 export type TransferReversalSnapshot = {

@@ -34,6 +34,7 @@ import {
   buildProviderFailureResponse,
   buildReferenceClarificationResponse,
 } from './typed-responses';
+import { detectExpenseCorrectionLanguage } from '../reversals/expense-correction-language';
 
 const WRITE_CLARIFICATION_INTENTS = new Set<string>([
   'REGISTER_SALE',
@@ -412,6 +413,65 @@ export class NaturalLanguageAssistantService {
 
         // 4) lock.kind === 'NO_MATCH' → fall through to unrestricted NLP.
       }
+    }
+
+    // 26C.1 — Deterministic expense correction language BEFORE pure deictic "eso"
+    // steal and before Anthropic. Provider remains assistive for complex phrasing.
+    const expenseCorrection = detectExpenseCorrectionLanguage(normalizedText);
+    if (expenseCorrection) {
+      if (expenseCorrection.kind === 'BLOCKED_NON_EXPENSE_REVERSAL') {
+        const response = buildReferenceClarificationResponse(
+          'Todavía no puedo deshacer esa operación de forma segura desde el asistente. Indica qué quieres corregir o hazlo desde el flujo canónico.',
+          responseCtx,
+          'UNSUPPORTED_REVERSAL',
+        );
+        await this.aiRequests.failUnattached(
+          request,
+          actor,
+          'UNKNOWN',
+          response,
+          'UNSUPPORTED_REVERSAL',
+        );
+        return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+      }
+
+      const correctionIntent = expenseCorrection.intent;
+      const correctionEntities = expenseCorrection.entities as Record<
+        string,
+        string | number | boolean
+      >;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: correctionIntent,
+        entities: correctionEntities,
+        candidateHash: `deterministic-expense-correction:${expenseCorrection.kind}`,
+      });
+      telem(this.telemetry, {
+        event: 'ProviderCompleted',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: correctionIntent,
+        clarificationReason: expenseCorrection.kind,
+        answered: true,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: correctionIntent,
+          entities: correctionEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText: dto.text,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: correctionIntent,
+        response: continued,
+        resolvedEntities: correctionEntities,
+      };
     }
 
     // Pure ordinal/deictic selection — no LLM, no fabricated IDs.
