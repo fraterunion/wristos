@@ -17,7 +17,7 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { seedWatchReferences } from './seeds/watch-references';
 
-const prisma = new PrismaClient();
+const defaultPrismaClient = new PrismaClient();
 
 const dayMs = 24 * 60 * 60 * 1000;
 const daysAgo = (days: number) => new Date(Date.now() - days * dayMs);
@@ -1455,10 +1455,20 @@ const operatingExpenseSeeds: OperatingExpenseSeed[] = [
   { category: OperatingExpenseCategory.COMMISSIONS, amount: 48100, notes: 'Agent commission — AP Royal Oak Jumbo sale', daysAgoOffset: 170 },
 ];
 
-const DEMO_SLUG = 'wristos-demo';
+export const DEMO_SLUG = 'wristos-demo';
 
-async function main() {
-  const tenantName = process.env.SEED_TENANT_NAME ?? 'WristOS Demo Tenant';
+/**
+ * Wipes and re-seeds the demo tenant's business data with a deterministic,
+ * synthetic dataset. Safe to call repeatedly (idempotent) and structurally
+ * incapable of touching any tenant whose slug isn't the demo slug unless
+ * SEED_ALLOW_NONDEMO=true is explicitly set — see the guard below.
+ *
+ * Shared by both the CLI entrypoint (`npx prisma db seed`) and the
+ * platform-admin-gated demo-reset API endpoint, so there is exactly one
+ * implementation of "wipe + reseed" to keep in sync.
+ */
+export async function seedDemoTenant(prisma: PrismaClient = defaultPrismaClient) {
+  const tenantName = process.env.SEED_TENANT_NAME ?? 'Meridian Timepieces';
   const tenantSlug = process.env.SEED_TENANT_SLUG ?? DEMO_SLUG;
   const roleName = process.env.SEED_ROLE_NAME ?? 'OWNER';
   const userEmail = (process.env.SEED_USER_EMAIL ?? 'owner@wristos.local').toLowerCase();
@@ -1476,14 +1486,16 @@ async function main() {
   }
 
   const passwordHash = await bcrypt.hash(userPassword, 12);
+  const isDemo = tenantSlug === DEMO_SLUG;
 
   const tenant = await prisma.tenant.upsert({
     where: { slug: tenantSlug },
-    update: { name: tenantName, status: TenantStatus.ACTIVE },
+    update: { name: tenantName, status: TenantStatus.ACTIVE, isDemo },
     create: {
       name: tenantName,
       slug: tenantSlug,
       status: TenantStatus.ACTIVE,
+      isDemo,
     },
   });
 
@@ -1553,8 +1565,8 @@ async function main() {
     });
     watchByKey.set(watch.key, {
       id: created.id,
-      brand: created.brand,
-      model: created.model,
+      brand: watch.brand,
+      model: watch.model,
       priceMin: Number(created.priceMin),
       priceMax: Number(created.priceMax),
     });
@@ -2064,11 +2076,17 @@ async function main() {
   });
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+// Only auto-run when this file is executed directly (CLI/`prisma db seed`),
+// not when seedDemoTenant is imported by another module (e.g. the
+// demo-reset API endpoint), which supplies its own PrismaClient/transaction.
+const isDirectRun = import.meta.url === `file://${process.argv[1]}`;
+if (isDirectRun) {
+  seedDemoTenant()
+    .catch((error) => {
+      console.error(error);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await defaultPrismaClient.$disconnect();
+    });
+}
