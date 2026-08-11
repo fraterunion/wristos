@@ -14,6 +14,7 @@ import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
+import { mapClarificationAnswer } from '../clarification/clarification-presenter';
 import { CompositionOrchestrator } from '../composition/composition-orchestrator.service';
 import {
   COMPOSITION_CANCEL_ID,
@@ -30,6 +31,24 @@ import {
   buildReferenceClarificationResponse,
 } from './typed-responses';
 
+const WRITE_CLARIFICATION_INTENTS = new Set<string>([
+  'REGISTER_SALE',
+  'REGISTER_RECEIVABLE_PAYMENT',
+  'REGISTER_PAYABLE_PAYMENT',
+  'REGISTER_TREASURY_TRANSFER',
+  'REGISTER_CAPITAL_CONTRIBUTION',
+  'REGISTER_CAPITAL_DISTRIBUTION',
+  'REGISTER_EXPENSE',
+  'REGISTER_PURCHASE',
+  'CREATE_CLIENT',
+  'UPDATE_CLIENT',
+  'CREATE_RECEIVABLE',
+  'CREATE_PAYABLE',
+]);
+
+function looksLikeCancel(text: string): boolean {
+  return /^(cancela|cancelar|olvida(?:lo)?|olv[ií]dalo|deja|no|mejor no)\.?$/i.test(text.trim());
+}
 export interface NaturalLanguageAssistantResult {
   /** The intent the message ultimately resolved to, or 'UNKNOWN' for anything that never reached the orchestrator. */
   resolvedIntent: IntentCandidateIntent;
@@ -109,6 +128,110 @@ export class NaturalLanguageAssistantService {
 
     const loaded = await this.workingContext.load(actor.tenantId, actor.userId, dto.workspaceId);
     const deterministicRef = detectDeterministicReference(normalizedText);
+
+    // Active clarification continuation: map closed answers into the pending write
+    // without losing prior entities. Cancel phrases clear the draft politely.
+    const pendingField = loaded.working?.pendingMissingFields?.[0];
+    const pendingIntent = loaded.working?.lastIntent;
+    if (
+      pendingField &&
+      pendingIntent &&
+      WRITE_CLARIFICATION_INTENTS.has(pendingIntent) &&
+      !deterministicRef
+    ) {
+      if (looksLikeCancel(normalizedText)) {
+        const response = buildReferenceClarificationResponse(
+          'De acuerdo, cancelé ese borrador.',
+          responseCtx,
+          'CLARIFICATION_CANCELLED',
+        );
+        await this.aiRequests.failUnattached(request, actor, pendingIntent, response, 'CLARIFICATION_CANCELLED');
+        return { resolvedIntent: pendingIntent, response, resolvedEntities: {} };
+      }
+
+      const mapped = mapClarificationAnswer(pendingField, normalizedText);
+      if (mapped) {
+        const prior = dto.conversationId
+          ? await this.prisma.aIRequest.findFirst({
+              where: {
+                tenantId: actor.tenantId,
+                conversationId: dto.conversationId,
+                id: { not: request.id },
+                requestPayload: {
+                  path: ['resolvedIntent'],
+                  equals: pendingIntent,
+                },
+              },
+              orderBy: { createdAt: 'desc' },
+              select: { requestPayload: true },
+            })
+          : null;
+        const priorPayload =
+          prior?.requestPayload && typeof prior.requestPayload === 'object'
+            ? (prior.requestPayload as Record<string, unknown>)
+            : null;
+        const priorEntities = Object.fromEntries(
+          (
+            priorPayload?.resolvedEntities &&
+            typeof priorPayload.resolvedEntities === 'object' &&
+            !Array.isArray(priorPayload.resolvedEntities)
+              ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
+              : []
+          ).filter(
+            (entry): entry is [string, string | number | boolean] =>
+              typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
+          ),
+        );
+
+        // Expense uses `source`; payment destination uses `destination`.
+        let fieldKey = mapped.field;
+        let fieldValue: string | number | boolean = mapped.value;
+        if (pendingIntent === 'REGISTER_EXPENSE' && (fieldKey === 'sourceAccount' || fieldKey === 'cashAccount')) {
+          fieldKey = 'source';
+        }
+
+        const continuedEntities: Record<string, string | number | boolean> = {
+          ...priorEntities,
+          [fieldKey]: fieldValue,
+        };
+        // Mirror common aliases used by enrichers.
+        if (fieldKey === 'source') continuedEntities.sourceAccount = fieldValue;
+        if (fieldKey === 'destination') continuedEntities.destinationAccount = fieldValue;
+
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: pendingIntent,
+          entities: continuedEntities,
+          candidateHash: `clarification:${pendingField}`,
+        });
+        telem(this.telemetry, {
+          event: 'ClarificationAnswered',
+          tenantId: actor.tenantId,
+          conversationId: dto.conversationId,
+          requestId: request.id,
+          capability: pendingIntent,
+          clarificationReason: pendingField,
+          answered: true,
+        });
+        const continued = await this.assistant.executeClaimed(
+          actor,
+          {
+            intent: pendingIntent as BusinessActionId,
+            entities: continuedEntities,
+            surface: dto.surface ?? 'DESKTOP',
+            clientRequestId: dto.clientRequestId,
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            userDisplayText: dto.text,
+          },
+          request,
+        );
+        return {
+          resolvedIntent: pendingIntent,
+          response: continued,
+          resolvedEntities: continuedEntities,
+        };
+      }
+    }
 
     // Pure ordinal/deictic selection — no LLM, no fabricated IDs.
     if (isPureReferentialUtterance(normalizedText) && deterministicRef) {
@@ -675,12 +798,64 @@ export class NaturalLanguageAssistantService {
         clarificationReason: policy.action,
         failureType: mapFailureTaxonomy(policy.action),
       });
-      const response = buildPolicyResponse(policy, responseCtx);
+      const response = buildPolicyResponse(policy, responseCtx, {
+        capability: outcome.candidate.intent,
+        entities,
+      });
       await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, response, policy.action);
       return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: entities };
     }
 
     const intent = outcome.candidate.intent as BusinessActionId;
+    // If we were clarifying a write, preserve prior entities across free-text answers.
+    if (
+      pendingField &&
+      pendingIntent &&
+      WRITE_CLARIFICATION_INTENTS.has(pendingIntent) &&
+      intent === pendingIntent
+    ) {
+      const prior = dto.conversationId
+        ? await this.prisma.aIRequest.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              conversationId: dto.conversationId,
+              id: { not: request.id },
+              requestPayload: {
+                path: ['resolvedIntent'],
+                equals: pendingIntent,
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { requestPayload: true },
+          })
+        : null;
+      const priorPayload =
+        prior?.requestPayload && typeof prior.requestPayload === 'object'
+          ? (prior.requestPayload as Record<string, unknown>)
+          : null;
+      const priorEntities = Object.fromEntries(
+        (
+          priorPayload?.resolvedEntities &&
+          typeof priorPayload.resolvedEntities === 'object' &&
+          !Array.isArray(priorPayload.resolvedEntities)
+            ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
+            : []
+        ).filter(
+          (entry): entry is [string, string | number | boolean] =>
+            typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
+        ),
+      );
+      entities = { ...priorEntities, ...entities };
+      telem(this.telemetry, {
+        event: 'ClarificationAnswered',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: pendingIntent,
+        clarificationReason: pendingField,
+        answered: true,
+      });
+    }
     const structuredRequest: StructuredAssistantRequest = {
       conversationId: dto.conversationId,
       workspaceId: dto.workspaceId,

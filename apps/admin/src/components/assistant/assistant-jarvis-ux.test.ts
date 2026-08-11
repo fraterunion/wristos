@@ -74,3 +74,21 @@ describe('Assistant Jarvis UX (26UX) source guards', () => {
     assert.ok(composerSrc.includes('safe-area-inset-bottom'));
   });
 });
+
+describe('Assistant conversational clarifications (26UX.2) source guards', () => {
+  const root = join(__dirname, '../../..');
+  const blocksSrc = readFileSync(
+    join(root, 'src/components/assistant/conversation-blocks.tsx'),
+    'utf8',
+  );
+  const adapterSrc = readFileSync(
+    join(root, 'src/components/assistant/response-to-conversation-blocks.ts'),
+    'utf8',
+  );
+
+  it('removes mini-form Continuar clarification UI', () => {
+    assert.equal(blocksSrc.includes('MissingFieldsForm'), false);
+    assert.equal(blocksSrc.includes('>Continuar<'), false);
+    assert.ok(adapterSrc.includes('looksTechnicalClarification'));
+  });
+});

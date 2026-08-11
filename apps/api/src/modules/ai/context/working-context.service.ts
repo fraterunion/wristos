@@ -5,6 +5,7 @@ import {
   AssistantWorkingContext,
   applyPresentedCandidates,
   applySelectedEntity,
+  emptyWorkingContext,
   extractPresentedCandidatesFromEntityList,
   hashEntityId,
   readWorkingContext,
@@ -267,7 +268,53 @@ export function deriveWorkingContextAfterResponse(args: {
     working = applySelectedEntity(working, { type: 'ACCOUNT_ENTRY', id: accountId, label }, now);
   }
 
-  if (!working) return null;
+  if (!working) {
+    if (args.responseType !== 'MISSING_FIELDS_CARD' && args.responseType !== 'ENTITY_LIST' && args.responseType !== 'ENTITY_PICKER') {
+      return null;
+    }
+    working = emptyWorkingContext(now);
+  }
+
+  if (args.responseType === 'MISSING_FIELDS_CARD') {
+    const clarificationField =
+      typeof args.payload.clarificationField === 'string' ? args.payload.clarificationField : null;
+    const groups = Array.isArray(args.payload.groups) ? args.payload.groups : [];
+    const firstKey =
+      clarificationField ||
+      (() => {
+        for (const group of groups) {
+          if (!group || typeof group !== 'object') continue;
+          const fields = (group as { fields?: unknown }).fields;
+          if (!Array.isArray(fields) || !fields[0] || typeof fields[0] !== 'object') continue;
+          const key = (fields[0] as { key?: unknown }).key;
+          if (typeof key === 'string' && key) return key;
+        }
+        return null;
+      })();
+    return {
+      ...working,
+      lastIntent: (args.intent as AssistantWorkingContext['lastIntent']) ?? working.lastIntent,
+      lastResponseType: args.responseType,
+      pendingMissingFields: firstKey ? [firstKey] : working.pendingMissingFields,
+      contextUpdatedAt: now.toISOString(),
+    };
+  }
+
+  // Successful progression clears pending clarification slots.
+  if (
+    args.responseType === 'ACTION_PREVIEW_CARD' ||
+    args.responseType === 'SUCCESS_RECEIPT' ||
+    args.responseType === 'ERROR_RECOVERY_CARD'
+  ) {
+    const { pendingMissingFields: _drop, pendingActionRunId: _drop2, ...rest } = working;
+    return {
+      ...rest,
+      lastIntent: (args.intent as AssistantWorkingContext['lastIntent']) ?? working.lastIntent,
+      lastResponseType: args.responseType,
+      contextUpdatedAt: now.toISOString(),
+    };
+  }
+
   return {
     ...working,
     lastIntent: (args.intent as AssistantWorkingContext['lastIntent']) ?? working.lastIntent,

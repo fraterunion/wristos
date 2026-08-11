@@ -66,7 +66,7 @@ describe('expense entity enricher', () => {
     expect(enriched.source).toBeUndefined();
   });
 
-  it('resolves rent + bank source', () => {
+  it('resolves rent + bank source without inventing currency', () => {
     const enriched = enrichExpenseEntities({
       amount: 18000,
       concept: 'renta',
@@ -74,6 +74,16 @@ describe('expense entity enricher', () => {
     });
     expect(enriched.category).toBe('OTHER');
     expect(enriched.source).toBe('BANK');
+    expect(enriched.currency).toBeUndefined();
+  });
+
+  it('preserves explicit MXN currency', () => {
+    const enriched = enrichExpenseEntities({
+      amount: 18000,
+      currency: 'mxn',
+      concept: 'renta',
+      source: 'bancos',
+    });
     expect(enriched.currency).toBe('MXN');
   });
 });

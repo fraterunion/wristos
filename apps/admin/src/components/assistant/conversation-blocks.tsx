@@ -1,6 +1,5 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
 import { AssistantMessage } from '@/components/assistant/conversation-message';
 import { ConversationChoices } from '@/components/assistant/conversation-choice';
 import { ConversationPreview, ConversationReceipt } from '@/components/assistant/conversation-preview';
@@ -18,49 +17,11 @@ function delayFor(index: number): number {
   return Math.min(index, STAGGER_CAP) * STAGGER_STEP_MS;
 }
 
-function MissingFieldsForm({
-  fields,
-  onContinue,
-  busy,
-}: {
-  fields: Array<{ key: string; question: string }>;
-  onContinue: (entities: Record<string, JsonValue>) => void;
-  busy?: boolean;
-}) {
-  const [values, setValues] = useState<Record<string, string>>({});
-  if (!fields.length) return null;
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    onContinue(Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])));
-  };
-
-  return (
-    <form className="mt-2 space-y-3" onSubmit={submit}>
-      {fields.map((field) => (
-        <label key={field.key} className="block">
-          <span className="mb-1.5 block text-[13.5px] leading-5 text-white/75">{field.question}</span>
-          <input
-            className="w-full rounded-xl bg-white/[0.05] px-3 py-2.5 text-sm outline-none ring-1 ring-white/10 transition focus:ring-white/25"
-            value={values[field.key] ?? ''}
-            onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
-            required
-            maxLength={200}
-          />
-        </label>
-      ))}
-      <button type="submit" disabled={busy} className="min-h-10 rounded-full bg-white px-4 py-2 text-[13px] font-semibold text-black disabled:opacity-50">
-        Continuar
-      </button>
-    </form>
-  );
-}
-
 export function ConversationBlocks({
   blocks,
   onSelectChoice,
   onSearchAgain,
-  onContinue,
+  onContinue: _onContinue,
   onConfirmSale,
   onEdit,
   onDismiss,
@@ -71,6 +32,7 @@ export function ConversationBlocks({
   blocks: ConversationBlock[];
   onSelectChoice?: (id: string, label: string) => void;
   onSearchAgain?: () => void;
+  /** @deprecated clarification no longer uses mini-forms; kept for call-site compatibility. */
   onContinue?: (entities: Record<string, JsonValue>) => void;
   onConfirmSale?: (args: { actionRunId: string; planFingerprint: string }) => void;
   onEdit?: () => void;
@@ -150,12 +112,22 @@ export function ConversationBlocks({
           case 'question':
             messageIndex += 1;
             return (
-              <AssistantMessage key={block.id} showAvatar={messageIndex === 0} delayMs={delayMs}>
-                <div className="space-y-3">
+              <div key={block.id} className="space-y-2">
+                <AssistantMessage showAvatar={messageIndex === 0} delayMs={delayMs}>
                   <p>{block.text}</p>
-                  {onContinue ? <MissingFieldsForm fields={block.fields} onContinue={onContinue} busy={busy} /> : null}
-                </div>
-              </AssistantMessage>
+                </AssistantMessage>
+                {block.choices?.length && onSelectChoice ? (
+                  <ConversationChoices
+                    disabled={busy}
+                    delayMs={delayMs + 40}
+                    options={block.choices.map((choice) => ({
+                      id: choice.id,
+                      label: choice.label,
+                    }))}
+                    onSelect={(_id, label) => onSelectChoice(_id, label)}
+                  />
+                ) : null}
+              </div>
             );
           case 'preview':
             messageIndex += 1;

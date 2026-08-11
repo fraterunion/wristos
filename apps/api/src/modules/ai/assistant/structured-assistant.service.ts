@@ -19,9 +19,10 @@ import { ReceivablePaymentEntityResolver } from '../bindings/write/receivable-pa
 import { SaleCustomerEntityResolver } from '../bindings/write/sale-customer-entity-resolver.service';
 import { UpdateClientEntityResolver } from '../bindings/write/update-client-entity-resolver.service';
 import { CompositionOrchestrator } from '../composition/composition-orchestrator.service';
+import { buildConversationalMissingFieldsPayload } from '../clarification/clarification-presenter';
 import { canonicalize, JsonValue } from '../domain/canonical-json';
 import { PlannerService } from '../planner/planner.service';
-import { BusinessExecutionPlan } from '../planner/planner.types';
+import { BusinessExecutionPlan, StructuredEntities } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
 import { AIRequestService } from './ai-request.service';
@@ -787,7 +788,14 @@ export class StructuredAssistantService {
             clarificationReason: missing.entity,
           });
         }
-        const response = this.clarificationResponse(request.id, request.traceId, prepared, checkpoint.actionRun.id, plan);
+        const response = this.clarificationResponse(
+          request.id,
+          request.traceId,
+          prepared,
+          checkpoint.actionRun.id,
+          plan,
+          plannedInput.entities,
+        );
         return this.persistence.complete(request.id, actor, response, workspaceVersion, AIAuditEventType.ASSISTANT_REQUEST_COMPLETED, AIRequestStatus.NEEDS_CLARIFICATION, { intent: plannedInput.intent, entities });
       }
       if (!READ_ACTIONS.has(plannedInput.intent)) {
@@ -874,14 +882,29 @@ export class StructuredAssistantService {
     }
   }
 
-  private clarificationResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, plan: BusinessExecutionPlan): StructuredAssistantResponse {
-    return this.responseBase(requestId, traceId, prepared, actionRunId, 'NEEDS_INPUT', 'MISSING_FIELDS_CARD', {
-      title: 'Faltan datos para continuar',
-      groups: [{ id: 'required', label: 'Datos requeridos', fields: plan.missingEntities.map((item) => ({ key: item.entity, question: item.question })) }],
-      message: 'Completa los campos indicados. No se ejecutó ninguna consulta ni se modificaron datos.',
-      unchanged: 'No se ejecutó ninguna acción.',
-      nextAction: 'Envía una nueva solicitud estructurada con los campos requeridos.',
-    }, plan);
+  private clarificationResponse(
+    requestId: string,
+    traceId: string,
+    prepared: PreparedAssistantRequest,
+    actionRunId: string,
+    plan: BusinessExecutionPlan,
+    entities: StructuredEntities = {},
+  ): StructuredAssistantResponse {
+    const payload = buildConversationalMissingFieldsPayload({
+      capability: plan.businessAction,
+      missing: plan.missingEntities.map((item) => ({ entity: item.entity, question: item.question })),
+      entities,
+    });
+    return this.responseBase(
+      requestId,
+      traceId,
+      prepared,
+      actionRunId,
+      'NEEDS_INPUT',
+      'MISSING_FIELDS_CARD',
+      payload,
+      plan,
+    );
   }
 
   private writePreviewResponse(requestId: string, traceId: string, prepared: PreparedAssistantRequest, actionRunId: string, plan: BusinessExecutionPlan): StructuredAssistantResponse {

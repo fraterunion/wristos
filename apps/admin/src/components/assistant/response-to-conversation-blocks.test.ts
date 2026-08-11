@@ -98,20 +98,20 @@ describe('responseToConversationBlocks', () => {
     assert.equal(list.items[0].label, 'Rolex GMT-Master II (126710BLRO)');
   });
 
-  it('groups MISSING_FIELDS_CARD fields into one conversational question block', () => {
+  it('presents MISSING_FIELDS_CARD as one conversational question (first field only)', () => {
     const candidate = response('NEEDS_INPUT', 'MISSING_FIELDS_CARD', {
       groups: [{ id: 'required', label: 'Datos requeridos', fields: [
         { key: 'clientId', question: '¿Quién compró el reloj?' },
         { key: 'currency', question: '¿En qué moneda fue la venta?' },
       ] }],
-      message: 'Completa los campos indicados.',
+      message: '¿Quién compró el reloj?',
     });
     const blocks = responseToConversationBlocks('REGISTER_SALE', candidate);
     assert.equal(blocks.length, 1);
     assert.equal(blocks[0].kind, 'question');
     const question = blocks[0] as { text: string; fields: Array<{ key: string; question: string }> };
-    assert.equal(question.text, 'Completa los campos indicados.');
-    assert.deepEqual(question.fields.map((field) => field.key), ['clientId', 'currency']);
+    assert.equal(question.text, '¿Quién compró el reloj?');
+    assert.deepEqual(question.fields.map((field) => field.key), ['clientId']);
   });
 
   it('maps non-executable ACTION_PREVIEW_CARD to a manual-module CTA (never bare "Confirmar")', () => {
