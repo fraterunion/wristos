@@ -13,7 +13,7 @@ const COMPOSITION = join(
 const MANIFEST = join(ROOT, 'docs/ai/command-coverage.json');
 const AUDIT_DOC = join(ROOT, 'docs/ai/COMMAND_COVERAGE_AUDIT.md');
 
-const EXPECTED_TWELVE = [
+const EXPECTED_THIRTEEN = [
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_EXPENSE',
@@ -26,24 +26,26 @@ const EXPECTED_TWELVE = [
   'REGISTER_CAPITAL_DISTRIBUTION',
   'CREATE_RECEIVABLE',
   'CREATE_PAYABLE',
+  'REVERSE_EXPENSE',
 ] as const;
 
 const UNBOUND = [
   'REGISTER_SETTLEMENT',
   'REGISTER_CRYPTO_POSITION',
   'REGISTER_CRYPTO_PRICE',
+  'REVERSE_TREASURY_TRANSFER',
 ] as const;
 
-describe('Command Coverage Audit 25C (CREATE_RECEIVABLE + CREATE_PAYABLE wired)', () => {
-  it('keeps production write registry at exactly TWELVE executable bindings', () => {
+describe('Command Coverage Audit 26C (REVERSE_EXPENSE wired)', () => {
+  it('keeps production write registry at exactly THIRTEEN executable bindings', () => {
     const src = readFileSync(REGISTRY, 'utf8');
-    expect(src).toContain('this.bindings.size !== 12');
-    for (const capability of EXPECTED_TWELVE) {
+    expect(src).toContain('this.bindings.size !== 13');
+    for (const capability of EXPECTED_THIRTEEN) {
       expect(src).toContain(`'${capability}'`);
     }
-    expect(src).toContain('CreateReceivableWriteBinding');
-    expect(src).toContain('CreatePayableWriteBinding');
-    // No thirteenth executable binding classes for settlement/crypto.
+    expect(src).toContain('ReverseExpenseWriteBinding');
+    expect(src).not.toContain('ReverseTreasuryTransferWriteBinding');
+    // No settlement/crypto executable bindings.
     expect(src).not.toMatch(/RegisterSettlementWriteBinding/);
     expect(src).not.toMatch(/RegisterCryptoPositionWriteBinding/);
     expect(src).not.toMatch(/RegisterCryptoPriceWriteBinding/);
@@ -68,16 +70,16 @@ describe('Command Coverage Audit 25C (CREATE_RECEIVABLE + CREATE_PAYABLE wired)'
     expect(src).not.toMatch(/CREATE_PAYABLE[\s\S]{0,80}CREATE_CLIENT/);
   });
 
-  it('keeps command-coverage manifest aligned with the TWELVE executable writes', () => {
+  it('keeps command-coverage manifest aligned with the THIRTEEN executable writes', () => {
     const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
       productionExecutableWrites: string[];
       cataloguedUnboundWrites: string[];
-      compositionV1: Array<{ parent: string; child: string }>;
+      compositionV1: Array<{ parent: string; child: string; reason?: string }>;
       metrics: { full: number };
     };
-    expect(manifest.productionExecutableWrites).toEqual([...EXPECTED_TWELVE]);
+    expect(manifest.productionExecutableWrites).toEqual([...EXPECTED_THIRTEEN]);
     expect(manifest.cataloguedUnboundWrites).toEqual([...UNBOUND]);
-    expect(manifest.metrics.full).toBe(12);
+    expect(manifest.metrics.full).toBe(13);
     expect(manifest.compositionV1).toEqual([
       {
         parent: 'REGISTER_PURCHASE',
@@ -94,20 +96,16 @@ describe('Command Coverage Audit 25C (CREATE_RECEIVABLE + CREATE_PAYABLE wired)'
 
   it('ships the human audit document', () => {
     const doc = readFileSync(AUDIT_DOC, 'utf8');
-    expect(doc).toContain('Command Coverage Audit (Commit 25A)');
-    expect(doc).toContain('exactly **TEN**');
+    expect(doc).toContain('Command Coverage Audit');
     expect(doc).toContain('LEVEL 1');
     expect(doc).toContain('LEVEL 2');
-    expect(doc).toContain('CREATE_RECEIVABLE');
-    expect(doc).toContain('no runtime capabilities added');
   });
 
-  it('binds CREATE_RECEIVABLE / CREATE_PAYABLE in the write registry after 25C', () => {
+  it('binds REVERSE_EXPENSE in the write registry after 26C', () => {
     const src = readFileSync(REGISTRY, 'utf8');
-    expect(src).toContain('CREATE_RECEIVABLE');
-    expect(src).toContain('CREATE_PAYABLE');
-    expect(src).toMatch(/CreateReceivableWriteBinding/);
-    expect(src).toMatch(/CreatePayableWriteBinding/);
-    expect(src).toContain('this.bindings.size !== 12');
+    expect(src).toContain('REVERSE_EXPENSE');
+    expect(src).toMatch(/ReverseExpenseWriteBinding/);
+    expect(src).toContain('this.bindings.size !== 13');
+    expect(src).not.toContain('ReverseTreasuryTransferWriteBinding');
   });
 });

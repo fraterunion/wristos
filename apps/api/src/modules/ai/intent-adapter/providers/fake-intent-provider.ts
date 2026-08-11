@@ -470,6 +470,111 @@ function classifyTreasuryTransfer(t: string): FakeOutput | null {
   };
 }
 
+function classifyReverseExpense(t: string): FakeOutput | null {
+  // Transfer / purchase / sale cancel language is NOT expense reverse.
+  if (
+    /\b(transferencia|transfer[ií]|venta|compra|aportaci[oó]n|distribuci[oó]n|pago|cxc|cxp)\b/.test(
+      t,
+    ) &&
+    !/\bgasto\b/.test(t)
+  ) {
+    // "Deshaz la transferencia" → unbound / unknown — not expense.
+    if (
+      /(?:deshaz|revierte|revertir|borra|eliminar?|cancela(?:r)?|anul(?:a|ar)|me equivoqu[eé]).*(transferencia|transfer)/.test(
+        t,
+      ) ||
+      /(?:deshaz|revierte).*(venta|compra)/.test(t)
+    ) {
+      return {
+        intent: 'UNKNOWN',
+        entities: {},
+        missingEntities: [],
+        ambiguities: [
+          {
+            field: 'intent',
+            reason: 'transfer/sale/purchase reversal is not REVERSE_EXPENSE',
+          },
+        ],
+        confidence: 'LOW',
+        language: 'es',
+      };
+    }
+  }
+
+  const lastAction =
+    /^(deshaz eso|revierte eso|deshaz lo|revierte lo|me equivoqu[eé]\.?|deshaz lo que acabo de (hacer|registrar)|revierte lo que acabo de (hacer|registrar)|deshaz lo que acabo de hacer)$/.test(
+      t,
+    );
+  if (lastAction) {
+    return {
+      intent: 'REVERSE_EXPENSE',
+      entities: { useLastAction: true },
+      missingEntities: [],
+      ambiguities: [],
+      confidence: 'MEDIUM',
+      language: 'es',
+    };
+  }
+
+  const isReverse =
+    /(?:revierte|revertir|deshaz|deshacer|borra|borrar|elimina|eliminar|anula|anular|cancela el gasto|me equivoqu[eé].*gasto)/.test(
+      t,
+    ) &&
+    (/\bgasto\b/.test(t) ||
+      /gasolina|estacionamiento|comida|vi[aá]ticos|comisi[oó]n/.test(t) ||
+      /me equivoqu[eé]/.test(t));
+
+  if (!isReverse && !/(?:borra|elimina|revierte|deshaz).*(?:gasto|gasolina)/.test(t)) {
+    return null;
+  }
+
+  // Prefer explicit gasto reverse phrasing.
+  if (
+    !(
+      /(?:revierte|deshaz|borra|elimina|anula).*(?:gasto|gasolina)/.test(t) ||
+      /(?:gasto|gasolina).*(?:revierte|deshaz|borra|elimina)/.test(t) ||
+      /me equivoqu[eé].*(?:gasto|con (?:ese |el )?gasto)/.test(t) ||
+      /borra ese gasto|elimina el gasto|deshaz el gasto|revierte el gasto/.test(t)
+    )
+  ) {
+    return null;
+  }
+
+  const entities: Record<string, string | boolean | number> = {};
+  const amountMatch = t.match(
+    /(?:de\s+)?([\d.,]+(?:\s*(?:mil|k))?)\s*(?:pesos|mxn)?/,
+  );
+  if (amountMatch) {
+    entities.amount = parseFakeAmount(amountMatch[1]!);
+  }
+  if (/gasolina|combustible/.test(t)) {
+    entities.category = 'GASOLINE';
+    entities.concept = 'gasolina';
+  } else if (/estacionamiento|parking/.test(t)) {
+    entities.category = 'PARKING';
+    entities.concept = 'estacionamiento';
+  } else if (/comida|almuerzo|cena/.test(t)) {
+    entities.category = 'MEALS';
+    entities.concept = 'comida';
+  }
+  if (/\bhoy\b/.test(t)) {
+    entities.dateLabel = 'hoy';
+  } else if (/\bayer\b/.test(t)) {
+    entities.dateLabel = 'ayer';
+  }
+  if (/banco|bancos/.test(t)) entities.source = 'BANK';
+  if (/efectivo|caja/.test(t)) entities.source = 'CASH';
+
+  return {
+    intent: 'REVERSE_EXPENSE',
+    entities,
+    missingEntities: [],
+    ambiguities: [],
+    confidence: 'HIGH',
+    language: 'es',
+  };
+}
+
 function classify(
   text: string,
   currentDate: string,
@@ -734,6 +839,11 @@ function classify(
   }
 
   // --- Write detection only ---
+
+  // REVERSE_EXPENSE before REGISTER_EXPENSE / sale — financial "delete" means reverse.
+  const reverseExpense = classifyReverseExpense(t);
+  if (reverseExpense) return reverseExpense;
+
   const saleMatch = t.match(/vend[ií] ([a-z0-9 ]+?) en ([\d.,]+ ?(mil|k)?)( d[oó]lares)?/);
   if (saleMatch) {
     const amount = parseFakeAmount(saleMatch[2]);

@@ -32,6 +32,7 @@ export function ConversationPreview({
     | 'CONFIRM_CONTRIBUTION'
     | 'CONFIRM_DISTRIBUTION'
     | 'CONFIRM_EXPENSE'
+    | 'CONFIRM_REVERSE_EXPENSE'
     | 'CONFIRM_PURCHASE'
     | 'CONFIRM_CLIENT'
     | 'CONFIRM_CLIENT_UPDATE'
@@ -55,11 +56,17 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_CONTRIBUTION' ||
     ctaKind === 'CONFIRM_DISTRIBUTION' ||
     ctaKind === 'CONFIRM_EXPENSE' ||
+    ctaKind === 'CONFIRM_REVERSE_EXPENSE' ||
     ctaKind === 'CONFIRM_CLIENT' ||
     ctaKind === 'CONFIRM_CLIENT_UPDATE' ||
     ctaKind === 'CONFIRM_PURCHASE' ||
     ctaKind === 'CONFIRM_RECEIVABLE' ||
     ctaKind === 'CONFIRM_PAYABLE';
+
+  const effectiveTone =
+    ctaTone === 'destructive' || ctaKind === 'CONFIRM_REVERSE_EXPENSE'
+      ? 'destructive'
+      : ctaTone;
 
   const titleField = fields.find((f) => /reloj|concepto|cliente|inversión|cuenta/i.test(f.label));
   const amountField = fields.find((f) => /precio|monto|importe|cantidad/i.test(f.label));
@@ -114,13 +121,15 @@ export function ConversationPreview({
               disabled={busy}
               onClick={onConfirm}
               className={
-                ctaTone === 'destructive'
+                effectiveTone === 'destructive'
                   ? 'inline-flex min-h-10 items-center rounded-full bg-rose-500/90 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50'
                   : 'inline-flex min-h-10 items-center rounded-full bg-white px-4 py-2 text-[13px] font-semibold text-black disabled:opacity-50'
               }
             >
               {busy
-                ? ctaKind === 'CONFIRM_CLIENT' ||
+                ? ctaKind === 'CONFIRM_REVERSE_EXPENSE'
+                  ? 'Revirtiendo…'
+                  : ctaKind === 'CONFIRM_CLIENT' ||
                   ctaKind === 'CONFIRM_RECEIVABLE' ||
                   ctaKind === 'CONFIRM_PAYABLE'
                   ? 'Creando…'

@@ -30,6 +30,7 @@ export const assistantWorkingContextSchema = z
         clientId: z.string().min(1).max(128).optional(),
         accountEntryId: z.string().min(1).max(128).optional(),
         investorId: z.string().min(1).max(128).optional(),
+        expenseId: z.string().min(1).max(128).optional(),
       })
       .strict()
       .optional(),
@@ -147,6 +148,7 @@ export function intentToCandidateEntityType(intent: string | undefined): Context
   if (intent === 'REGISTER_CAPITAL_CONTRIBUTION' || intent === 'REGISTER_CAPITAL_DISTRIBUTION') {
     return 'INVESTOR';
   }
+  if (intent === 'REVERSE_EXPENSE') return 'OPERATING_EXPENSE';
   return null;
 }
 
@@ -159,7 +161,8 @@ export function extractPresentedCandidatesFromEntityList(payload: {
     payload.entityType === 'CLIENT' ||
     payload.entityType === 'WATCH' ||
     payload.entityType === 'ACCOUNT_ENTRY' ||
-    payload.entityType === 'INVESTOR'
+    payload.entityType === 'INVESTOR' ||
+    payload.entityType === 'OPERATING_EXPENSE'
       ? payload.entityType
       : null;
   const type = explicitType ?? intentToCandidateEntityType(payload.intent);
@@ -233,6 +236,7 @@ export function applySelectedEntity(
   if (selected.type === 'WATCH') lastResolvedEntities.watchId = selected.id;
   if (selected.type === 'ACCOUNT_ENTRY') lastResolvedEntities.accountEntryId = selected.id;
   if (selected.type === 'INVESTOR') lastResolvedEntities.investorId = selected.id;
+  if (selected.type === 'OPERATING_EXPENSE') lastResolvedEntities.expenseId = selected.id;
   return {
     ...base,
     lastSelectedEntity: selected,

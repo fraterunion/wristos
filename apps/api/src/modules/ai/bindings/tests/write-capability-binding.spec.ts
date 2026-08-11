@@ -12,6 +12,7 @@ import { RegisterCapitalDistributionWriteBinding } from '../write/register-capit
 import { CreateReceivableWriteBinding } from '../write/create-receivable.binding';
 import { CreatePayableWriteBinding } from '../write/create-payable.binding';
 import { UpdateClientWriteBinding } from '../write/update-client.binding';
+import { ReverseExpenseWriteBinding } from '../write/reverse-expense.binding';
 
 function buildRegistry() {
   const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
@@ -107,6 +108,15 @@ function buildRegistry() {
       bindingName: 'create_payable_canonical@1.0.0',
     },
   );
+  const reverseExpense = Object.assign(
+    new ReverseExpenseWriteBinding({} as never, {} as never, {} as never),
+    {
+      capability: 'REVERSE_EXPENSE',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'reverse_expense_canonical@1.0.0',
+    },
+  );
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
@@ -120,16 +130,17 @@ function buildRegistry() {
     capitalDistribution,
     createReceivable,
     createPayable,
+    reverseExpense,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly twelve WRITE bindings including CREATE_RECEIVABLE and CREATE_PAYABLE', () => {
+  it('contains exactly thirteen WRITE bindings including REVERSE_EXPENSE', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(12);
+    expect(bindings).toHaveLength(13);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
       'CREATE_PAYABLE',
@@ -142,6 +153,7 @@ describe('WriteCapabilityBindingRegistry', () => {
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_SALE',
       'REGISTER_TREASURY_TRANSFER',
+      'REVERSE_EXPENSE',
       'UPDATE_CLIENT',
     ]);
     expect(bindings.every((b) => b.mode === 'WRITE')).toBe(true);
@@ -154,6 +166,7 @@ describe('WriteCapabilityBindingRegistry', () => {
     'REGISTER_CRYPTO_PRICE',
     'DELETE_CLIENT',
     'MERGE_CLIENT',
+    'REVERSE_TREASURY_TRANSFER',
   ])('keeps %s explicitly unbound for WRITE', (capability) => {
     const registry = buildRegistry();
     expect(registry.hasBinding(capability)).toBe(false);
@@ -226,6 +239,13 @@ describe('WriteCapabilityBindingRegistry', () => {
         mode: 'WRITE',
       },
     );
+    const reverseExpense = Object.assign(
+      new ReverseExpenseWriteBinding({} as never, {} as never, {} as never),
+      {
+        capability: 'REVERSE_EXPENSE',
+        mode: 'WRITE',
+      },
+    );
     const wrong = {
       capability: 'REGISTER_SETTLEMENT',
       version: '1.0.0',
@@ -245,9 +265,10 @@ describe('WriteCapabilityBindingRegistry', () => {
       capitalDistribution,
       createReceivable,
       createPayable,
+      reverseExpense,
     );
     expect(() => registry.onModuleInit()).toThrow(
-      /CREATE_PAYABLE/,
+      /REVERSE_EXPENSE|UPDATE_CLIENT|CREATE_PAYABLE/,
     );
   });
 });

@@ -39,11 +39,12 @@ describe('Assistant Jarvis UX (26UX) source guards', () => {
     assert.ok(pageSrc.includes('hasConversation'));
   });
 
-  it('keeps confirmation path for all twelve WRITE capabilities', () => {
+  it('keeps confirmation path for all thirteen WRITE capabilities', () => {
     for (const capability of [
       'REGISTER_SALE',
       'REGISTER_RECEIVABLE_PAYMENT',
       'REGISTER_EXPENSE',
+      'REVERSE_EXPENSE',
       'REGISTER_PURCHASE',
       'CREATE_CLIENT',
       'UPDATE_CLIENT',

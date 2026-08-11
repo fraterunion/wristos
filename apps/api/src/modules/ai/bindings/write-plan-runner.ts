@@ -27,6 +27,12 @@ import {
 import {
   registerCapitalContributionIdempotencyKey,
 } from './write/register-capital-contribution.binding';
+import { reversalCommandKey } from '../reversals/financial-reversal.types';
+import { LastReversibleActionContext } from '../reversals/financial-reversal.types';
+import { ExpenseReversalTargetResolver } from '../reversals/expense-reversal-target-resolver.service';
+import { parseResolvedContextShell } from '../context/working-context';
+import { classifyExpenseReversalRecovery } from '../reversals/expense-reversal-recovery';
+import { expenseFingerprintsMatch } from '../reversals/expense-reversal-fingerprint';
 import {
   registerCapitalDistributionIdempotencyKey,
 } from './write/register-capital-distribution.binding';
@@ -84,7 +90,9 @@ type ClaimResult =
   | { kind: 'CAPITAL_CONTRIBUTION_INVARIANT'; run: AIActionRun; code: string }
   | { kind: 'CAPITAL_DISTRIBUTION_REVERSED'; run: AIActionRun }
   | { kind: 'CAPITAL_DISTRIBUTION_INVARIANT'; run: AIActionRun; code: string }
-  | { kind: 'ACCOUNT_ENTRY_CANCELLED'; run: AIActionRun; code: string };
+  | { kind: 'ACCOUNT_ENTRY_CANCELLED'; run: AIActionRun; code: string }
+  | { kind: 'EXPENSE_REVERSED_EXTERNALLY'; run: AIActionRun; code: string }
+  | { kind: 'EXPENSE_REVERSAL_STALE'; run: AIActionRun; code: string };
 
 type PayableMarkerClassification =
   | { kind: 'ACTIVE' }
@@ -142,6 +150,9 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
   if (intent === 'REGISTER_EXPENSE') {
     return registerExpenseIdempotencyKey(actionRunId);
   }
+  if (intent === 'REVERSE_EXPENSE') {
+    return reversalCommandKey(actionRunId);
+  }
   if (intent === 'REGISTER_PURCHASE') {
     return registerPurchaseIdempotencyKey(actionRunId);
   }
@@ -163,7 +174,8 @@ function capabilityLabel(
   | 'transferencia'
   | 'aportacion'
   | 'distribucion'
-  | 'cuenta' {
+  | 'cuenta'
+  | 'reversion' {
   if (
     capability === 'REGISTER_RECEIVABLE_PAYMENT' ||
     capability === 'REGISTER_PAYABLE_PAYMENT'
@@ -175,6 +187,7 @@ function capabilityLabel(
   if (capability === 'REGISTER_CAPITAL_DISTRIBUTION') return 'distribucion';
   if (capability === 'CREATE_RECEIVABLE' || capability === 'CREATE_PAYABLE') return 'cuenta';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
+  if (capability === 'REVERSE_EXPENSE') return 'reversion';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
   if (capability === 'UPDATE_CLIENT') return 'actualizacion';
@@ -188,6 +201,7 @@ export class WritePlanRunner {
     private readonly runtime: RuntimeService,
     private readonly planner: PlannerService,
     private readonly writeRegistry: WriteCapabilityBindingRegistry,
+    private readonly expenseReversalTargets: ExpenseReversalTargetResolver,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -205,6 +219,7 @@ export class WritePlanRunner {
  * - REGISTER_CAPITAL_DISTRIBUTION → InvestorDistribution.registerIdempotencyKey
  * - CREATE_RECEIVABLE / CREATE_PAYABLE → AccountEntry.registerIdempotencyKey
  * - REGISTER_EXPENSE → OperatingExpense.registerIdempotencyKey
+ * - REVERSE_EXPENSE → OperatingExpense.reversalIdempotencyKey
  * - REGISTER_PURCHASE → Watch.registerIdempotencyKey
  * - CREATE_CLIENT → Client.registerIdempotencyKey
  *
@@ -424,6 +439,35 @@ export class WritePlanRunner {
       return this.failureEnvelope(claim.run, claim.code);
     }
 
+    if (claim.kind === 'EXPENSE_REVERSED_EXTERNALLY' || claim.kind === 'EXPENSE_REVERSAL_STALE') {
+      if (claim.run.status === AIActionRunStatus.EXECUTING) {
+        await this.runtime.failExecution(
+          args.tenantId,
+          args.userId,
+          claim.run.id,
+          claim.code,
+          { planFingerprint: args.expectedFingerprint },
+        );
+      }
+      return {
+        actionRun: claim.run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          claim.kind === 'EXPENSE_REVERSED_EXTERNALLY'
+            ? 'Ese gasto ya fue revertido.'
+            : 'El gasto cambió desde que lo revisamos. Lo volví a consultar antes de hacer cualquier cambio.',
+        receipt: null,
+        planFingerprint: claim.run.planFingerprint,
+        executableWrite: true,
+        capability: claim.run.intent,
+      };
+    }
+
     if (claim.kind === 'IN_PROGRESS') {
       const label = capabilityLabel(claim.run.intent);
       return {
@@ -451,6 +495,8 @@ export class WritePlanRunner {
                         ? 'La distribución se está registrando. Reintenta la misma confirmación en un momento. No inicies una distribución nueva.'
                         : label === 'cuenta'
                           ? 'La cuenta se está registrando. Reintenta la misma confirmación en un momento. No inicies una cuenta nueva.'
+                          : label === 'reversion'
+                            ? 'La reversión del gasto se está aplicando. Reintenta la misma confirmación en un momento. No inicies una reversión nueva.'
                           : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
         receipt: null,
         planFingerprint: claim.run.planFingerprint,
@@ -701,10 +747,121 @@ export class WritePlanRunner {
       },
     );
 
+    await this.persistLastReversibleActionAfterWrite({
+      tenantId: args.tenantId,
+      userId: args.userId,
+      run: completed,
+      primary,
+    });
+
     return this.successEnvelope(completed, primary, {
       replayed: meta.replayed || meta.recovered,
       recovered: meta.recovered,
     });
+  }
+
+  /**
+   * After REGISTER_EXPENSE success: store trusted last-action for "Deshaz eso".
+   * After any other successful WRITE: clear last-action (pointer must not outlive
+   * a later write). Survives conversational turns via writeWorkingContext shell
+   * spread. Best-effort — never fails the write receipt.
+   */
+  private async persistLastReversibleActionAfterWrite(args: {
+    tenantId: string;
+    userId: string;
+    run: AIActionRun;
+    primary: BusinessActionResult;
+  }): Promise<void> {
+    try {
+      const receipt =
+        args.primary.receipt &&
+        typeof args.primary.receipt === 'object' &&
+        !Array.isArray(args.primary.receipt)
+          ? (args.primary.receipt as Record<string, unknown>)
+          : null;
+
+      const workspaceApi = this.prisma.aIWorkspace;
+      if (!workspaceApi?.findFirst || !workspaceApi?.updateMany) return;
+
+      const workspace = await workspaceApi.findFirst({
+        where: {
+          tenantId: args.tenantId,
+          userId: args.userId,
+          conversationId: args.run.conversationId,
+          deletedAt: null,
+        },
+        select: { id: true, version: true, resolvedContext: true },
+        orderBy: { lastActivityAt: 'desc' },
+      });
+      if (!workspace) return;
+
+      const shell = parseResolvedContextShell(workspace.resolvedContext);
+
+      if (args.run.intent === 'REGISTER_EXPENSE') {
+        if (!receipt) return;
+        const expenseId = typeof receipt.expenseId === 'string' ? receipt.expenseId : null;
+        if (!expenseId) return;
+        const resolved = await this.expenseReversalTargets.resolveTrustedId(
+          args.tenantId,
+          expenseId,
+        );
+        if (resolved.kind !== 'TRUSTED') return;
+        const snap = resolved.target.targetSnapshot;
+        if (snap.kind !== 'OPERATING_EXPENSE') return;
+        const lastReversibleAction: LastReversibleActionContext = {
+          capability: 'REVERSE_EXPENSE',
+          targetType: 'OPERATING_EXPENSE',
+          targetId: resolved.target.targetId,
+          targetFingerprint: resolved.target.targetFingerprint,
+          actionRunId: args.run.id,
+          safeLabel: snap.conceptLabel
+            ? String(snap.conceptLabel)
+            : `${snap.category} ${snap.amount}`,
+          completedAt: new Date().toISOString(),
+          conversationId: args.run.conversationId,
+          workspaceId: workspace.id,
+        };
+        await workspaceApi.updateMany({
+          where: {
+            id: workspace.id,
+            tenantId: args.tenantId,
+            userId: args.userId,
+            version: workspace.version,
+            deletedAt: null,
+          },
+          data: {
+            resolvedContext: {
+              ...shell,
+              lastReversibleAction,
+            } as Prisma.InputJsonObject,
+            version: { increment: 1 },
+            lastActivityAt: new Date(),
+          },
+        });
+        return;
+      }
+
+      // Any other completed WRITE clears the last reversible expense pointer.
+      if (!shell.lastReversibleAction) return;
+      const next = { ...shell };
+      delete next.lastReversibleAction;
+      await workspaceApi.updateMany({
+        where: {
+          id: workspace.id,
+          tenantId: args.tenantId,
+          userId: args.userId,
+          version: workspace.version,
+          deletedAt: null,
+        },
+        data: {
+          resolvedContext: next as Prisma.InputJsonObject,
+          version: { increment: 1 },
+          lastActivityAt: new Date(),
+        },
+      });
+    } catch {
+      // Conversational pointer is best-effort; never fail the economic write.
+    }
   }
 
   /**
@@ -1010,7 +1167,7 @@ export class WritePlanRunner {
     return { kind: 'ACTIVE' };
   }
 
-  /** Payable + treasury-transfer + capital + manual-account typed recovery before IN_PROGRESS. */
+  /** Payable + treasury-transfer + capital + manual-account + expense reverse typed recovery before IN_PROGRESS. */
   private async classifyWriteRecoveryClaim(
     tenantId: string,
     run: AIActionRun,
@@ -1022,8 +1179,90 @@ export class WritePlanRunner {
       (await this.classifyCapitalContributionRecoveryClaim(tenantId, run, db)) ??
       (await this.classifyCapitalDistributionRecoveryClaim(tenantId, run, db)) ??
       (await this.classifyCreateReceivableRecoveryClaim(tenantId, run, db)) ??
-      (await this.classifyCreatePayableRecoveryClaim(tenantId, run, db))
+      (await this.classifyCreatePayableRecoveryClaim(tenantId, run, db)) ??
+      (await this.classifyExpenseReversalRecoveryClaim(tenantId, run, db))
     );
+  }
+
+  /**
+   * REVERSE_EXPENSE recovery:
+   * - SAME_COMMAND (reversalIdempotencyKey matches) → RECOVER
+   * - EXTERNAL (deleted with different key) → EXPENSE_REVERSED_EXTERNALLY
+   * - Fingerprint drift on active target → EXPENSE_REVERSAL_STALE
+   * - Active / missing → null (fall through to marker / IN_PROGRESS)
+   */
+  private async classifyExpenseReversalRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    if (run.intent !== 'REVERSE_EXPENSE') return null;
+    const plan = this.parsePlan(run);
+    const step = plan.executionSteps[0];
+    const args = (step?.arguments ?? {}) as Record<string, unknown>;
+    const targetId =
+      typeof args.targetId === 'string'
+        ? args.targetId
+        : typeof args.trustedExpenseId === 'string'
+          ? args.trustedExpenseId
+          : null;
+    const plannedFp =
+      typeof args.targetFingerprint === 'string'
+        ? args.targetFingerprint
+        : typeof args.trustedTargetFingerprint === 'string'
+          ? args.trustedTargetFingerprint
+          : null;
+    if (!targetId || !plannedFp) return null;
+
+    const expense = await db.operatingExpense.findFirst({
+      where: { id: targetId, tenantId },
+      select: { id: true, deletedAt: true, reversalIdempotencyKey: true },
+    });
+    const commandKey = reversalCommandKey(run.id);
+
+    if (!expense) {
+      return {
+        kind: 'EXPENSE_REVERSAL_STALE',
+        run,
+        code: 'REVERSAL_TARGET_NOT_FOUND',
+      };
+    }
+
+    if (expense.deletedAt == null) {
+      const live = await this.expenseReversalTargets.resolveTrustedId(tenantId, targetId);
+      if (live.kind === 'TRUSTED') {
+        if (!expenseFingerprintsMatch(plannedFp, live.target.targetFingerprint)) {
+          return {
+            kind: 'EXPENSE_REVERSAL_STALE',
+            run,
+            code: 'REVERSAL_TARGET_STALE',
+          };
+        }
+      }
+      return null;
+    }
+
+    const recovery = classifyExpenseReversalRecovery({
+      commandKey,
+      expense,
+      plannedFingerprint: plannedFp,
+      currentFingerprint: plannedFp,
+    });
+    if (recovery.kind === 'MATCH') {
+      return { kind: 'RECOVER', run, priorStatus: run.status };
+    }
+    if (recovery.kind === 'EXTERNAL_ALREADY_REVERSED') {
+      return {
+        kind: 'EXPENSE_REVERSED_EXTERNALLY',
+        run,
+        code: 'REVERSAL_ALREADY_REVERSED_EXTERNALLY',
+      };
+    }
+    return {
+      kind: 'EXPENSE_REVERSAL_STALE',
+      run,
+      code: 'REVERSAL_TARGET_STALE',
+    };
   }
 
   private async findCommittedWriteMarker(
@@ -1071,6 +1310,17 @@ export class WritePlanRunner {
     if (intent === 'REGISTER_EXPENSE') {
       const expense = await db.operatingExpense.findFirst({
         where: { tenantId, registerIdempotencyKey: key, deletedAt: null },
+        select: { id: true },
+      });
+      return Boolean(expense);
+    }
+    if (intent === 'REVERSE_EXPENSE') {
+      const expense = await db.operatingExpense.findFirst({
+        where: {
+          tenantId,
+          reversalIdempotencyKey: key,
+          deletedAt: { not: null },
+        },
         select: { id: true },
       });
       return Boolean(expense);
@@ -1359,7 +1609,11 @@ export class WritePlanRunner {
       interactionState: 'COMPLETED',
       responseType: 'SUCCESS_RECEIPT',
       message:
-        label === 'distribucion'
+        label === 'reversion'
+          ? meta.recovered || meta.replayed
+            ? 'Listo. El gasto ya estaba revertido.'
+            : 'Listo. El gasto quedó revertido.'
+          : label === 'distribucion'
           ? meta.recovered || meta.replayed
             ? 'Listo. La distribución ya estaba registrada.'
             : 'Listo. La distribución quedó registrada.'
@@ -1524,6 +1778,36 @@ export class WritePlanRunner {
     }
 
     if (
+      failureType === 'REVERSAL_ALREADY_REVERSED_EXTERNALLY' ||
+      failureType === 'REVERSAL_TARGET_STALE' ||
+      failureType === 'REVERSAL_TARGET_NOT_FOUND' ||
+      failureType === 'REVERSAL_INVARIANT' ||
+      failureType === 'REVERSAL_BLOCKED'
+    ) {
+      return {
+        actionRun: run,
+        executionState: 'FAILED',
+        result: null,
+        replayed: false,
+        recovered: false,
+        interactionState: 'STALE_PLAN',
+        responseType: 'ERROR_RECOVERY_CARD',
+        message:
+          failureType === 'REVERSAL_ALREADY_REVERSED_EXTERNALLY'
+            ? 'Ese gasto ya fue revertido.'
+            : failureType === 'REVERSAL_TARGET_NOT_FOUND'
+              ? 'No encontré un gasto activo que coincida con eso.'
+              : failureType === 'REVERSAL_INVARIANT' || failureType === 'REVERSAL_BLOCKED'
+                ? 'No puedo revertir ese gasto de forma segura porque su registro financiero está incompleto.'
+                : 'El gasto cambió desde que lo revisamos. Lo volví a consultar antes de hacer cualquier cambio.',
+        receipt: null,
+        planFingerprint: run.planFingerprint,
+        executableWrite: true,
+        capability: run.intent,
+      };
+    }
+
+    if (
       failureType === 'STALE_CREATE_RECEIVABLE_CANCELLED' ||
       failureType === 'STALE_CREATE_PAYABLE_CANCELLED'
     ) {
@@ -1657,6 +1941,13 @@ export class WritePlanRunner {
         }
       }
       const msg = String(error.message);
+      if (msg.includes('REVERSAL_ALREADY_REVERSED_EXTERNALLY')) {
+        return 'REVERSAL_ALREADY_REVERSED_EXTERNALLY';
+      }
+      if (msg.includes('REVERSAL_TARGET_STALE')) return 'REVERSAL_TARGET_STALE';
+      if (msg.includes('REVERSAL_TARGET_NOT_FOUND')) return 'REVERSAL_TARGET_NOT_FOUND';
+      if (msg.includes('REVERSAL_INVARIANT')) return 'REVERSAL_INVARIANT';
+      if (msg.includes('REVERSAL_BLOCKED')) return 'REVERSAL_BLOCKED';
       if (msg.includes('CANONICAL_CLIENT_COMMITTED')) return 'CANONICAL_CLIENT_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('CANONICAL_PAYMENT_COMMITTED')) return 'CANONICAL_PAYMENT_COMMITTED_RUNTIME_PENDING';
       if (msg.includes('CANONICAL_EXPENSE_COMMITTED')) return 'CANONICAL_EXPENSE_COMMITTED_RUNTIME_PENDING';

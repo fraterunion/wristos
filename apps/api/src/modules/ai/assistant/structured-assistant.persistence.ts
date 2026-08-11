@@ -27,6 +27,23 @@ export class StructuredAssistantPersistence {
     return workspace.version;
   }
 
+  async readResolvedContext(
+    actor: AssistantActorContext,
+    workspaceId: string,
+  ): Promise<unknown> {
+    const workspace = await this.prisma.aIWorkspace.findFirst({
+      where: {
+        id: workspaceId,
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        deletedAt: null,
+      },
+      select: { resolvedContext: true },
+    });
+    if (!workspace) throw new NotFoundException('AI workspace not found');
+    return workspace.resolvedContext;
+  }
+
   prepare(requestId: string, actor: AssistantActorContext, input: StructuredAssistantRequest, traceId: string): Promise<PreparedAssistantRequest> {
     return this.prisma.$transaction(async (tx) => {
       let conversation = input.conversationId

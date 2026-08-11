@@ -34,6 +34,7 @@ export const WRITE_INTENTS = [
   'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
+  'REVERSE_EXPENSE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
   'CREATE_RECEIVABLE',
@@ -362,6 +363,39 @@ export const entitySchemas = {
       source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
       sourceAccount: z.string().trim().min(1).max(64).optional(),
       effectiveDate: isoDate.optional(),
+    })
+    .strip(),
+
+  REVERSE_EXPENSE: z
+    .object({
+      concept: z.string().trim().min(1).max(160).optional(),
+      conceptContains: z.string().trim().min(1).max(160).optional(),
+      notes: z.string().trim().min(1).max(2000).optional(),
+      amount: money.optional(),
+      currency: currency.optional(),
+      category: z
+        .enum([
+          'GASOLINE',
+          'TOLLS',
+          'WATCHMAKER',
+          'PARKING',
+          'MEALS',
+          'FLIGHTS',
+          'TRAVEL',
+          'MARKETING',
+          'COMMISSIONS',
+          'OTHER',
+        ])
+        .optional(),
+      source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      sourceAccount: z.string().trim().min(1).max(64).optional(),
+      effectiveDate: isoDate.optional(),
+      expenseDate: isoDate.optional(),
+      date: isoDate.optional(),
+      useLastAction: z.boolean().optional(),
+      useLastReversibleAction: z.boolean().optional(),
+      dateLabel: z.string().trim().min(1).max(32).optional(),
+      // Trusted ids are merged server-side after picker/last-action resolve — never from LLM.
     })
     .strip(),
 
