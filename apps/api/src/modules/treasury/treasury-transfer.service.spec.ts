@@ -89,7 +89,8 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
             transactionDate: data.transactionDate,
             description: data.description ?? null,
             provenanceKey: data.provenanceKey,
-            deletedAt: null,
+            deletedAt: data.deletedAt ?? null,
+            reversalIdempotencyKey: data.reversalIdempotencyKey ?? null,
           };
           treasury.set(row.id, row);
           return { ...row };
@@ -110,6 +111,10 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
             count += 1;
           }
           return { count };
+        }),
+        findUnique: jest.fn(async ({ where }: any) => {
+          const row = treasury.get(where.id);
+          return row ? { ...row } : null;
         }),
         findFirstOrThrow: jest.fn(async ({ where }: any) => {
           const row = treasury.get(where.id);
@@ -543,5 +548,125 @@ describe('TreasuryTransferService — canonical internal liquidity transfer', ()
         transferDate: new Date('2026-07-01T00:00:00.000Z'),
       }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('26D.1: amount-mismatched pair reverse is INVARIANT with zero mutation', async () => {
+    const ctx = build();
+    const key = 'qa-mismatch-3000-2999';
+    const out = await ctx.prisma.treasuryEntry.create({
+      data: {
+        tenantId: 't1',
+        account: 'BANK',
+        direction: TreasuryDirection.OUTFLOW,
+        amount: new Prisma.Decimal(3000),
+        amountMxn: new Prisma.Decimal(3000),
+        currency: Currency.MXN,
+        exchangeRate: new Prisma.Decimal(1),
+        transactionDate: new Date('2026-08-11T12:00:00.000Z'),
+        description: 'mismatch out',
+        provenanceKey: `treasury-transfer:${key}:outflow`,
+      },
+    });
+    const inn = await ctx.prisma.treasuryEntry.create({
+      data: {
+        tenantId: 't1',
+        account: 'CASH',
+        direction: TreasuryDirection.INFLOW,
+        amount: new Prisma.Decimal(2999),
+        amountMxn: new Prisma.Decimal(2999),
+        currency: Currency.MXN,
+        exchangeRate: new Prisma.Decimal(1),
+        transactionDate: new Date('2026-08-11T12:00:00.000Z'),
+        description: 'mismatch in',
+        provenanceKey: `treasury-transfer:${key}:inflow`,
+      },
+    });
+    const balBefore = ctx.totalLiquidity().toString();
+    await expect(
+      ctx.service.reverse('t1', key, { reversalIdempotencyKey: 'ai-action-run:mismatch' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const outAfter = await ctx.prisma.treasuryEntry.findUnique({ where: { id: out.id } });
+    const inAfter = await ctx.prisma.treasuryEntry.findUnique({ where: { id: inn.id } });
+    expect(outAfter?.deletedAt).toBeNull();
+    expect(inAfter?.deletedAt).toBeNull();
+    expect(outAfter?.reversalIdempotencyKey).toBeNull();
+    expect(inAfter?.reversalIdempotencyKey).toBeNull();
+    expect(ctx.totalLiquidity().toString()).toBe(balBefore);
+    expect((await ctx.service.classifyReversal('t1', key, 'ai-action-run:mismatch')).kind).toBe(
+      'INVARIANT',
+    );
+  });
+
+  it('26D.1: same-account pair reverse is INVARIANT', async () => {
+    const ctx = build();
+    const key = 'qa-same-account';
+    await ctx.prisma.treasuryEntry.create({
+      data: {
+        tenantId: 't1',
+        account: 'BANK',
+        direction: TreasuryDirection.OUTFLOW,
+        amount: new Prisma.Decimal(100),
+        amountMxn: new Prisma.Decimal(100),
+        currency: Currency.MXN,
+        exchangeRate: new Prisma.Decimal(1),
+        transactionDate: new Date('2026-08-11T12:00:00.000Z'),
+        provenanceKey: `treasury-transfer:${key}:outflow`,
+      },
+    });
+    await ctx.prisma.treasuryEntry.create({
+      data: {
+        tenantId: 't1',
+        account: 'BANK',
+        direction: TreasuryDirection.INFLOW,
+        amount: new Prisma.Decimal(100),
+        amountMxn: new Prisma.Decimal(100),
+        currency: Currency.MXN,
+        exchangeRate: new Prisma.Decimal(1),
+        transactionDate: new Date('2026-08-11T12:00:00.000Z'),
+        provenanceKey: `treasury-transfer:${key}:inflow`,
+      },
+    });
+    await expect(ctx.service.reverse('t1', key)).rejects.toBeInstanceOf(ConflictException);
+    expect((await ctx.service.classifyReversal('t1', key)).kind).toBe('INVARIANT');
+  });
+
+  it('26D.1: malformed reversed pair never recovers as SAME_COMMAND', async () => {
+    const ctx = build();
+    const key = 'qa-malformed-reversed';
+    const cmd = 'ai-action-run:malformed';
+    await ctx.prisma.treasuryEntry.create({
+      data: {
+        tenantId: 't1',
+        account: 'BANK',
+        direction: TreasuryDirection.OUTFLOW,
+        amount: new Prisma.Decimal(500),
+        amountMxn: new Prisma.Decimal(500),
+        currency: Currency.MXN,
+        exchangeRate: new Prisma.Decimal(1),
+        transactionDate: new Date('2026-08-11T12:00:00.000Z'),
+        deletedAt: new Date(),
+        reversalIdempotencyKey: cmd,
+        provenanceKey: `treasury-transfer:${key}:outflow`,
+      },
+    });
+    await ctx.prisma.treasuryEntry.create({
+      data: {
+        tenantId: 't1',
+        account: 'CASH',
+        direction: TreasuryDirection.INFLOW,
+        amount: new Prisma.Decimal(400),
+        amountMxn: new Prisma.Decimal(400),
+        currency: Currency.MXN,
+        exchangeRate: new Prisma.Decimal(1),
+        transactionDate: new Date('2026-08-11T12:00:00.000Z'),
+        deletedAt: new Date(),
+        reversalIdempotencyKey: cmd,
+        provenanceKey: `treasury-transfer:${key}:inflow`,
+      },
+    });
+    await expect(
+      ctx.service.reverse('t1', key, { reversalIdempotencyKey: cmd }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect((await ctx.service.classifyReversal('t1', key, cmd)).kind).toBe('INVARIANT');
   });
 });

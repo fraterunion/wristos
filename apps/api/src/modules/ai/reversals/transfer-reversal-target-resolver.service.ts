@@ -12,6 +12,7 @@ import {
 } from './transfer-reversal-fingerprint';
 import { utcDayBucket } from './expense-reversal-fingerprint';
 import { TrustedReversalTarget } from './financial-reversal.types';
+import { classifyTransferPairEconomics } from '../../treasury/treasury-transfer-pair-economics';
 
 export type TransferReversalSearchQuery = {
   amount?: Prisma.Decimal | number | string | null;
@@ -61,6 +62,11 @@ export class TransferReversalTargetResolver {
 
     if (!outflow && !inflow) return { kind: 'NONE' };
     if (!outflow || !inflow) {
+      return { kind: 'INVARIANT', code: 'STALE_TREASURY_TRANSFER_INVARIANT' };
+    }
+
+    // Defense-in-depth: amount/account economics before READY_FOR_CONFIRMATION.
+    if (!classifyTransferPairEconomics(outflow, inflow).ok) {
       return { kind: 'INVARIANT', code: 'STALE_TREASURY_TRANSFER_INVARIANT' };
     }
 
@@ -143,6 +149,10 @@ export class TransferReversalTargetResolver {
       });
       if (!inflow) continue;
       if (query.destinationAccount && inflow.account !== query.destinationAccount) {
+        continue;
+      }
+      // Skip economically malformed pairs — never offer as executable targets.
+      if (!classifyTransferPairEconomics(out, inflow).ok) {
         continue;
       }
       const dayLabel = utcDayBucket(out.transactionDate) ?? '';

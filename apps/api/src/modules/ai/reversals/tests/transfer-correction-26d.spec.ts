@@ -121,4 +121,29 @@ describe('26D transfer correction language + allowlist', () => {
       }).kind,
     ).toBe('INVARIANT');
   });
+
+  it('26D.1 amount-mismatched reversed pair never recovers as SAME_COMMAND', () => {
+    const key = 'ai-action-run:run1';
+    expect(
+      classifyTransferReversalRecovery({
+        commandKey: key,
+        outflow: {
+          deletedAt: new Date(),
+          reversalIdempotencyKey: key,
+          direction: 'OUTFLOW',
+          account: 'BANK',
+          amount: 3000,
+        },
+        inflow: {
+          deletedAt: new Date(),
+          reversalIdempotencyKey: key,
+          direction: 'INFLOW',
+          account: 'CASH',
+          amount: 2999,
+        },
+        plannedFingerprint: 'a',
+        currentFingerprint: 'a',
+      }).kind,
+    ).toBe('INVARIANT');
+  });
 });

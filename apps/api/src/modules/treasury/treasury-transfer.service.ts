@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { classifyTransferPairEconomics } from './treasury-transfer-pair-economics';
 
 export type TreasuryTransferAccount = 'CASH' | 'BANK' | 'CESAR';
 
@@ -295,6 +296,9 @@ export class TreasuryTransferService {
           );
         }
 
+        // Economic invariant before any mutation / SAME_COMMAND recovery.
+        assertTransferPairEconomicsOrThrow(outflow, inflow);
+
         if (outflow.deletedAt && inflow.deletedAt) {
           const outKey = outflow.reversalIdempotencyKey ?? null;
           const inKey = inflow.reversalIdempotencyKey ?? null;
@@ -428,6 +432,14 @@ export class TreasuryTransferService {
         code: 'STALE_TREASURY_TRANSFER_INVARIANT',
       };
     }
+    // Amount/account economics — INVARIANT wins over SAME_COMMAND / EXTERNAL.
+    if (!classifyTransferPairEconomics(outflow, inflow).ok) {
+      return {
+        kind: 'INVARIANT',
+        transferId: logicalKey,
+        code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+      };
+    }
     const outKey = outflow.reversalIdempotencyKey ?? null;
     const inKey = inflow.reversalIdempotencyKey ?? null;
     if (outDeleted && inDeleted && outKey !== inKey) {
@@ -521,6 +533,17 @@ function normalizeTransferReversalKey(raw: string | null | undefined): string | 
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function assertTransferPairEconomicsOrThrow(
+  outflow: Pick<TreasuryEntry, 'direction' | 'account' | 'amount'>,
+  inflow: Pick<TreasuryEntry, 'direction' | 'account' | 'amount'>,
+): void {
+  const economics = classifyTransferPairEconomics(outflow, inflow);
+  if (economics.ok) return;
+  throw new ConflictException(
+    `STALE_TREASURY_TRANSFER_INVARIANT: ${economics.code.toLowerCase()}`,
+  );
+}
+
 function classifyTransferAlreadyReversedCausality(
   existingKey: string | null | undefined,
   requestedKey: string | null,
@@ -553,6 +576,7 @@ function classifyRacedTransferPair(args: {
       'STALE_TREASURY_TRANSFER_INVARIANT: concurrent reverse claim failed',
     );
   }
+  assertTransferPairEconomicsOrThrow(racedOut, racedIn);
   const outKey = racedOut.reversalIdempotencyKey ?? null;
   const inKey = racedIn.reversalIdempotencyKey ?? null;
   if (outKey !== inKey) {

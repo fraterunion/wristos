@@ -178,7 +178,8 @@ function capabilityLabel(
   | 'aportacion'
   | 'distribucion'
   | 'cuenta'
-  | 'reversion' {
+  | 'reversion'
+  | 'reversion_transferencia' {
   if (
     capability === 'REGISTER_RECEIVABLE_PAYMENT' ||
     capability === 'REGISTER_PAYABLE_PAYMENT'
@@ -190,7 +191,8 @@ function capabilityLabel(
   if (capability === 'REGISTER_CAPITAL_DISTRIBUTION') return 'distribucion';
   if (capability === 'CREATE_RECEIVABLE' || capability === 'CREATE_PAYABLE') return 'cuenta';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
-  if (capability === 'REVERSE_EXPENSE' || capability === 'REVERSE_TREASURY_TRANSFER') return 'reversion';
+  if (capability === 'REVERSE_EXPENSE') return 'reversion';
+  if (capability === 'REVERSE_TREASURY_TRANSFER') return 'reversion_transferencia';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
   if (capability === 'UPDATE_CLIENT') return 'actualizacion';
@@ -453,6 +455,7 @@ export class WritePlanRunner {
           { planFingerprint: args.expectedFingerprint },
         );
       }
+      const transferReverse = claim.run.intent === 'REVERSE_TREASURY_TRANSFER';
       return {
         actionRun: claim.run,
         executionState: 'FAILED',
@@ -461,8 +464,15 @@ export class WritePlanRunner {
         recovered: false,
         interactionState: 'STALE_PLAN',
         responseType: 'ERROR_RECOVERY_CARD',
-        message:
-          claim.kind === 'EXPENSE_REVERSED_EXTERNALLY'
+        message: transferReverse
+          ? claim.kind === 'EXPENSE_REVERSED_EXTERNALLY'
+            ? 'Esa transferencia ya fue revertida.'
+            : claim.code === 'REVERSAL_INVARIANT' || claim.code === 'REVERSAL_BLOCKED'
+              ? 'No puedo revertir esa transferencia de forma segura porque su registro financiero está incompleto.'
+              : claim.code === 'REVERSAL_TARGET_NOT_FOUND'
+                ? 'No encontré una transferencia activa que coincida con eso.'
+                : 'La transferencia cambió desde que la revisamos. No hice ningún cambio.'
+          : claim.kind === 'EXPENSE_REVERSED_EXTERNALLY'
             ? 'Ese gasto ya fue revertido.'
             : 'El gasto cambió desde que lo revisamos. Lo volví a consultar antes de hacer cualquier cambio.',
         receipt: null,
@@ -501,6 +511,8 @@ export class WritePlanRunner {
                           ? 'La cuenta se está registrando. Reintenta la misma confirmación en un momento. No inicies una cuenta nueva.'
                           : label === 'reversion'
                             ? 'La reversión del gasto se está aplicando. Reintenta la misma confirmación en un momento. No inicies una reversión nueva.'
+                            : label === 'reversion_transferencia'
+                              ? 'La reversión de la transferencia se está aplicando. Reintenta la misma confirmación en un momento. No inicies una reversión nueva.'
                           : 'La venta se está registrando. Reintenta la misma confirmación en un momento. No inicies una venta nueva.',
         receipt: null,
         planFingerprint: claim.run.planFingerprint,
@@ -1272,14 +1284,26 @@ export class WritePlanRunner {
         tenantId,
         provenanceKey: treasuryTransferOutflowProvenanceKey(targetId),
       },
-      select: { deletedAt: true, reversalIdempotencyKey: true },
+      select: {
+        deletedAt: true,
+        reversalIdempotencyKey: true,
+        amount: true,
+        account: true,
+        direction: true,
+      },
     });
     const inflow = await db.treasuryEntry.findFirst({
       where: {
         tenantId,
         provenanceKey: treasuryTransferInflowProvenanceKey(targetId),
       },
-      select: { deletedAt: true, reversalIdempotencyKey: true },
+      select: {
+        deletedAt: true,
+        reversalIdempotencyKey: true,
+        amount: true,
+        account: true,
+        direction: true,
+      },
     });
     const commandKey = reversalCommandKey(run.id);
 
@@ -1761,6 +1785,10 @@ export class WritePlanRunner {
           ? meta.recovered || meta.replayed
             ? 'Listo. El gasto ya estaba revertido.'
             : 'Listo. El gasto quedó revertido.'
+          : label === 'reversion_transferencia'
+            ? meta.recovered || meta.replayed
+              ? 'Listo. La transferencia ya estaba revertida.'
+              : 'Listo. Revertí la transferencia.'
           : label === 'distribucion'
           ? meta.recovered || meta.replayed
             ? 'Listo. La distribución ya estaba registrada.'
@@ -1932,6 +1960,7 @@ export class WritePlanRunner {
       failureType === 'REVERSAL_INVARIANT' ||
       failureType === 'REVERSAL_BLOCKED'
     ) {
+      const transferReverse = run.intent === 'REVERSE_TREASURY_TRANSFER';
       return {
         actionRun: run,
         executionState: 'FAILED',
@@ -1940,8 +1969,15 @@ export class WritePlanRunner {
         recovered: false,
         interactionState: 'STALE_PLAN',
         responseType: 'ERROR_RECOVERY_CARD',
-        message:
-          failureType === 'REVERSAL_ALREADY_REVERSED_EXTERNALLY'
+        message: transferReverse
+          ? failureType === 'REVERSAL_ALREADY_REVERSED_EXTERNALLY'
+            ? 'Esa transferencia ya fue revertida.'
+            : failureType === 'REVERSAL_TARGET_NOT_FOUND'
+              ? 'No encontré una transferencia activa que coincida con eso.'
+              : failureType === 'REVERSAL_INVARIANT' || failureType === 'REVERSAL_BLOCKED'
+                ? 'No puedo revertir esa transferencia de forma segura porque su registro financiero está incompleto.'
+                : 'La transferencia cambió desde que la revisamos. No hice ningún cambio.'
+          : failureType === 'REVERSAL_ALREADY_REVERSED_EXTERNALLY'
             ? 'Ese gasto ya fue revertido.'
             : failureType === 'REVERSAL_TARGET_NOT_FOUND'
               ? 'No encontré un gasto activo que coincida con eso.'
@@ -2049,6 +2085,18 @@ export class WritePlanRunner {
                     : permission
                       ? 'Ya no tienes permiso para registrar esta transferencia. No se realizó ningún cambio.'
                       : 'No pude registrar la transferencia. La operación se revirtió y no se realizó ningún cambio.'
+                  : label === 'reversion'
+                    ? stale
+                      ? 'El gasto cambió desde que lo revisamos. Lo volví a consultar antes de hacer cualquier cambio.'
+                      : permission
+                        ? 'Ya no tienes permiso para revertir este gasto. No se realizó ningún cambio.'
+                        : 'No pude revertir el gasto. La operación se revirtió y no se realizó ningún cambio.'
+                    : label === 'reversion_transferencia'
+                      ? stale
+                        ? 'La transferencia cambió desde que la revisamos. No hice ningún cambio.'
+                        : permission
+                          ? 'Ya no tienes permiso para revertir esta transferencia. No se realizó ningún cambio.'
+                          : 'No pude revertir la transferencia.'
                   : stale
                     ? failureType === 'STALE_WATCH_SOLD'
                       ? 'El reloj cambió desde que preparaste esta venta. No se realizó ningún cambio.'

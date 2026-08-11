@@ -12,6 +12,7 @@ import {
   normalizeTreasuryTransferAccount,
   accountLabel,
 } from './register-treasury-transfer.binding';
+import { CANONICAL_TREASURY_TRANSFER_INVARIANT_MESSAGE } from '../../../treasury/treasury-transfer-pair-economics';
 
 export type ReverseTransferClarify = {
   field: 'target' | 'amount' | 'sourceAccount' | 'destinationAccount' | 'date';
@@ -167,8 +168,7 @@ function weakSearchClarifyMessage(
   };
 }
 
-const INVARIANT_MESSAGE =
-  'No puedo revertir esa transferencia de forma segura porque su registro financiero está incompleto.';
+const INVARIANT_MESSAGE = CANONICAL_TREASURY_TRANSFER_INVARIANT_MESSAGE;
 
 /**
  * Trusted REVERSE_TREASURY_TRANSFER resolution (26D).
