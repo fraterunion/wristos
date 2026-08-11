@@ -35,6 +35,7 @@ const manualModuleHrefs: Partial<Record<WritePreviewAction | BusinessActionId, s
   REGISTER_CAPITAL_DISTRIBUTION: '/capital',
   REGISTER_PURCHASE: '/inventory',
   REGISTER_EXPENSE: '/expenses',
+  REVERSE_EXPENSE: '/expenses',
   CREATE_CLIENT: '/crm',
   UPDATE_CLIENT: '/crm',
   CREATE_RECEIVABLE: '/cuentas',
@@ -73,6 +74,7 @@ function isExecutableWriteIntent(intent: BusinessActionId | 'UNKNOWN'): boolean 
     intent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
     intent === 'REGISTER_CAPITAL_DISTRIBUTION' ||
     intent === 'REGISTER_EXPENSE' ||
+    intent === 'REVERSE_EXPENSE' ||
     intent === 'REGISTER_PURCHASE' ||
     intent === 'CREATE_CLIENT' ||
     intent === 'UPDATE_CLIENT' ||
@@ -357,12 +359,15 @@ export default function AssistantPage() {
       const isContribution = item.intent === 'REGISTER_CAPITAL_CONTRIBUTION';
       const isDistribution = item.intent === 'REGISTER_CAPITAL_DISTRIBUTION';
       const isExpense = item.intent === 'REGISTER_EXPENSE';
+      const isReverseExpense = item.intent === 'REVERSE_EXPENSE';
       const isPurchase = item.intent === 'REGISTER_PURCHASE';
       const isCreateClient = item.intent === 'CREATE_CLIENT';
       const isUpdateClient = item.intent === 'UPDATE_CLIENT';
       const isReceivable = item.intent === 'CREATE_RECEIVABLE';
       const isPayable = item.intent === 'CREATE_PAYABLE';
-      const confirmLabel = isUpdateClient
+      const confirmLabel = isReverseExpense
+        ? 'Revertir gasto'
+        : isUpdateClient
         ? 'Guardar cambios'
         : isCreateClient
           ? 'Crear cliente'

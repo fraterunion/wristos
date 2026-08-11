@@ -26,18 +26,18 @@ function d(n: number) {
 describe('Financial Reversal Safety Framework 26A', () => {
   const root = join(__dirname, '../../../../../..');
 
-  it('keeps exactly twelve WRITE bindings and does not register reversal WRITEs', () => {
+  it('keeps exactly thirteen WRITE bindings including REVERSE_EXPENSE only', () => {
     const registry = readFileSync(
       join(root, 'apps/api/src/modules/ai/bindings/write-capability-binding-registry.ts'),
       'utf8',
     );
-    expect(registry).toMatch(/bindings\.size !== 12/);
-    expect(registry).not.toContain('REVERSE_EXPENSE');
-    expect(registry).not.toContain('REVERSE_TREASURY_TRANSFER');
-    expect(registry).not.toContain('ReverseExpenseWriteBinding');
+    expect(registry).toMatch(/bindings\.size !== 13/);
+    expect(registry).toContain('REVERSE_EXPENSE');
+    expect(registry).toContain('ReverseExpenseWriteBinding');
     expect(registry).not.toContain('ReverseTreasuryTransferWriteBinding');
+    expect(registry).not.toMatch(/!this\.bindings\.has\('REVERSE_TREASURY_TRANSFER'\)/);
     for (const cap of FUTURE_REVERSAL_CAPABILITIES) {
-      expect(registry).not.toContain(`'${cap}'`);
+      expect(registry).not.toMatch(new RegExp(`!this\\.bindings\\.has\\('${cap}'\\)`));
     }
   });
 

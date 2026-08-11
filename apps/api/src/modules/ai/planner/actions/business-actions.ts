@@ -1673,6 +1673,84 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     reversibility: 'NONE',
   }),
   define({
+    id: 'REVERSE_EXPENSE',
+    name: 'Reverse Expense',
+    category: 'EXPENSES',
+    tier: 'HIGH',
+    required: ['targetId', 'targetFingerprint'],
+    optional: [
+      'trustedExpenseId',
+      'trustedTargetFingerprint',
+      'amount',
+      'currency',
+      'category',
+      'categoryLabel',
+      'concept',
+      'sourceAccount',
+      'sourceLabel',
+      'expenseDate',
+      'legacyMode',
+      'restoresLiquidity',
+      'hasCanonicalTreasuryOutflow',
+      'targetSafeLabel',
+      'reversalEffects',
+      'targetSource',
+      'useLastAction',
+      'selectedExpenseId',
+    ],
+    effectsBuilder: (entities) => {
+      const effects = entities.reversalEffects;
+      if (Array.isArray(effects)) {
+        return effects
+          .filter((e): e is Record<string, JsonValue> => Boolean(e) && typeof e === 'object')
+          .map((e) => ({
+            area: String(e.area ?? 'Expense'),
+            description: String(e.description ?? ''),
+          }))
+          .filter((e) => e.description);
+      }
+      const legacy = entities.legacyMode === true || entities.legacyMode === 'true';
+      const amount = String(entities.amount ?? '—');
+      const currency = String(entities.currency ?? 'MXN');
+      const sourceLabel = String(entities.sourceLabel ?? 'Tesorería');
+      return [
+        { area: 'Expense', description: `Gasto activo: -$${amount} ${currency}` },
+        {
+          area: 'Treasury',
+          description: legacy
+            ? 'Tesorería: Sin cambio'
+            : `${sourceLabel}: +$${amount} ${currency}`,
+        },
+        {
+          area: 'P&L',
+          description: legacy
+            ? 'P&L operativo: se elimina el gasto activo (sin movimiento de liquidez)'
+            : `P&L operativo: +$${amount} ${currency}`,
+        },
+        { area: 'Capital', description: 'Capital histórico: Sin cambio' },
+      ];
+    },
+    previewFields: (entities) => [
+      {
+        label: 'Gasto',
+        value: String(entities.concept ?? entities.categoryLabel ?? entities.category ?? '—'),
+      },
+      {
+        label: 'Monto',
+        value: `$${String(entities.amount ?? '—')} ${String(entities.currency ?? 'MXN')}`,
+      },
+      {
+        label: 'Cuenta',
+        value:
+          entities.legacyMode === true || entities.legacyMode === 'true'
+            ? 'Sin movimiento de tesorería'
+            : String(entities.sourceLabel ?? entities.sourceAccount ?? '—'),
+      },
+      { label: 'Fecha', value: String(entities.expenseDate ?? '—') },
+    ],
+    reversibility: 'NONE',
+  }),
+  define({
     id: 'CREATE_CLIENT',
     name: 'Create Client',
     category: 'CRM',

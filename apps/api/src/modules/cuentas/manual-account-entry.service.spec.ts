@@ -498,7 +498,7 @@ describe('AI bindings are wired for CREATE_RECEIVABLE / CREATE_PAYABLE', () => {
       join(__dirname, '../ai/bindings/write-capability-binding-registry.ts'),
       'utf8',
     );
-    expect(registry).toContain('this.bindings.size !== 12');
+    expect(registry).toContain('this.bindings.size !== 13');
     expect(registry).toMatch(/CreateReceivableWriteBinding/);
     expect(registry).toMatch(/CreatePayableWriteBinding/);
     expect(registry).toContain('CREATE_RECEIVABLE');

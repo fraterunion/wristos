@@ -1,6 +1,6 @@
 {
-  "version": "25C",
-  "auditedAt": "2026-08-09",
+  "version": "26C",
+  "auditedAt": "2026-08-11",
   "productionExecutableWrites": [
     "REGISTER_SALE",
     "REGISTER_RECEIVABLE_PAYMENT",
@@ -13,12 +13,14 @@
     "REGISTER_CAPITAL_CONTRIBUTION",
     "REGISTER_CAPITAL_DISTRIBUTION",
     "CREATE_RECEIVABLE",
-    "CREATE_PAYABLE"
+    "CREATE_PAYABLE",
+    "REVERSE_EXPENSE"
   ],
   "cataloguedUnboundWrites": [
     "REGISTER_SETTLEMENT",
     "REGISTER_CRYPTO_POSITION",
-    "REGISTER_CRYPTO_PRICE"
+    "REGISTER_CRYPTO_PRICE",
+    "REVERSE_TREASURY_TRANSFER"
   ],
   "compositionV1": [
     { "parent": "REGISTER_PURCHASE", "reason": "PURCHASE_SELLER", "child": "CREATE_CLIENT" },
@@ -26,32 +28,26 @@
   ],
   "metrics": {
     "totalMeaningful": 62,
-    "full": 12,
+    "full": 13,
     "partial": 6,
-    "uncovered": 28,
+    "uncovered": 27,
     "intentionallyExcluded": 16,
-    "overallCoveragePct": 26.1,
-    "financialCoveragePct": 46.2,
+    "overallCoveragePct": 28.3,
+    "financialCoveragePct": 50.0,
     "inventoryCoveragePct": 12.5,
     "crmCoveragePct": 40.0,
     "capitalCoveragePct": 25.0,
     "coverageFormula": "full / (full + partial + uncovered) * 100",
-    "notes": "intentionallyExcluded omitted from coverage denominator (admin/bulk/platform/read-only); 25C adds CREATE_RECEIVABLE + CREATE_PAYABLE"
+    "notes": "26C adds REVERSE_EXPENSE (WRITE #13). REGISTER_EXPENSE now has create+reversal. Still LEVEL_1 — not full Level 2 until other core reversals close. REVERSE_TREASURY_TRANSFER remains unbound. Composition unchanged."
   },
   "assistantOperateWristOSLevel": {
     "requiredForClaim": "LEVEL_2",
     "currentLevel": "LEVEL_1",
     "levels": {
-      "LEVEL_1": "Core transaction entry (current TWELVE writes)",
+      "LEVEL_1": "Core transaction entry (current THIRTEEN writes; expense reverse is first correction)",
       "LEVEL_2": "Core corrections/reversals for the same domains",
       "LEVEL_3": "Operational entity maintenance (watch edit, Radar)",
       "LEVEL_4": "Advanced/bulk/admin (imports, automations, ownership, platform)"
     }
-  },
-  "recommendedNextCommit": {
-    "id": "26A",
-    "title": "Correction / cancel flows for manual accounts + payments",
-    "priority": "P0",
-    "rationale": "LEVEL_2 corrections remain the gap after entry writes including manual CxC/CxP"
   }
 }

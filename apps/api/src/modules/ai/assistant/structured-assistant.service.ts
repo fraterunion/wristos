@@ -12,6 +12,9 @@ import {
 } from '../bindings/write/create-manual-account-entity-enricher';
 import { CreateManualAccountEntityResolver } from '../bindings/write/create-manual-account-entity-resolver.service';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
+import { ReverseExpenseEntityResolver } from '../bindings/write/reverse-expense-entity-resolver.service';
+import { LastReversibleActionContext } from '../reversals/financial-reversal.types';
+import { parseResolvedContextShell } from '../context/working-context';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
 import { PurchaseEntityResolver } from '../bindings/write/purchase-entity-resolver.service';
 import { PayablePaymentEntityResolver } from '../bindings/write/payable-payment-entity-resolver.service';
@@ -39,6 +42,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_CAPITAL_CONTRIBUTION',
   'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_EXPENSE',
+  'REVERSE_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
@@ -62,6 +66,7 @@ export class StructuredAssistantService {
     private readonly updateClientEntityResolver: UpdateClientEntityResolver,
     private readonly capitalInvestorEntityResolver: CapitalInvestorEntityResolver,
     private readonly createManualAccountEntityResolver: CreateManualAccountEntityResolver,
+    private readonly reverseExpenseEntityResolver: ReverseExpenseEntityResolver,
     private readonly capital: CapitalService,
     private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
@@ -196,6 +201,93 @@ export class StructuredAssistantService {
       }
       if (input.intent === 'REGISTER_EXPENSE') {
         entities = enrichExpenseEntities(entities, request.receivedAt) as typeof entities;
+      }
+      if (input.intent === 'REVERSE_EXPENSE') {
+        const resolvedContext = await this.persistence.readResolvedContext(
+          actor,
+          prepared.workspaceId,
+        );
+        const shell = parseResolvedContextShell(resolvedContext);
+        const lastReversibleAction =
+          (shell.lastReversibleAction as LastReversibleActionContext | undefined) ?? null;
+        const resolved = await this.reverseExpenseEntityResolver.resolve({
+          tenantId: actor.tenantId,
+          conversationId: prepared.conversationId,
+          workspaceId: prepared.workspaceId,
+          entities: entities as Record<string, JsonValue>,
+          lastReversibleAction,
+        });
+        entities = resolved.entities as typeof entities;
+        if (resolved.kind === 'CLARIFY') {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType:
+              resolved.clarify.code === 'AMBIGUOUS_EXPENSE'
+                ? 'ENTITY_AMBIGUITY'
+                : 'MISSING_FIELD',
+            clarificationReason: resolved.clarify.code ?? 'reverse_expense',
+            candidateCount: resolved.clarify.candidates.length || undefined,
+            multipleCandidates: resolved.clarify.candidates.length > 1,
+            entityPickerUsed: resolved.clarify.code === 'AMBIGUOUS_EXPENSE',
+          });
+          if (resolved.clarify.code === 'AMBIGUOUS_EXPENSE') {
+            const response = this.accountDisambiguationResponse(
+              request.id,
+              request.traceId,
+              prepared,
+              resolved.clarify.message,
+              resolved.clarify.items,
+              'OPERATING_EXPENSE',
+            );
+            return this.persistence.complete(
+              request.id,
+              actor,
+              response,
+              prepared.workspaceVersion,
+              AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+              AIRequestStatus.NEEDS_CLARIFICATION,
+              { intent: input.intent, entities },
+            );
+          }
+          const soft: StructuredAssistantResponse = {
+            requestId: request.id,
+            conversationId: prepared.conversationId,
+            workspaceId: prepared.workspaceId,
+            interactionState: 'NEEDS_INPUT',
+            responseType: 'TEXT_ANSWER',
+            payload: {
+              message: resolved.clarify.message,
+              clarificationField: resolved.clarify.field,
+              unchanged: 'No se ejecutó ninguna acción.',
+              nextAction: 'Indica el gasto o cancela.',
+            },
+            warnings: [],
+            suggestedActions: [],
+            traceId: request.traceId,
+            createdAt: new Date().toISOString(),
+          };
+          return this.persistence.complete(
+            request.id,
+            actor,
+            soft,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+        telem(this.telemetry, {
+          event: 'PlannerCompleted',
+          tenantId: actor.tenantId,
+          requestId: request.id,
+          capability: input.intent,
+          uniqueResolution: true,
+          candidateCount: 1,
+        });
       }
       if (input.intent === 'CREATE_CLIENT') {
         const resolved = await this.createClientEntityResolver.resolve(
@@ -955,12 +1047,15 @@ export class StructuredAssistantService {
       plan.businessAction === 'REGISTER_PAYABLE_PAYMENT';
     const isTransfer = plan.businessAction === 'REGISTER_TREASURY_TRANSFER';
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
+    const isReverseExpense = plan.businessAction === 'REVERSE_EXPENSE';
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     const isCreateClient = plan.businessAction === 'CREATE_CLIENT';
     const isUpdateClient = plan.businessAction === 'UPDATE_CLIENT';
     const correctionPolicy = !executable
       ? null
-      : isTransfer
+      : isReverseExpense
+        ? null
+        : isTransfer
         ? 'Después de registrarla, cualquier corrección se realiza desde Tesorería.'
         : isPayment
           ? 'Después de registrarlo, cualquier corrección se realiza desde Cuentas.'
@@ -973,7 +1068,9 @@ export class StructuredAssistantService {
                 : 'Después de registrarla, cualquier corrección se realiza desde Ventas.';
     const message = !executable
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
-      : isTransfer
+      : isReverseExpense
+        ? 'Voy a revertir este gasto. Revisa el resumen y confirma.'
+        : isTransfer
         ? 'Revisa el resumen y confirma para registrar la transferencia.'
         : isPayment
           ? 'Revisa el resumen y confirma para registrar el pago.'
@@ -988,7 +1085,9 @@ export class StructuredAssistantService {
                   : 'Revisa el resumen y confirma para registrar la venta.';
     const nextAction = !executable
       ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
-      : isTransfer
+      : isReverseExpense
+        ? 'Confirma para revertir el gasto de forma canónica.'
+        : isTransfer
         ? 'Confirma la transferencia para ejecutar el registro canónico.'
         : isPayment
           ? 'Confirma el pago para ejecutar el registro canónico.'
@@ -1018,7 +1117,7 @@ export class StructuredAssistantService {
     prepared: PreparedAssistantRequest,
     message: string,
     items: Array<Record<string, JsonValue>>,
-    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY' | 'INVESTOR',
+    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE',
   ): StructuredAssistantResponse {
     return {
       requestId,

@@ -4,18 +4,24 @@
  * Shared contracts ONLY. No generic mutation service.
  * Domain economics stay in ExpenseRegistrationService / TreasuryTransferService.
  *
- * REVERSE_EXPENSE and REVERSE_TREASURY_TRANSFER remain AI-UNBOUND in 26A.
+ * 26C: REVERSE_EXPENSE is AI-bound (WRITE #13).
+ * REVERSE_TREASURY_TRANSFER remains AI-UNBOUND.
  */
 
 export const REVERSAL_FRAMEWORK_VERSION = '1.0.0';
 
-/** Future AI write capabilities — NOT registered in WriteCapabilityBindingRegistry yet. */
-export const FUTURE_REVERSAL_CAPABILITIES = [
+/** All reversal capabilities in the framework (bound + unbound). */
+export const REVERSAL_CAPABILITIES = [
   'REVERSE_EXPENSE',
   'REVERSE_TREASURY_TRANSFER',
 ] as const;
 
-export type FutureReversalCapability = (typeof FUTURE_REVERSAL_CAPABILITIES)[number];
+export type ReversalCapability = (typeof REVERSAL_CAPABILITIES)[number];
+
+/** Still AI-unbound — must not appear in WriteCapabilityBindingRegistry. */
+export const FUTURE_REVERSAL_CAPABILITIES = ['REVERSE_TREASURY_TRANSFER'] as const;
+
+export type FutureReversalCapability = (typeof FUTURE_REVERSAL_CAPABILITIES)[number] | 'REVERSE_EXPENSE';
 
 export type ReversalTargetType = 'OPERATING_EXPENSE' | 'TREASURY_TRANSFER';
 
@@ -24,7 +30,7 @@ export type ReversalTargetType = 'OPERATING_EXPENSE' | 'TREASURY_TRANSFER';
  * Injected only after deterministic server-side resolution.
  */
 export type TrustedReversalTarget = {
-  capability: FutureReversalCapability;
+  capability: ReversalCapability;
   targetType: ReversalTargetType;
   targetId: string;
   tenantId: string;
@@ -63,7 +69,7 @@ export type ReversalTargetSnapshot = ExpenseReversalSnapshot | TransferReversalS
 export type ReversalRiskTier = 'HIGH';
 
 export type ReversalPreviewContract = {
-  targetCapability: FutureReversalCapability;
+  targetCapability: ReversalCapability;
   targetSafeLabel: string;
   originalAmount: string;
   originalDate: string | null;
@@ -77,7 +83,7 @@ export type ReversalPreviewContract = {
 
 export type ReversalReceiptContract = {
   reversedTargetId: string;
-  reversedCapability: FutureReversalCapability;
+  reversedCapability: ReversalCapability;
   reversedAt: string;
   restoredLiquidity: boolean;
   pnlChanged: boolean;
@@ -93,7 +99,7 @@ export type ReversalReceiptContract = {
  * Never trust without DB freshness + fingerprint revalidation.
  */
 export type LastReversibleActionContext = {
-  capability: FutureReversalCapability;
+  capability: ReversalCapability;
   targetType: ReversalTargetType;
   /** Hashed / internal id — not shown to LLM as authoritative. */
   targetId: string;

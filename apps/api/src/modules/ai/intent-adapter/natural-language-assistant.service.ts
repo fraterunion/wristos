@@ -43,6 +43,7 @@ const WRITE_CLARIFICATION_INTENTS = new Set<string>([
   'REGISTER_CAPITAL_CONTRIBUTION',
   'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_EXPENSE',
+  'REVERSE_EXPENSE',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
@@ -978,6 +979,15 @@ export class NaturalLanguageAssistantService {
             accountEntryId: resolution.id,
           });
         }
+      }
+      if (
+        outcome.candidate.intent === 'REVERSE_EXPENSE' &&
+        resolution.entityType === 'OPERATING_EXPENSE'
+      ) {
+        entities = mergeTrustedIds(entities, {
+          selectedExpenseId: resolution.id,
+          trustedExpenseId: resolution.id,
+        });
       }
       if (
         outcome.candidate.intent === 'REGISTER_PAYABLE_PAYMENT' &&

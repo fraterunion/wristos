@@ -418,7 +418,7 @@ describe('Architecture: production logic does not depend on telemetry', () => {
     expect(registry).toContain('RegisterCapitalDistributionWriteBinding');
     expect(registry).toContain('CreateReceivableWriteBinding');
     expect(registry).toContain('CreatePayableWriteBinding');
-    expect(registry).toContain('this.bindings.size !== 12');
+    expect(registry).toContain('this.bindings.size !== 13');
     const structured = fs.readFileSync(
       path.join(__dirname, '../../assistant/structured-assistant.service.ts'),
       'utf8',

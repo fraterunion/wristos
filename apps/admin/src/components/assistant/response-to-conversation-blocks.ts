@@ -65,6 +65,7 @@ const MANUAL_CTA_LABEL: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_CAPITAL_DISTRIBUTION: 'Ver Capital',
   REGISTER_PURCHASE: 'Abrir Inventario',
   REGISTER_EXPENSE: 'Completar en Gastos',
+  REVERSE_EXPENSE: 'Ver Gastos',
   CREATE_CLIENT: 'Abrir CRM',
   UPDATE_CLIENT: 'Abrir CRM',
   REGISTER_SETTLEMENT: 'Continuar en Cuentas',
@@ -83,6 +84,7 @@ export type PreviewCtaKind =
   | 'CONFIRM_CONTRIBUTION'
   | 'CONFIRM_DISTRIBUTION'
   | 'CONFIRM_EXPENSE'
+  | 'CONFIRM_REVERSE_EXPENSE'
   | 'CONFIRM_CLIENT'
   | 'CONFIRM_CLIENT_UPDATE'
   | 'CONFIRM_PURCHASE'
@@ -619,6 +621,8 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'REGISTER_CAPITAL_DISTRIBUTION' && response.payload.executable === true;
   const executableExpense =
     intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
+  const executableReverseExpense =
+    intent === 'REVERSE_EXPENSE' && response.payload.executable === true;
   const executablePurchase =
     intent === 'REGISTER_PURCHASE' && response.payload.executable === true;
   const executableCreateClient =
@@ -630,7 +634,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
   const executablePayable =
     intent === 'CREATE_PAYABLE' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
-  const intro = executableUpdateClient
+  const intro = executableReverseExpense
+    ? 'Voy a revertir este gasto:'
+    : executableUpdateClient
     ? 'Voy a actualizar este cliente:'
     : executableCreateClient
       ? 'Voy a crear este cliente:'
@@ -663,7 +669,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
       title,
       fields,
       effects,
-      ctaLabel: executableUpdateClient
+      ctaLabel: executableReverseExpense
+        ? 'Revertir gasto'
+        : executableUpdateClient
         ? 'Guardar cambios'
         : executableCreateClient
           ? 'Crear cliente'
@@ -686,7 +694,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
                           : executableSale
                             ? 'Registrar venta'
                             : manualCtaLabel(intent),
-      ctaKind: executableUpdateClient
+      ctaKind: executableReverseExpense
+        ? 'CONFIRM_REVERSE_EXPENSE'
+        : executableUpdateClient
         ? 'CONFIRM_CLIENT_UPDATE'
         : executableCreateClient
           ? 'CONFIRM_CLIENT'
@@ -796,6 +806,42 @@ function expenseReceiptBlocks(response: StructuredAssistantResponse): Conversati
       kind: 'receipt',
       id: blockId(response, 'receipt'),
       message,
+      lines,
+      dealHref: '/expenses',
+      correctHref: '/expenses',
+    },
+  ];
+}
+
+function reverseExpenseReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const message =
+    asString(response.payload.message) ??
+    (receipt && asString(receipt.message)) ??
+    'Listo. El gasto quedó revertido.';
+  const lines: string[] = [];
+  if (receipt) {
+    const currency = asString(receipt.currency) ?? 'MXN';
+    const concept = asString(receipt.concept) ?? asString(receipt.categoryLabel);
+    const amount = formatMoney(receipt.amount, currency);
+    if (concept && amount) {
+      lines.push(`Revertí el gasto de ${concept} por ${amount}.`);
+    } else if (concept) {
+      lines.push(concept);
+    }
+    const treasuryNote = asString(receipt.treasuryNote);
+    if (treasuryNote) lines.push(treasuryNote);
+    else if (receipt.legacyMode === true) lines.push('Tesorería: Sin cambio');
+    else {
+      const source = asString(receipt.sourceLabel);
+      if (source && amount) lines.push(`${source}: +${amount}`);
+    }
+  }
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message: message.startsWith('✓') || message.startsWith('Listo') ? message : `✓ Listo. ${message}`,
       lines,
       dealHref: '/expenses',
       correctHref: '/expenses',
@@ -1189,6 +1235,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'REGISTER_EXPENSE') {
         main = expenseReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REVERSE_EXPENSE') {
+        main = reverseExpenseReceiptBlocks(response);
         break;
       }
       if (intent === 'REGISTER_PURCHASE') {

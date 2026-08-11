@@ -29,6 +29,11 @@ export function detectHighConfidenceTopicChange(
 
   const rules: Array<{ intent: string; pattern: RegExp }> = [
     {
+      intent: 'REVERSE_EXPENSE',
+      pattern:
+        /^(revierte|deshaz|borra|elimina|anula).*(gasto)|^(deshaz eso|me equivoqu[eé])/i,
+    },
+    {
       intent: 'REGISTER_EXPENSE',
       pattern:
         /^(registra(?:r)?|anota(?:r)?|apunta(?:r)?)\s+(un\s+)?gasto\b|^gast[eé](\s|$)|^pagu[eé]\s+\d/i,
