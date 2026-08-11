@@ -1,7 +1,12 @@
-# WristOS Command Coverage Audit (Commit 25A)
+# WristOS Command Coverage Audit (Commit 25A → updated 26D)
 
-**Status:** AUDIT / ROADMAP ONLY — no runtime capabilities added  
-**Production executable AI WRITEs:** exactly **TEN**  
+> **26D update:** Production executable AI WRITEs are now exactly **FOURTEEN**
+> (`REVERSE_EXPENSE` + `REVERSE_TREASURY_TRANSFER`). Machine truth:
+> [`command-coverage.json`](./command-coverage.json). Composition unchanged.
+> Still **LEVEL 1** — not full Level 2.
+
+**Status:** AUDIT / ROADMAP (historical body below may still say TEN/THIRTEEN)  
+**Production executable AI WRITEs:** exactly **FOURTEEN** (see JSON)  
 **Composition V1:** `PURCHASE_SELLER → CREATE_CLIENT`, `SALE_CUSTOMER → CREATE_CLIENT` only  
 **Machine-readable summary:** [`command-coverage.json`](./command-coverage.json)
 

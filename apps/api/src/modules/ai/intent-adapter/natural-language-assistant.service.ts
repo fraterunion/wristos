@@ -35,6 +35,10 @@ import {
   buildReferenceClarificationResponse,
 } from './typed-responses';
 import { detectExpenseCorrectionLanguage } from '../reversals/expense-correction-language';
+import { detectTransferCorrectionLanguage } from '../reversals/transfer-correction-language';
+import { reverseIntentFromLastReversibleAction } from '../reversals/last-action-reverse-allowlist';
+import { LastReversibleActionContext } from '../reversals/financial-reversal.types';
+import { parseResolvedContextShell } from '../context/working-context';
 
 const WRITE_CLARIFICATION_INTENTS = new Set<string>([
   'REGISTER_SALE',
@@ -45,6 +49,7 @@ const WRITE_CLARIFICATION_INTENTS = new Set<string>([
   'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_EXPENSE',
   'REVERSE_EXPENSE',
+  'REVERSE_TREASURY_TRANSFER',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
@@ -415,8 +420,50 @@ export class NaturalLanguageAssistantService {
       }
     }
 
-    // 26C.1 — Deterministic expense correction language BEFORE pure deictic "eso"
-    // steal and before Anthropic. Provider remains assistive for complex phrasing.
+    // 26D — Deterministic transfer correction language BEFORE expense / pure "eso".
+    const transferCorrection = detectTransferCorrectionLanguage(normalizedText);
+    if (transferCorrection) {
+      const correctionIntent = transferCorrection.intent;
+      const correctionEntities = transferCorrection.entities as Record<
+        string,
+        string | number | boolean
+      >;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: correctionIntent,
+        entities: correctionEntities,
+        candidateHash: `deterministic-transfer-correction:${transferCorrection.kind}`,
+      });
+      telem(this.telemetry, {
+        event: 'ProviderCompleted',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: correctionIntent,
+        clarificationReason: transferCorrection.kind,
+        answered: true,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: correctionIntent,
+          entities: correctionEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText: dto.text,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: correctionIntent,
+        response: continued,
+        resolvedEntities: correctionEntities,
+      };
+    }
+
+    // 26C.1 / 26D — Deterministic expense correction + closed last-action allowlist.
+    // LAST_ACTION_DEIXIS routes by lastReversibleAction capability (expense vs transfer).
     const expenseCorrection = detectExpenseCorrectionLanguage(normalizedText);
     if (expenseCorrection) {
       if (expenseCorrection.kind === 'BLOCKED_NON_EXPENSE_REVERSAL') {
@@ -435,11 +482,51 @@ export class NaturalLanguageAssistantService {
         return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
       }
 
-      const correctionIntent = expenseCorrection.intent;
-      const correctionEntities = expenseCorrection.entities as Record<
-        string,
-        string | number | boolean
-      >;
+      let correctionIntent: IntentCandidateIntent = expenseCorrection.intent;
+      const correctionEntities = {
+        ...(expenseCorrection.entities as Record<string, string | number | boolean>),
+      };
+
+      if (expenseCorrection.kind === 'LAST_ACTION_DEIXIS') {
+        let last: LastReversibleActionContext | null = null;
+        try {
+          if (dto.workspaceId) {
+            const workspace = await this.prisma.aIWorkspace.findFirst({
+              where: {
+                id: dto.workspaceId,
+                tenantId: actor.tenantId,
+                userId: actor.userId,
+                deletedAt: null,
+              },
+              select: { resolvedContext: true },
+            });
+            const shell = parseResolvedContextShell(workspace?.resolvedContext);
+            last =
+              (shell.lastReversibleAction as LastReversibleActionContext | undefined) ?? null;
+          }
+        } catch {
+          last = null;
+        }
+        const mapped = reverseIntentFromLastReversibleAction(last);
+        if (!mapped) {
+          const response = buildReferenceClarificationResponse(
+            'No tengo una acción reversible reciente en esta conversación para deshacer. Indica qué quieres corregir.',
+            responseCtx,
+            'NO_LAST_ACTION',
+          );
+          await this.aiRequests.failUnattached(
+            request,
+            actor,
+            'UNKNOWN',
+            response,
+            'NO_LAST_ACTION',
+          );
+          return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+        }
+        correctionIntent = mapped;
+        correctionEntities.useLastAction = true;
+      }
+
       await this.aiRequests.recordInterpretation(request.id, {
         intent: correctionIntent,
         entities: correctionEntities,
@@ -1047,6 +1134,15 @@ export class NaturalLanguageAssistantService {
         entities = mergeTrustedIds(entities, {
           selectedExpenseId: resolution.id,
           trustedExpenseId: resolution.id,
+        });
+      }
+      if (
+        outcome.candidate.intent === 'REVERSE_TREASURY_TRANSFER' &&
+        resolution.entityType === 'TREASURY_TRANSFER'
+      ) {
+        entities = mergeTrustedIds(entities, {
+          selectedTransferId: resolution.id,
+          trustedTransferId: resolution.id,
         });
       }
       if (

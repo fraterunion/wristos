@@ -13,6 +13,7 @@ import {
 import { CreateManualAccountEntityResolver } from '../bindings/write/create-manual-account-entity-resolver.service';
 import { enrichExpenseEntities } from '../bindings/write/expense-entity-enricher';
 import { ReverseExpenseEntityResolver } from '../bindings/write/reverse-expense-entity-resolver.service';
+import { ReverseTreasuryTransferEntityResolver } from '../bindings/write/reverse-treasury-transfer-entity-resolver.service';
 import { LastReversibleActionContext } from '../reversals/financial-reversal.types';
 import { parseResolvedContextShell } from '../context/working-context';
 import { enrichPurchaseEntities } from '../bindings/write/purchase-entity-enricher';
@@ -43,6 +44,7 @@ const EXECUTABLE_WRITES = new Set([
   'REGISTER_CAPITAL_DISTRIBUTION',
   'REGISTER_EXPENSE',
   'REVERSE_EXPENSE',
+  'REVERSE_TREASURY_TRANSFER',
   'REGISTER_PURCHASE',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
@@ -67,6 +69,7 @@ export class StructuredAssistantService {
     private readonly capitalInvestorEntityResolver: CapitalInvestorEntityResolver,
     private readonly createManualAccountEntityResolver: CreateManualAccountEntityResolver,
     private readonly reverseExpenseEntityResolver: ReverseExpenseEntityResolver,
+    private readonly reverseTreasuryTransferEntityResolver: ReverseTreasuryTransferEntityResolver,
     private readonly capital: CapitalService,
     private readonly compositionOrchestrator: CompositionOrchestrator,
     @Optional() private readonly telemetry?: TelemetryEmitter,
@@ -264,6 +267,93 @@ export class StructuredAssistantService {
               clarificationField: resolved.clarify.field,
               unchanged: 'No se ejecutó ninguna acción.',
               nextAction: 'Indica el gasto o cancela.',
+            },
+            warnings: [],
+            suggestedActions: [],
+            traceId: request.traceId,
+            createdAt: new Date().toISOString(),
+          };
+          return this.persistence.complete(
+            request.id,
+            actor,
+            soft,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+        telem(this.telemetry, {
+          event: 'PlannerCompleted',
+          tenantId: actor.tenantId,
+          requestId: request.id,
+          capability: input.intent,
+          uniqueResolution: true,
+          candidateCount: 1,
+        });
+      }
+      if (input.intent === 'REVERSE_TREASURY_TRANSFER') {
+        const resolvedContext = await this.persistence.readResolvedContext(
+          actor,
+          prepared.workspaceId,
+        );
+        const shell = parseResolvedContextShell(resolvedContext);
+        const lastReversibleAction =
+          (shell.lastReversibleAction as LastReversibleActionContext | undefined) ?? null;
+        const resolved = await this.reverseTreasuryTransferEntityResolver.resolve({
+          tenantId: actor.tenantId,
+          conversationId: prepared.conversationId,
+          workspaceId: prepared.workspaceId,
+          entities: entities as Record<string, JsonValue>,
+          lastReversibleAction,
+        });
+        entities = resolved.entities as typeof entities;
+        if (resolved.kind === 'CLARIFY') {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType:
+              resolved.clarify.code === 'AMBIGUOUS_TRANSFER'
+                ? 'ENTITY_AMBIGUITY'
+                : 'MISSING_FIELD',
+            clarificationReason: resolved.clarify.code ?? 'reverse_treasury_transfer',
+            candidateCount: resolved.clarify.candidates.length || undefined,
+            multipleCandidates: resolved.clarify.candidates.length > 1,
+            entityPickerUsed: resolved.clarify.code === 'AMBIGUOUS_TRANSFER',
+          });
+          if (resolved.clarify.code === 'AMBIGUOUS_TRANSFER') {
+            const response = this.accountDisambiguationResponse(
+              request.id,
+              request.traceId,
+              prepared,
+              resolved.clarify.message,
+              resolved.clarify.items,
+              'TREASURY_TRANSFER',
+            );
+            return this.persistence.complete(
+              request.id,
+              actor,
+              response,
+              prepared.workspaceVersion,
+              AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+              AIRequestStatus.NEEDS_CLARIFICATION,
+              { intent: input.intent, entities },
+            );
+          }
+          const soft: StructuredAssistantResponse = {
+            requestId: request.id,
+            conversationId: prepared.conversationId,
+            workspaceId: prepared.workspaceId,
+            interactionState: 'NEEDS_INPUT',
+            responseType: 'TEXT_ANSWER',
+            payload: {
+              message: resolved.clarify.message,
+              clarificationField: resolved.clarify.field,
+              unchanged: 'No se ejecutó ninguna acción.',
+              nextAction: 'Indica la transferencia o cancela.',
             },
             warnings: [],
             suggestedActions: [],
@@ -1048,12 +1138,13 @@ export class StructuredAssistantService {
     const isTransfer = plan.businessAction === 'REGISTER_TREASURY_TRANSFER';
     const isExpense = plan.businessAction === 'REGISTER_EXPENSE';
     const isReverseExpense = plan.businessAction === 'REVERSE_EXPENSE';
+    const isReverseTransfer = plan.businessAction === 'REVERSE_TREASURY_TRANSFER';
     const isPurchase = plan.businessAction === 'REGISTER_PURCHASE';
     const isCreateClient = plan.businessAction === 'CREATE_CLIENT';
     const isUpdateClient = plan.businessAction === 'UPDATE_CLIENT';
     const correctionPolicy = !executable
       ? null
-      : isReverseExpense
+      : isReverseExpense || isReverseTransfer
         ? null
         : isTransfer
         ? 'Después de registrarla, cualquier corrección se realiza desde Tesorería.'
@@ -1070,6 +1161,8 @@ export class StructuredAssistantService {
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
       : isReverseExpense
         ? 'Voy a revertir este gasto.'
+        : isReverseTransfer
+          ? 'Voy a revertir esta transferencia.'
         : isTransfer
         ? 'Revisa el resumen y confirma para registrar la transferencia.'
         : isPayment
@@ -1087,6 +1180,8 @@ export class StructuredAssistantService {
       ? 'Usa el flujo canónico de la aplicación para completar esta acción.'
       : isReverseExpense
         ? 'Confirma para revertir el gasto de forma canónica.'
+        : isReverseTransfer
+          ? 'Confirma para revertir la transferencia de forma canónica.'
         : isTransfer
         ? 'Confirma la transferencia para ejecutar el registro canónico.'
         : isPayment
@@ -1117,7 +1212,7 @@ export class StructuredAssistantService {
     prepared: PreparedAssistantRequest,
     message: string,
     items: Array<Record<string, JsonValue>>,
-    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE',
+    entityType: 'CLIENT' | 'WATCH' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE' | 'TREASURY_TRANSFER',
   ): StructuredAssistantResponse {
     return {
       requestId,

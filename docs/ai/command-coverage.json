@@ -1,5 +1,5 @@
 {
-  "version": "26C",
+  "version": "26D",
   "auditedAt": "2026-08-11",
   "productionExecutableWrites": [
     "REGISTER_SALE",
@@ -14,37 +14,45 @@
     "REGISTER_CAPITAL_DISTRIBUTION",
     "CREATE_RECEIVABLE",
     "CREATE_PAYABLE",
-    "REVERSE_EXPENSE"
+    "REVERSE_EXPENSE",
+    "REVERSE_TREASURY_TRANSFER"
   ],
   "cataloguedUnboundWrites": [
     "REGISTER_SETTLEMENT",
     "REGISTER_CRYPTO_POSITION",
-    "REGISTER_CRYPTO_PRICE",
-    "REVERSE_TREASURY_TRANSFER"
+    "REGISTER_CRYPTO_PRICE"
   ],
   "compositionV1": [
-    { "parent": "REGISTER_PURCHASE", "reason": "PURCHASE_SELLER", "child": "CREATE_CLIENT" },
-    { "parent": "REGISTER_SALE", "reason": "SALE_CUSTOMER", "child": "CREATE_CLIENT" }
+    {
+      "parent": "REGISTER_PURCHASE",
+      "reason": "PURCHASE_SELLER",
+      "child": "CREATE_CLIENT"
+    },
+    {
+      "parent": "REGISTER_SALE",
+      "reason": "SALE_CUSTOMER",
+      "child": "CREATE_CLIENT"
+    }
   ],
   "metrics": {
     "totalMeaningful": 62,
-    "full": 13,
+    "full": 14,
     "partial": 6,
-    "uncovered": 27,
+    "uncovered": 26,
     "intentionallyExcluded": 16,
-    "overallCoveragePct": 28.3,
+    "overallCoveragePct": 30.4,
     "financialCoveragePct": 50.0,
     "inventoryCoveragePct": 12.5,
     "crmCoveragePct": 40.0,
     "capitalCoveragePct": 25.0,
     "coverageFormula": "full / (full + partial + uncovered) * 100",
-    "notes": "26C adds REVERSE_EXPENSE (WRITE #13). REGISTER_EXPENSE now has create+reversal. Still LEVEL_1 — not full Level 2 until other core reversals close. REVERSE_TREASURY_TRANSFER remains unbound. Composition unchanged."
+    "notes": "26D adds REVERSE_TREASURY_TRANSFER (WRITE #14). Treasury transfer has create+reverse. Still LEVEL_1 \u2014 not full Level 2 until other core reversals close. Composition unchanged."
   },
   "assistantOperateWristOSLevel": {
     "requiredForClaim": "LEVEL_2",
     "currentLevel": "LEVEL_1",
     "levels": {
-      "LEVEL_1": "Core transaction entry (current THIRTEEN writes; expense reverse is first correction)",
+      "LEVEL_1": "Core transaction entry (current FOURTEEN writes; expense + transfer reverse are first corrections)",
       "LEVEL_2": "Core corrections/reversals for the same domains",
       "LEVEL_3": "Operational entity maintenance (watch edit, Radar)",
       "LEVEL_4": "Advanced/bulk/admin (imports, automations, ownership, platform)"

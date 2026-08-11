@@ -49,6 +49,7 @@ const PAYMENT_MODE_CHOICES: ClarificationChoice[] = [
 const PRIORITY: Record<string, string[]> = {
   REGISTER_EXPENSE: ['amount', 'currency', 'source', 'sourceAccount', 'category', 'concept', 'date'],
   REVERSE_EXPENSE: ['amount', 'category', 'concept', 'date', 'source', 'target'],
+  REVERSE_TREASURY_TRANSFER: ['amount', 'sourceAccount', 'destinationAccount', 'date', 'target'],
   REGISTER_SALE: [
     'watchId',
     'watch',
@@ -169,6 +170,7 @@ function partyLabel(entities: PartialEntities): string | null {
 
 function amountQuestion(capability: string, entities: PartialEntities): string {
   if (capability === 'REVERSE_EXPENSE') return '¿De cuánto fue el gasto que quieres revertir?';
+  if (capability === 'REVERSE_TREASURY_TRANSFER') return '¿De cuánto fue la transferencia que quieres revertir?';
   if (capability === 'REGISTER_EXPENSE') return '¿De cuánto fue el gasto?';
   if (capability === 'REGISTER_SALE') {
     const who = partyLabel(entities);

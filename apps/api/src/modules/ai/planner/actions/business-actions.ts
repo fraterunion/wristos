@@ -1751,6 +1751,62 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
     reversibility: 'NONE',
   }),
   define({
+    id: 'REVERSE_TREASURY_TRANSFER',
+    name: 'Reverse Treasury Transfer',
+    category: 'TREASURY',
+    tier: 'HIGH',
+    required: ['targetId', 'targetFingerprint'],
+    optional: [
+      'trustedTransferId',
+      'trustedTargetFingerprint',
+      'amount',
+      'currency',
+      'sourceAccount',
+      'destinationAccount',
+      'sourceLabel',
+      'destinationLabel',
+      'transferDate',
+      'targetSafeLabel',
+      'reversalEffects',
+      'targetSource',
+      'useLastAction',
+      'selectedTransferId',
+    ],
+    effectsBuilder: (entities) => {
+      const amount = String(entities.amount ?? '—');
+      const sourceLabel = String(entities.sourceLabel ?? 'Origen');
+      const destinationLabel = String(entities.destinationLabel ?? 'Destino');
+      return [
+        { area: 'Treasury', description: `${sourceLabel}: +$${amount} MXN` },
+        { area: 'Treasury', description: `${destinationLabel}: −$${amount} MXN` },
+        { area: 'Treasury', description: 'Liquidez total: Sin cambios' },
+        { area: 'P&L', description: 'P&L: Sin cambios' },
+        { area: 'Capital', description: 'Capital: Sin cambios' },
+      ];
+    },
+    previewFields: (entities) => {
+      const amount = String(entities.amount ?? '—');
+      const sourceLabel = String(entities.sourceLabel ?? entities.sourceAccount ?? '—');
+      const destinationLabel = String(
+        entities.destinationLabel ?? entities.destinationAccount ?? '—',
+      );
+      const rows = [
+        { label: 'Monto', value: `$${amount} MXN` },
+        { label: 'Original', value: `${sourceLabel} → ${destinationLabel}` },
+        { label: sourceLabel, value: `+$${amount}` },
+        { label: destinationLabel, value: `−$${amount}` },
+        { label: 'Liquidez total', value: 'Sin cambios' },
+        { label: 'P&L', value: 'Sin cambios' },
+        { label: 'Capital', value: 'Sin cambios' },
+      ];
+      if (entities.transferDate) {
+        rows.splice(2, 0, { label: 'Fecha', value: String(entities.transferDate) });
+      }
+      return rows;
+    },
+    reversibility: 'NONE',
+  }),
+  define({
     id: 'CREATE_CLIENT',
     name: 'Create Client',
     category: 'CRM',

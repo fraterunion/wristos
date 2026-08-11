@@ -66,6 +66,7 @@ const MANUAL_CTA_LABEL: Partial<Record<WritePreviewAction, string>> = {
   REGISTER_PURCHASE: 'Abrir Inventario',
   REGISTER_EXPENSE: 'Completar en Gastos',
   REVERSE_EXPENSE: 'Ver Gastos',
+  REVERSE_TREASURY_TRANSFER: 'Ver Tesorería',
   CREATE_CLIENT: 'Abrir CRM',
   UPDATE_CLIENT: 'Abrir CRM',
   REGISTER_SETTLEMENT: 'Continuar en Cuentas',
@@ -85,6 +86,7 @@ export type PreviewCtaKind =
   | 'CONFIRM_DISTRIBUTION'
   | 'CONFIRM_EXPENSE'
   | 'CONFIRM_REVERSE_EXPENSE'
+  | 'CONFIRM_REVERSE_TREASURY_TRANSFER'
   | 'CONFIRM_CLIENT'
   | 'CONFIRM_CLIENT_UPDATE'
   | 'CONFIRM_PURCHASE'
@@ -623,6 +625,8 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'REGISTER_EXPENSE' && response.payload.executable === true;
   const executableReverseExpense =
     intent === 'REVERSE_EXPENSE' && response.payload.executable === true;
+  const executableReverseTransfer =
+    intent === 'REVERSE_TREASURY_TRANSFER' && response.payload.executable === true;
   const executablePurchase =
     intent === 'REGISTER_PURCHASE' && response.payload.executable === true;
   const executableCreateClient =
@@ -634,7 +638,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
   const executablePayable =
     intent === 'CREATE_PAYABLE' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
-  const intro = executableReverseExpense
+  const intro = executableReverseTransfer
+    ? 'Voy a revertir esta transferencia.'
+    : executableReverseExpense
     ? 'Voy a revertir este gasto.'
     : executableUpdateClient
     ? 'Voy a actualizar este cliente:'
@@ -669,7 +675,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
       title,
       fields,
       effects,
-      ctaLabel: executableReverseExpense
+      ctaLabel: executableReverseTransfer
+        ? 'Revertir transferencia'
+        : executableReverseExpense
         ? 'Revertir gasto'
         : executableUpdateClient
         ? 'Guardar cambios'
@@ -694,7 +702,9 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
                           : executableSale
                             ? 'Registrar venta'
                             : manualCtaLabel(intent),
-      ctaKind: executableReverseExpense
+      ctaKind: executableReverseTransfer
+        ? 'CONFIRM_REVERSE_TREASURY_TRANSFER'
+        : executableReverseExpense
         ? 'CONFIRM_REVERSE_EXPENSE'
         : executableUpdateClient
         ? 'CONFIRM_CLIENT_UPDATE'
@@ -809,6 +819,52 @@ function expenseReceiptBlocks(response: StructuredAssistantResponse): Conversati
       lines,
       dealHref: '/expenses',
       correctHref: '/expenses',
+    },
+  ];
+}
+
+function reverseTreasuryTransferReceiptBlocks(response: StructuredAssistantResponse): ConversationBlock[] {
+  const receipt = isRecord(response.payload.receipt) ? response.payload.receipt : null;
+  const message =
+    asString(response.payload.message) ??
+    (receipt && asString(receipt.message)) ??
+    'Listo. La transferencia quedó revertida.';
+  const lines: string[] = [];
+  if (receipt) {
+    const currency = asString(receipt.currency) ?? 'MXN';
+    const amount = formatMoney(receipt.amount, currency);
+    if (amount) {
+      lines.push(`Revertí la transferencia de ${amount}.`);
+    }
+    const treasuryNote = asString(receipt.treasuryNote);
+    if (treasuryNote) {
+      for (const part of treasuryNote.split('\n')) {
+        if (part.trim()) lines.push(part.trim());
+      }
+    } else {
+      const source = asString(receipt.sourceLabel);
+      const dest = asString(receipt.destinationLabel);
+      if (source && amount) {
+        lines.push(source);
+        lines.push(`+${amount.replace(/^\$/, '')}`);
+      }
+      if (dest && amount) {
+        lines.push(dest);
+        lines.push(`−${amount.replace(/^\$/, '')}`);
+      }
+      lines.push('Liquidez total');
+      lines.push('Sin cambios');
+    }
+  }
+  const header = message.replace(/^✓\s*/, '');
+  return [
+    {
+      kind: 'receipt',
+      id: blockId(response, 'receipt'),
+      message: header.startsWith('Listo') ? header : `Listo. ${header}`,
+      lines,
+      dealHref: '/treasury',
+      correctHref: '/treasury',
     },
   ];
 }
@@ -1248,6 +1304,10 @@ export function responseToConversationBlocks(
       }
       if (intent === 'REVERSE_EXPENSE') {
         main = reverseExpenseReceiptBlocks(response);
+        break;
+      }
+      if (intent === 'REVERSE_TREASURY_TRANSFER') {
+        main = reverseTreasuryTransferReceiptBlocks(response);
         break;
       }
       if (intent === 'REGISTER_PURCHASE') {

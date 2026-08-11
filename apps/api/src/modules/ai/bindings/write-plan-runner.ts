@@ -30,6 +30,9 @@ import {
 import { reversalCommandKey } from '../reversals/financial-reversal.types';
 import { LastReversibleActionContext } from '../reversals/financial-reversal.types';
 import { ExpenseReversalTargetResolver } from '../reversals/expense-reversal-target-resolver.service';
+import { TransferReversalTargetResolver } from '../reversals/transfer-reversal-target-resolver.service';
+import { classifyTransferReversalRecovery } from '../reversals/transfer-reversal-recovery';
+import { transferFingerprintsMatch } from '../reversals/transfer-reversal-fingerprint';
 import { parseResolvedContextShell } from '../context/working-context';
 import { classifyExpenseReversalRecovery } from '../reversals/expense-reversal-recovery';
 import { expenseFingerprintsMatch } from '../reversals/expense-reversal-fingerprint';
@@ -150,7 +153,7 @@ function writeIdempotencyKey(intent: string, actionRunId: string): string {
   if (intent === 'REGISTER_EXPENSE') {
     return registerExpenseIdempotencyKey(actionRunId);
   }
-  if (intent === 'REVERSE_EXPENSE') {
+  if (intent === 'REVERSE_EXPENSE' || intent === 'REVERSE_TREASURY_TRANSFER') {
     return reversalCommandKey(actionRunId);
   }
   if (intent === 'REGISTER_PURCHASE') {
@@ -187,7 +190,7 @@ function capabilityLabel(
   if (capability === 'REGISTER_CAPITAL_DISTRIBUTION') return 'distribucion';
   if (capability === 'CREATE_RECEIVABLE' || capability === 'CREATE_PAYABLE') return 'cuenta';
   if (capability === 'REGISTER_EXPENSE') return 'gasto';
-  if (capability === 'REVERSE_EXPENSE') return 'reversion';
+  if (capability === 'REVERSE_EXPENSE' || capability === 'REVERSE_TREASURY_TRANSFER') return 'reversion';
   if (capability === 'REGISTER_PURCHASE') return 'compra';
   if (capability === 'CREATE_CLIENT') return 'cliente';
   if (capability === 'UPDATE_CLIENT') return 'actualizacion';
@@ -202,6 +205,7 @@ export class WritePlanRunner {
     private readonly planner: PlannerService,
     private readonly writeRegistry: WriteCapabilityBindingRegistry,
     private readonly expenseReversalTargets: ExpenseReversalTargetResolver,
+    private readonly transferReversalTargets: TransferReversalTargetResolver,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -841,7 +845,49 @@ export class WritePlanRunner {
         return;
       }
 
-      // Any other completed WRITE clears the last reversible expense pointer.
+      if (args.run.intent === 'REGISTER_TREASURY_TRANSFER') {
+        if (!receipt) return;
+        const transferId = typeof receipt.transferId === 'string' ? receipt.transferId : null;
+        if (!transferId) return;
+        const resolved = await this.transferReversalTargets.resolveTrustedTransferId(
+          args.tenantId,
+          transferId,
+        );
+        if (resolved.kind !== 'TRUSTED') return;
+        const snap = resolved.target.targetSnapshot;
+        if (snap.kind !== 'TREASURY_TRANSFER') return;
+        const lastReversibleAction: LastReversibleActionContext = {
+          capability: 'REVERSE_TREASURY_TRANSFER',
+          targetType: 'TREASURY_TRANSFER',
+          targetId: resolved.target.targetId,
+          targetFingerprint: resolved.target.targetFingerprint,
+          actionRunId: args.run.id,
+          safeLabel: `${snap.sourceAccount} → ${snap.destinationAccount} ${snap.amount}`,
+          completedAt: new Date().toISOString(),
+          conversationId: args.run.conversationId,
+          workspaceId: workspace.id,
+        };
+        await workspaceApi.updateMany({
+          where: {
+            id: workspace.id,
+            tenantId: args.tenantId,
+            userId: args.userId,
+            version: workspace.version,
+            deletedAt: null,
+          },
+          data: {
+            resolvedContext: {
+              ...shell,
+              lastReversibleAction,
+            } as Prisma.InputJsonObject,
+            version: { increment: 1 },
+            lastActivityAt: new Date(),
+          },
+        });
+        return;
+      }
+
+      // Any other completed WRITE clears the last reversible pointer.
       if (!shell.lastReversibleAction) return;
       const next = { ...shell };
       delete next.lastReversibleAction;
@@ -1180,7 +1226,8 @@ export class WritePlanRunner {
       (await this.classifyCapitalDistributionRecoveryClaim(tenantId, run, db)) ??
       (await this.classifyCreateReceivableRecoveryClaim(tenantId, run, db)) ??
       (await this.classifyCreatePayableRecoveryClaim(tenantId, run, db)) ??
-      (await this.classifyExpenseReversalRecoveryClaim(tenantId, run, db))
+      (await this.classifyExpenseReversalRecoveryClaim(tenantId, run, db)) ??
+      (await this.classifyTransferReversalRecoveryClaim(tenantId, run, db))
     );
   }
 
@@ -1191,6 +1238,107 @@ export class WritePlanRunner {
    * - Fingerprint drift on active target → EXPENSE_REVERSAL_STALE
    * - Active / missing → null (fall through to marker / IN_PROGRESS)
    */
+
+  /**
+   * REVERSE_TREASURY_TRANSFER recovery:
+   * SAME_COMMAND only when BOTH legs carry the same command key.
+   * EXTERNAL / INVARIANT / STALE mapped like expense reverse.
+   */
+  private async classifyTransferReversalRecoveryClaim(
+    tenantId: string,
+    run: AIActionRun,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<ClaimResult | null> {
+    if (run.intent !== 'REVERSE_TREASURY_TRANSFER') return null;
+    const plan = this.parsePlan(run);
+    const step = plan.executionSteps[0];
+    const args = (step?.arguments ?? {}) as Record<string, unknown>;
+    const targetId =
+      typeof args.targetId === 'string'
+        ? args.targetId
+        : typeof args.trustedTransferId === 'string'
+          ? args.trustedTransferId
+          : null;
+    const plannedFp =
+      typeof args.targetFingerprint === 'string'
+        ? args.targetFingerprint
+        : typeof args.trustedTargetFingerprint === 'string'
+          ? args.trustedTargetFingerprint
+          : null;
+    if (!targetId || !plannedFp) return null;
+
+    const outflow = await db.treasuryEntry.findFirst({
+      where: {
+        tenantId,
+        provenanceKey: treasuryTransferOutflowProvenanceKey(targetId),
+      },
+      select: { deletedAt: true, reversalIdempotencyKey: true },
+    });
+    const inflow = await db.treasuryEntry.findFirst({
+      where: {
+        tenantId,
+        provenanceKey: treasuryTransferInflowProvenanceKey(targetId),
+      },
+      select: { deletedAt: true, reversalIdempotencyKey: true },
+    });
+    const commandKey = reversalCommandKey(run.id);
+
+    if (!outflow && !inflow) {
+      return {
+        kind: 'EXPENSE_REVERSAL_STALE',
+        run,
+        code: 'REVERSAL_TARGET_NOT_FOUND',
+      };
+    }
+
+    if ((outflow?.deletedAt == null) && (inflow?.deletedAt == null)) {
+      const live = await this.transferReversalTargets.resolveTrustedTransferId(tenantId, targetId);
+      if (live.kind === 'TRUSTED') {
+        if (!transferFingerprintsMatch(plannedFp, live.target.targetFingerprint)) {
+          return {
+            kind: 'EXPENSE_REVERSAL_STALE',
+            run,
+            code: 'REVERSAL_TARGET_STALE',
+          };
+        }
+      }
+      if (live.kind === 'INVARIANT') {
+        return {
+          kind: 'EXPENSE_REVERSAL_STALE',
+          run,
+          code: 'REVERSAL_INVARIANT',
+        };
+      }
+      return null;
+    }
+
+    const recovery = classifyTransferReversalRecovery({
+      commandKey,
+      outflow,
+      inflow,
+      plannedFingerprint: plannedFp,
+      currentFingerprint: plannedFp,
+    });
+    if (recovery.kind === 'MATCH') {
+      return { kind: 'RECOVER', run, priorStatus: run.status };
+    }
+    if (recovery.kind === 'EXTERNAL_ALREADY_REVERSED') {
+      return {
+        kind: 'EXPENSE_REVERSED_EXTERNALLY',
+        run,
+        code: 'REVERSAL_ALREADY_REVERSED_EXTERNALLY',
+      };
+    }
+    if (recovery.kind === 'INVARIANT' || recovery.kind === 'STALE_TARGET') {
+      return {
+        kind: 'EXPENSE_REVERSAL_STALE',
+        run,
+        code: recovery.code,
+      };
+    }
+    return null;
+  }
+
   private async classifyExpenseReversalRecoveryClaim(
     tenantId: string,
     run: AIActionRun,

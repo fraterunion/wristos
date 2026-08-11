@@ -93,6 +93,7 @@ describe('StructuredAssistantService', () => {
     capitalInvestorEntityResolver as never,
     createManualAccountEntityResolver as never,
     reverseExpenseEntityResolver as never,
+    { resolve: jest.fn() } as never,
     { getSummary: jest.fn(async () => ({ investors: [] })) } as never,
     compositionOrchestrator as never,
   );

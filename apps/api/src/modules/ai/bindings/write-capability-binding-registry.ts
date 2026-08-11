@@ -13,16 +13,17 @@ import { RegisterSaleWriteBinding } from './write/register-sale.binding';
 import { RegisterTreasuryTransferWriteBinding } from './write/register-treasury-transfer.binding';
 import { UpdateClientWriteBinding } from './write/update-client.binding';
 import { ReverseExpenseWriteBinding } from './write/reverse-expense.binding';
+import { ReverseTreasuryTransferWriteBinding } from './write/reverse-treasury-transfer.binding';
 import { WriteCapabilityBindingDefinition } from './write/write-capability-binding-definition';
 
 /**
  * Construction-time allowlist for WRITE capability bindings.
- * Commit 26C: exactly thirteen bindings —
+ * Commit 26D: exactly fourteen bindings —
  * REGISTER_SALE + REGISTER_RECEIVABLE_PAYMENT + REGISTER_EXPENSE + REGISTER_PURCHASE
  * + CREATE_CLIENT + UPDATE_CLIENT + REGISTER_PAYABLE_PAYMENT + REGISTER_TREASURY_TRANSFER
  * + REGISTER_CAPITAL_CONTRIBUTION + REGISTER_CAPITAL_DISTRIBUTION
- * + CREATE_RECEIVABLE + CREATE_PAYABLE + REVERSE_EXPENSE.
- * No dynamic registration API. REVERSE_TREASURY_TRANSFER remains unbound.
+ * + CREATE_RECEIVABLE + CREATE_PAYABLE + REVERSE_EXPENSE + REVERSE_TREASURY_TRANSFER.
+ * No dynamic registration API.
  */
 @Injectable()
 export class WriteCapabilityBindingRegistry implements OnModuleInit {
@@ -42,6 +43,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
     private readonly createReceivable: CreateReceivableWriteBinding,
     private readonly createPayable: CreatePayableWriteBinding,
     private readonly reverseExpense: ReverseExpenseWriteBinding,
+    private readonly reverseTreasuryTransfer: ReverseTreasuryTransferWriteBinding,
   ) {}
 
   onModuleInit() {
@@ -59,6 +61,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.createReceivable,
       this.createPayable,
       this.reverseExpense,
+      this.reverseTreasuryTransfer,
     ];
     if (new Set(bindings.map((b) => b.capability)).size !== bindings.length) {
       throw new Error('Duplicate write capability binding');
@@ -72,7 +75,7 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       this.bindings.set(binding.capability, binding);
     }
     if (
-      this.bindings.size !== 13 ||
+      this.bindings.size !== 14 ||
       !this.bindings.has('REGISTER_SALE') ||
       !this.bindings.has('REGISTER_RECEIVABLE_PAYMENT') ||
       !this.bindings.has('REGISTER_EXPENSE') ||
@@ -85,10 +88,11 @@ export class WriteCapabilityBindingRegistry implements OnModuleInit {
       !this.bindings.has('REGISTER_CAPITAL_DISTRIBUTION') ||
       !this.bindings.has('CREATE_RECEIVABLE') ||
       !this.bindings.has('CREATE_PAYABLE') ||
-      !this.bindings.has('REVERSE_EXPENSE')
+      !this.bindings.has('REVERSE_EXPENSE') ||
+      !this.bindings.has('REVERSE_TREASURY_TRANSFER')
     ) {
       throw new Error(
-        'WriteCapabilityBindingRegistry must contain exactly REGISTER_SALE, REGISTER_RECEIVABLE_PAYMENT, REGISTER_EXPENSE, REGISTER_PURCHASE, CREATE_CLIENT, UPDATE_CLIENT, REGISTER_PAYABLE_PAYMENT, REGISTER_TREASURY_TRANSFER, REGISTER_CAPITAL_CONTRIBUTION, REGISTER_CAPITAL_DISTRIBUTION, CREATE_RECEIVABLE, CREATE_PAYABLE, and REVERSE_EXPENSE',
+        'WriteCapabilityBindingRegistry must contain exactly fourteen WRITE bindings including REVERSE_EXPENSE and REVERSE_TREASURY_TRANSFER',
       );
     }
   }

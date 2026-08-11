@@ -33,6 +33,7 @@ export function ConversationPreview({
     | 'CONFIRM_DISTRIBUTION'
     | 'CONFIRM_EXPENSE'
     | 'CONFIRM_REVERSE_EXPENSE'
+    | 'CONFIRM_REVERSE_TREASURY_TRANSFER'
     | 'CONFIRM_PURCHASE'
     | 'CONFIRM_CLIENT'
     | 'CONFIRM_CLIENT_UPDATE'
@@ -57,6 +58,7 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_DISTRIBUTION' ||
     ctaKind === 'CONFIRM_EXPENSE' ||
     ctaKind === 'CONFIRM_REVERSE_EXPENSE' ||
+    ctaKind === 'CONFIRM_REVERSE_TREASURY_TRANSFER' ||
     ctaKind === 'CONFIRM_CLIENT' ||
     ctaKind === 'CONFIRM_CLIENT_UPDATE' ||
     ctaKind === 'CONFIRM_PURCHASE' ||
@@ -64,7 +66,7 @@ export function ConversationPreview({
     ctaKind === 'CONFIRM_PAYABLE';
 
   const effectiveTone =
-    ctaTone === 'destructive' || ctaKind === 'CONFIRM_REVERSE_EXPENSE'
+    ctaTone === 'destructive' || ctaKind === 'CONFIRM_REVERSE_EXPENSE' || ctaKind === 'CONFIRM_REVERSE_TREASURY_TRANSFER'
       ? 'destructive'
       : ctaTone;
 
@@ -127,7 +129,7 @@ export function ConversationPreview({
               }
             >
               {busy
-                ? ctaKind === 'CONFIRM_REVERSE_EXPENSE'
+                ? (ctaKind === 'CONFIRM_REVERSE_EXPENSE' || ctaKind === 'CONFIRM_REVERSE_TREASURY_TRANSFER')
                   ? 'Revirtiendo…'
                   : ctaKind === 'CONFIRM_CLIENT' ||
                   ctaKind === 'CONFIRM_RECEIVABLE' ||

@@ -491,14 +491,14 @@ describe('ManualAccountEntryService (25B)', () => {
 });
 
 describe('AI bindings are wired for CREATE_RECEIVABLE / CREATE_PAYABLE', () => {
-  it('write registry source lists twelve bindings including manual-account bindings', async () => {
+  it('write registry source lists fourteen bindings including manual-account bindings', async () => {
     const { readFileSync } = await import('fs');
     const { join } = await import('path');
     const registry = readFileSync(
       join(__dirname, '../ai/bindings/write-capability-binding-registry.ts'),
       'utf8',
     );
-    expect(registry).toContain('this.bindings.size !== 13');
+    expect(registry).toContain('this.bindings.size !== 14');
     expect(registry).toMatch(/CreateReceivableWriteBinding/);
     expect(registry).toMatch(/CreatePayableWriteBinding/);
     expect(registry).toContain('CREATE_RECEIVABLE');
