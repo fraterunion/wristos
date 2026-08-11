@@ -31,31 +31,29 @@ export function buildExpenseReversalPreview(
   const effects: ReversalPreviewContract['reversalEffects'] = [
     {
       area: 'Expense',
-      description: `Gasto activo: -${money(snapshot.amount, snapshot.currency)}`,
+      description: 'Se revertirá el gasto.',
+    },
+    {
+      area: 'Amount',
+      description: `Monto: ${money(snapshot.amount, snapshot.currency)}`,
     },
   ];
 
   if (restoresLiquidity) {
     effects.push({
       area: 'Treasury',
-      description: `${accountLabel(snapshot.sourceAccount)}: +${money(snapshot.amount, snapshot.currency)}`,
+      description: `Tesorería: +${money(snapshot.amount, snapshot.currency)} (${accountLabel(snapshot.sourceAccount)})`,
     });
   } else {
     effects.push({
       area: 'Treasury',
-      description: 'Tesorería: Sin cambio',
+      description: 'Tesorería: Sin cambios',
     });
   }
 
   effects.push({
-    area: 'P&L',
-    description: legacyMode
-      ? 'P&L operativo: se elimina el gasto activo (sin movimiento de liquidez)'
-      : `P&L operativo: +${money(snapshot.amount, snapshot.currency)}`,
-  });
-  effects.push({
     area: 'Capital',
-    description: 'Capital histórico: Sin cambio',
+    description: 'Capital: Sin cambios',
   });
 
   const concept = snapshot.conceptLabel || snapshot.category;

@@ -635,7 +635,7 @@ function previewBlocks(intent: BusinessActionId, response: StructuredAssistantRe
     intent === 'CREATE_PAYABLE' && response.payload.executable === true;
   const planFingerprint = asString(response.payload.planFingerprint) ?? undefined;
   const intro = executableReverseExpense
-    ? 'Voy a revertir este gasto:'
+    ? 'Voy a revertir este gasto.'
     : executableUpdateClient
     ? 'Voy a actualizar este cliente:'
     : executableCreateClient
@@ -830,18 +830,27 @@ function reverseExpenseReceiptBlocks(response: StructuredAssistantResponse): Con
       lines.push(concept);
     }
     const treasuryNote = asString(receipt.treasuryNote);
-    if (treasuryNote) lines.push(treasuryNote);
-    else if (receipt.legacyMode === true) lines.push('Tesorería: Sin cambio');
-    else {
+    if (treasuryNote) {
+      for (const part of treasuryNote.split('\n')) {
+        if (part.trim()) lines.push(part.trim());
+      }
+    } else if (receipt.legacyMode === true) {
+      lines.push('Tesorería');
+      lines.push('Sin cambios');
+    } else {
       const source = asString(receipt.sourceLabel);
-      if (source && amount) lines.push(`${source}: +${amount}`);
+      if (source && amount) {
+        lines.push(source);
+        lines.push(`+${amount.replace(/^\$/, '')}`);
+      }
     }
   }
+  const header = message.replace(/^✓\s*/, '');
   return [
     {
       kind: 'receipt',
       id: blockId(response, 'receipt'),
-      message: message.startsWith('✓') || message.startsWith('Listo') ? message : `✓ Listo. ${message}`,
+      message: header.startsWith('Listo') ? header : `Listo. ${header}`,
       lines,
       dealHref: '/expenses',
       correctHref: '/expenses',

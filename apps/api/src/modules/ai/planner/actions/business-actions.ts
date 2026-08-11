@@ -1699,55 +1699,55 @@ export const BUSINESS_ACTIONS: readonly BusinessActionDefinition[] = [
       'selectedExpenseId',
     ],
     effectsBuilder: (entities) => {
-      const effects = entities.reversalEffects;
-      if (Array.isArray(effects)) {
-        return effects
-          .filter((e): e is Record<string, JsonValue> => Boolean(e) && typeof e === 'object')
-          .map((e) => ({
-            area: String(e.area ?? 'Expense'),
-            description: String(e.description ?? ''),
-          }))
-          .filter((e) => e.description);
-      }
       const legacy = entities.legacyMode === true || entities.legacyMode === 'true';
       const amount = String(entities.amount ?? '—');
       const currency = String(entities.currency ?? 'MXN');
       const sourceLabel = String(entities.sourceLabel ?? 'Tesorería');
-      return [
-        { area: 'Expense', description: `Gasto activo: -$${amount} ${currency}` },
+      const effects: Array<{ area: string; description: string }> = [
+        { area: 'Expense', description: 'Se revertirá el gasto.' },
+        { area: 'Amount', description: `Monto: $${amount} ${currency}` },
         {
           area: 'Treasury',
           description: legacy
-            ? 'Tesorería: Sin cambio'
-            : `${sourceLabel}: +$${amount} ${currency}`,
+            ? 'Tesorería: Sin cambios'
+            : `Tesorería: +$${amount} ${currency} (${sourceLabel})`,
+        },
+        { area: 'Capital', description: 'Capital: Sin cambios' },
+      ];
+      return effects;
+    },
+    previewFields: (entities) => {
+      const legacy = entities.legacyMode === true || entities.legacyMode === 'true';
+      const rows = [
+        {
+          label: 'Gasto',
+          value: String(entities.concept ?? entities.categoryLabel ?? entities.category ?? '—'),
         },
         {
-          area: 'P&L',
-          description: legacy
-            ? 'P&L operativo: se elimina el gasto activo (sin movimiento de liquidez)'
-            : `P&L operativo: +$${amount} ${currency}`,
+          label: 'Monto',
+          value: `$${String(entities.amount ?? '—')} ${String(entities.currency ?? 'MXN')}`,
         },
-        { area: 'Capital', description: 'Capital histórico: Sin cambio' },
+        {
+          label: 'Tesorería',
+          value: legacy
+            ? 'Sin cambios'
+            : `+$${String(entities.amount ?? '—')} ${String(entities.currency ?? 'MXN')}${
+                entities.sourceLabel ? ` · ${String(entities.sourceLabel)}` : ''
+              }`,
+        },
+        { label: 'Capital', value: 'Sin cambios' },
       ];
+      if (legacy) {
+        rows.push({
+          label: 'Nota',
+          value: 'Este gasto no mueve liquidez al revertirse.',
+        });
+      }
+      if (entities.expenseDate) {
+        rows.splice(2, 0, { label: 'Fecha', value: String(entities.expenseDate) });
+      }
+      return rows;
     },
-    previewFields: (entities) => [
-      {
-        label: 'Gasto',
-        value: String(entities.concept ?? entities.categoryLabel ?? entities.category ?? '—'),
-      },
-      {
-        label: 'Monto',
-        value: `$${String(entities.amount ?? '—')} ${String(entities.currency ?? 'MXN')}`,
-      },
-      {
-        label: 'Cuenta',
-        value:
-          entities.legacyMode === true || entities.legacyMode === 'true'
-            ? 'Sin movimiento de tesorería'
-            : String(entities.sourceLabel ?? entities.sourceAccount ?? '—'),
-      },
-      { label: 'Fecha', value: String(entities.expenseDate ?? '—') },
-    ],
     reversibility: 'NONE',
   }),
   define({

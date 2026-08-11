@@ -253,14 +253,12 @@ export class ReverseExpenseWriteBinding
         recovered: args.recovered,
         causality: args.causality,
         rollbackPossible: false,
-        message: preview.legacyMode
-          ? `Revertí el gasto de ${concept} por $${args.snapshot.amount}.`
-          : `Revertí el gasto de ${concept} por $${args.snapshot.amount}.`,
+        message: `Revertí el gasto de ${concept} por $${args.snapshot.amount} ${args.snapshot.currency}.`,
         treasuryNote: preview.legacyMode
-          ? 'Tesorería: Sin cambio'
+          ? 'Tesorería\nSin cambios'
           : sourceLabel
-            ? `${sourceLabel}: +$${args.snapshot.amount}`
-            : 'Liquidez restaurada',
+            ? `${sourceLabel}\n+$${args.snapshot.amount}`
+            : 'Tesorería\nRestaurada',
       } as unknown as JsonValue,
       rollbackPossible: false,
     };

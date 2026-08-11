@@ -25,6 +25,7 @@ export type ReverseExpenseClarify = {
     | 'NO_MATCH'
     | 'ALREADY_REVERSED'
     | 'MISSING_AMOUNT'
+    | 'WEAK_SEARCH'
     | 'NO_LAST_ACTION';
 };
 
@@ -35,6 +36,15 @@ export type ReverseExpenseResolution =
       entities: Record<string, JsonValue>;
       clarify: ReverseExpenseClarify;
     };
+
+export type SearchDiscriminators = {
+  amount: number | null;
+  category: OperatingExpenseCategory | null;
+  sourceAccount: 'CASH' | 'BANK' | 'CESAR' | null;
+  expenseDate: string | Date | null;
+  /** Soft notes filter — never sufficient alone. */
+  conceptContains: string | null;
+};
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -52,7 +62,6 @@ function asNumber(value: unknown): number | null {
 function looksLikeLastActionUndo(entities: Record<string, JsonValue>): boolean {
   if (entities.useLastAction === true || entities.useLastReversibleAction === true) return true;
   if (asString(entities.targetSource) === 'last_action') return true;
-  // Empty search filters → try last action first (caller decides).
   return false;
 }
 
@@ -66,14 +75,147 @@ function hasSearchHints(entities: Record<string, JsonValue>): boolean {
       asString(entities.effectiveDate) ||
       asString(entities.expenseDate) ||
       asString(entities.date) ||
+      asString(entities.dateLabel) ||
       asString(entities.source) ||
       asString(entities.sourceAccount),
   );
 }
 
 /**
- * Trusted REVERSE_EXPENSE resolution (26C).
+ * Trusted search requires a strong discriminator pair.
+ * Priority (after last-action / selected):
+ * 1. amount + date
+ * 2. amount + category
+ * 3. amount + source
+ * 4. category + date
+ * 5. category + source
+ * conceptContains is never sufficient alone — only a soft filter with another key.
+ */
+export function isTrustedExpenseSearch(d: SearchDiscriminators): boolean {
+  const hasAmount = d.amount != null;
+  const hasDate = d.expenseDate != null;
+  const hasCategory = d.category != null;
+  const hasSource = d.sourceAccount != null;
+  return (
+    (hasAmount && hasDate) ||
+    (hasAmount && hasCategory) ||
+    (hasAmount && hasSource) ||
+    (hasCategory && hasDate) ||
+    (hasCategory && hasSource)
+  );
+}
+
+export function buildExpenseSearchDiscriminators(
+  entities: Record<string, JsonValue>,
+): SearchDiscriminators {
+  const amount = asNumber(entities.amount);
+  const concept =
+    asString(entities.conceptContains) ??
+    asString(entities.concept) ??
+    asString(entities.notes);
+  const categoryRaw = asString(entities.category);
+  let category: OperatingExpenseCategory | null = null;
+  if (categoryRaw && (Object.keys(EXPENSE_CATEGORY_LABELS) as string[]).includes(categoryRaw)) {
+    category = categoryRaw as OperatingExpenseCategory;
+  } else if (concept || categoryRaw) {
+    const cat = resolveExpenseCategory({
+      category: categoryRaw,
+      concept,
+      notes: asString(entities.notes),
+    });
+    if (cat.kind === 'RESOLVED') category = cat.category;
+  }
+
+  const source = asString(entities.sourceAccount) ?? asString(entities.source);
+  const sourceAccount =
+    source === 'CASH' || source === 'BANK' || source === 'CESAR' ? source : null;
+
+  const date =
+    asString(entities.expenseDate) ??
+    asString(entities.effectiveDate) ??
+    asString(entities.date);
+  const dateLabel = asString(entities.dateLabel);
+  let expenseDate: string | Date | null = date;
+  if (!expenseDate && dateLabel) {
+    const now = new Date();
+    const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    if (/hoy|today/i.test(dateLabel)) expenseDate = utc;
+    else if (/ayer|yesterday/i.test(dateLabel)) {
+      expenseDate = new Date(utc.getTime() - 24 * 60 * 60 * 1000);
+    }
+  }
+
+  // Soft notes filter only when category was NOT derived from the same concept text.
+  // Never use conceptContains as the sole discriminator.
+  const conceptContains =
+    category && concept && !categoryRaw
+      ? null
+      : category
+        ? null
+        : concept;
+
+  return {
+    amount,
+    category,
+    sourceAccount,
+    expenseDate,
+    conceptContains,
+  };
+}
+
+function weakSearchClarifyMessage(d: SearchDiscriminators): {
+  field: ReverseExpenseClarify['field'];
+  message: string;
+} {
+  if (d.category && !d.amount && !d.expenseDate && !d.sourceAccount) {
+    const label =
+      EXPENSE_CATEGORY_LABELS[d.category] ?? d.category.toLowerCase();
+    return {
+      field: 'amount',
+      message: `¿De cuánto fue el gasto de ${label.toLowerCase()}, o de qué día?`,
+    };
+  }
+  if (d.amount != null && !d.category && !d.expenseDate && !d.sourceAccount) {
+    return {
+      field: 'date',
+      message: '¿De qué día fue ese gasto, o de qué categoría?',
+    };
+  }
+  if (d.conceptContains && !d.amount && !d.category && !d.expenseDate && !d.sourceAccount) {
+    return {
+      field: 'amount',
+      message: '¿De cuánto fue el gasto, o de qué día?',
+    };
+  }
+  return {
+    field: 'amount',
+    message: '¿De cuánto fue el gasto que quieres revertir?',
+  };
+}
+
+function ambiguousClarifyMessage(
+  candidates: PresentedCandidate[],
+  entities: Record<string, JsonValue>,
+): string {
+  const categoryLabel =
+    asString(entities.categoryLabel) ??
+    (asString(entities.category)
+      ? EXPENSE_CATEGORY_LABELS[asString(entities.category)!] ?? null
+      : null) ??
+    asString(entities.concept);
+  if (categoryLabel && candidates.length >= 2) {
+    return `Encontré varios gastos de ${categoryLabel.toLowerCase()}. ¿Cuál quieres revertir?`;
+  }
+  if (candidates.length >= 2) {
+    return 'Encontré varios gastos. ¿Cuál quieres revertir?';
+  }
+  return '¿Cuál gasto quieres revertir?';
+}
+
+/**
+ * Trusted REVERSE_EXPENSE resolution (26C hardening).
  * Never trusts provider expenseId / raw DB ids from the prompt.
+ * Never binds on concept-only or category-only search.
  */
 @Injectable()
 export class ReverseExpenseEntityResolver {
@@ -96,7 +238,7 @@ export class ReverseExpenseEntityResolver {
     delete next.reversalIdempotencyKey;
     delete next.targetFingerprint;
 
-    // Trusted picker / deictic selection (server-injected only).
+    // 1) Trusted picker / deictic selection (server-injected only).
     const selectedId =
       asString(next.selectedExpenseId) ??
       asString(next.trustedExpenseId) ??
@@ -109,11 +251,12 @@ export class ReverseExpenseEntityResolver {
       return this.mapResolve(next, resolved, 'picker');
     }
 
+    // 2) Trusted last reversible action (same conversation/workspace, bounded recency).
     const preferLast =
       looksLikeLastActionUndo(next) ||
       (!hasSearchHints(next) && Boolean(args.lastReversibleAction));
 
-    if (preferLast || looksLikeLastActionUndo(next)) {
+    if (preferLast) {
       const policy = evaluateLastReversibleAction({
         candidate: args.lastReversibleAction,
         tenantId: args.tenantId,
@@ -140,14 +283,6 @@ export class ReverseExpenseEntityResolver {
           };
         }
         if (resolved.kind === 'TRUSTED') {
-          // Prefer live fingerprint; reject if stored fingerprint drifted materially.
-          if (
-            policy.context.targetFingerprint &&
-            policy.context.targetFingerprint !== resolved.target.targetFingerprint
-          ) {
-            // Still bind live target if still the same id and active — confirm will re-check.
-            // Spec: stale fingerprint at confirm → STALE_PLAN. At preview, re-consult with live fp.
-          }
           return this.mapResolve(next, resolved, 'last_action');
         }
         if (resolved.kind === 'NONE') {
@@ -182,79 +317,35 @@ export class ReverseExpenseEntityResolver {
       }
     }
 
-    const query = this.buildSearchQuery(next);
-    if (
-      query.amount == null &&
-      !query.category &&
-      !query.conceptContains &&
-      !query.expenseDate &&
-      !query.sourceAccount
-    ) {
+    // 3–7) Deterministic search with trusted discriminator pairs only.
+    const discriminators = buildExpenseSearchDiscriminators(next);
+    if (!isTrustedExpenseSearch(discriminators)) {
+      const weak = weakSearchClarifyMessage(discriminators);
       return {
         kind: 'CLARIFY',
         entities: next,
         clarify: {
-          field: 'amount',
+          field: weak.field,
           entityType: 'OPERATING_EXPENSE',
-          code: 'MISSING_AMOUNT',
-          message: '¿De cuánto fue el gasto que quieres revertir?',
+          code: 'WEAK_SEARCH',
+          message: weak.message,
           candidates: [],
           items: [],
         },
       };
     }
 
+    const query: ExpenseReversalSearchQuery = {
+      amount: discriminators.amount,
+      category: discriminators.category,
+      sourceAccount: discriminators.sourceAccount,
+      expenseDate: discriminators.expenseDate,
+      // Soft notes only when another discriminator already made the search trusted.
+      conceptContains: discriminators.conceptContains,
+    };
+
     const resolved = await this.targets.resolveSearch(args.tenantId, query);
     return this.mapResolve(next, resolved, 'search');
-  }
-
-  private buildSearchQuery(entities: Record<string, JsonValue>): ExpenseReversalSearchQuery {
-    const amount = asNumber(entities.amount);
-    const concept =
-      asString(entities.conceptContains) ??
-      asString(entities.concept) ??
-      asString(entities.notes);
-    const categoryRaw = asString(entities.category);
-    let category: OperatingExpenseCategory | null = null;
-    if (categoryRaw && (Object.keys(EXPENSE_CATEGORY_LABELS) as string[]).includes(categoryRaw)) {
-      category = categoryRaw as OperatingExpenseCategory;
-    } else if (concept || categoryRaw) {
-      const cat = resolveExpenseCategory({
-        category: categoryRaw,
-        concept,
-        notes: asString(entities.notes),
-      });
-      if (cat.kind === 'RESOLVED') category = cat.category;
-    }
-
-    const source =
-      asString(entities.sourceAccount) ?? asString(entities.source);
-    const sourceAccount =
-      source === 'CASH' || source === 'BANK' || source === 'CESAR' ? source : null;
-
-    const date =
-      asString(entities.expenseDate) ??
-      asString(entities.effectiveDate) ??
-      asString(entities.date);
-    const dateLabel = asString(entities.dateLabel);
-    let expenseDate: string | Date | null = date;
-    if (!expenseDate && dateLabel) {
-      const now = new Date();
-      const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      if (/hoy|today/i.test(dateLabel)) expenseDate = utc;
-      else if (/ayer|yesterday/i.test(dateLabel)) {
-        expenseDate = new Date(utc.getTime() - 24 * 60 * 60 * 1000);
-      }
-    }
-
-    return {
-      amount,
-      category,
-      sourceAccount,
-      expenseDate,
-      // Prefer category match; only soft-search notes when category unresolved.
-      conceptContains: category ? null : concept,
-    };
   }
 
   private mapResolve(
@@ -296,8 +387,6 @@ export class ReverseExpenseEntityResolver {
         label: c.label.slice(0, 160),
         ordinal: c.ordinal,
       }));
-      // ids stay in assistant payload for working-context candidate binding only —
-      // provider context strips them via toProviderConversationContext.
       const items = candidates.map((c) => ({
         id: c.id,
         ordinal: c.ordinal,
@@ -311,7 +400,7 @@ export class ReverseExpenseEntityResolver {
           field: 'target',
           entityType: 'OPERATING_EXPENSE',
           code: 'AMBIGUOUS_EXPENSE',
-          message: `Encontré ${candidates.length} gastos que coinciden. ¿Cuál quieres revertir?`,
+          message: ambiguousClarifyMessage(candidates, entities),
           candidates,
           items,
         },

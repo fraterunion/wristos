@@ -762,8 +762,9 @@ export class WritePlanRunner {
 
   /**
    * After REGISTER_EXPENSE success: store trusted last-action for "Deshaz eso".
-   * After REVERSE_EXPENSE success: clear last-action if it targeted the same expense.
-   * Stored on workspace resolvedContext shell — no schema migration.
+   * After any other successful WRITE: clear last-action (pointer must not outlive
+   * a later write). Survives conversational turns via writeWorkingContext shell
+   * spread. Best-effort — never fails the write receipt.
    */
   private async persistLastReversibleActionAfterWrite(args: {
     tenantId: string;
@@ -771,86 +772,56 @@ export class WritePlanRunner {
     run: AIActionRun;
     primary: BusinessActionResult;
   }): Promise<void> {
-    if (args.run.intent !== 'REGISTER_EXPENSE' && args.run.intent !== 'REVERSE_EXPENSE') {
-      return;
-    }
-    const receipt =
-      args.primary.receipt &&
-      typeof args.primary.receipt === 'object' &&
-      !Array.isArray(args.primary.receipt)
-        ? (args.primary.receipt as Record<string, unknown>)
-        : null;
-    if (!receipt) return;
+    try {
+      const receipt =
+        args.primary.receipt &&
+        typeof args.primary.receipt === 'object' &&
+        !Array.isArray(args.primary.receipt)
+          ? (args.primary.receipt as Record<string, unknown>)
+          : null;
 
-    const workspace = await this.prisma.aIWorkspace.findFirst({
-      where: {
-        tenantId: args.tenantId,
-        userId: args.userId,
-        conversationId: args.run.conversationId,
-        deletedAt: null,
-      },
-      select: { id: true, version: true, resolvedContext: true },
-      orderBy: { lastActivityAt: 'desc' },
-    });
-    if (!workspace) return;
+      const workspaceApi = this.prisma.aIWorkspace;
+      if (!workspaceApi?.findFirst || !workspaceApi?.updateMany) return;
 
-    const shell = parseResolvedContextShell(workspace.resolvedContext);
-
-    if (args.run.intent === 'REGISTER_EXPENSE') {
-      const expenseId = typeof receipt.expenseId === 'string' ? receipt.expenseId : null;
-      if (!expenseId) return;
-      const resolved = await this.expenseReversalTargets.resolveTrustedId(
-        args.tenantId,
-        expenseId,
-      );
-      if (resolved.kind !== 'TRUSTED') return;
-      const snap = resolved.target.targetSnapshot;
-      if (snap.kind !== 'OPERATING_EXPENSE') return;
-      const lastReversibleAction: LastReversibleActionContext = {
-        capability: 'REVERSE_EXPENSE',
-        targetType: 'OPERATING_EXPENSE',
-        targetId: resolved.target.targetId,
-        targetFingerprint: resolved.target.targetFingerprint,
-        actionRunId: args.run.id,
-        safeLabel: snap.conceptLabel
-          ? String(snap.conceptLabel)
-          : `${snap.category} ${snap.amount}`,
-        completedAt: new Date().toISOString(),
-        conversationId: args.run.conversationId,
-        workspaceId: workspace.id,
-      };
-      await this.prisma.aIWorkspace.updateMany({
+      const workspace = await workspaceApi.findFirst({
         where: {
-          id: workspace.id,
           tenantId: args.tenantId,
           userId: args.userId,
-          version: workspace.version,
+          conversationId: args.run.conversationId,
           deletedAt: null,
         },
-        data: {
-          resolvedContext: {
-            ...shell,
-            lastReversibleAction,
-          } as Prisma.InputJsonObject,
-          version: { increment: 1 },
-          lastActivityAt: new Date(),
-        },
+        select: { id: true, version: true, resolvedContext: true },
+        orderBy: { lastActivityAt: 'desc' },
       });
-      return;
-    }
+      if (!workspace) return;
 
-    if (args.run.intent === 'REVERSE_EXPENSE') {
-      const expenseId = typeof receipt.expenseId === 'string' ? receipt.expenseId : null;
-      const current = shell.lastReversibleAction as LastReversibleActionContext | undefined;
-      if (
-        current &&
-        expenseId &&
-        current.targetId === expenseId &&
-        current.capability === 'REVERSE_EXPENSE'
-      ) {
-        const next = { ...shell };
-        delete next.lastReversibleAction;
-        await this.prisma.aIWorkspace.updateMany({
+      const shell = parseResolvedContextShell(workspace.resolvedContext);
+
+      if (args.run.intent === 'REGISTER_EXPENSE') {
+        if (!receipt) return;
+        const expenseId = typeof receipt.expenseId === 'string' ? receipt.expenseId : null;
+        if (!expenseId) return;
+        const resolved = await this.expenseReversalTargets.resolveTrustedId(
+          args.tenantId,
+          expenseId,
+        );
+        if (resolved.kind !== 'TRUSTED') return;
+        const snap = resolved.target.targetSnapshot;
+        if (snap.kind !== 'OPERATING_EXPENSE') return;
+        const lastReversibleAction: LastReversibleActionContext = {
+          capability: 'REVERSE_EXPENSE',
+          targetType: 'OPERATING_EXPENSE',
+          targetId: resolved.target.targetId,
+          targetFingerprint: resolved.target.targetFingerprint,
+          actionRunId: args.run.id,
+          safeLabel: snap.conceptLabel
+            ? String(snap.conceptLabel)
+            : `${snap.category} ${snap.amount}`,
+          completedAt: new Date().toISOString(),
+          conversationId: args.run.conversationId,
+          workspaceId: workspace.id,
+        };
+        await workspaceApi.updateMany({
           where: {
             id: workspace.id,
             tenantId: args.tenantId,
@@ -859,12 +830,37 @@ export class WritePlanRunner {
             deletedAt: null,
           },
           data: {
-            resolvedContext: next as Prisma.InputJsonObject,
+            resolvedContext: {
+              ...shell,
+              lastReversibleAction,
+            } as Prisma.InputJsonObject,
             version: { increment: 1 },
             lastActivityAt: new Date(),
           },
         });
+        return;
       }
+
+      // Any other completed WRITE clears the last reversible expense pointer.
+      if (!shell.lastReversibleAction) return;
+      const next = { ...shell };
+      delete next.lastReversibleAction;
+      await workspaceApi.updateMany({
+        where: {
+          id: workspace.id,
+          tenantId: args.tenantId,
+          userId: args.userId,
+          version: workspace.version,
+          deletedAt: null,
+        },
+        data: {
+          resolvedContext: next as Prisma.InputJsonObject,
+          version: { increment: 1 },
+          lastActivityAt: new Date(),
+        },
+      });
+    } catch {
+      // Conversational pointer is best-effort; never fail the economic write.
     }
   }
 

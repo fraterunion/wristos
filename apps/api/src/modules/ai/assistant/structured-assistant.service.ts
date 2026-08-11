@@ -1069,7 +1069,7 @@ export class StructuredAssistantService {
     const message = !executable
       ? 'Esta acción todavía no está habilitada para ejecución desde el asistente.'
       : isReverseExpense
-        ? 'Voy a revertir este gasto. Revisa el resumen y confirma.'
+        ? 'Voy a revertir este gasto.'
         : isTransfer
         ? 'Revisa el resumen y confirma para registrar la transferencia.'
         : isPayment
