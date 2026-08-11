@@ -170,6 +170,7 @@ function makeRunner(overrides: {
     planner as never,
     writeRegistry as never,
     { resolveTrustedId: jest.fn() } as never,
+    { resolveTrustedTransferId: jest.fn() } as never,
   );
 
   return { runner, prisma, runtime, binding, runBase };
@@ -626,6 +627,7 @@ function makePayableRunner(overrides: {
     planner as never,
     writeRegistry as never,
     { resolveTrustedId: jest.fn() } as never,
+    { resolveTrustedTransferId: jest.fn() } as never,
   );
 
   return { runner, runtime, binding, prisma };
@@ -927,6 +929,7 @@ function makeTransferRunner(overrides: {
     planner as never,
     writeRegistry as never,
     { resolveTrustedId: jest.fn() } as never,
+    { resolveTrustedTransferId: jest.fn() } as never,
   );
 
   return { runner, runtime, binding, prisma };

@@ -397,7 +397,7 @@ describe('Architecture: production logic does not depend on telemetry', () => {
     }
   });
 
-  it('exactly twelve executable write bindings remain registered', () => {
+  it('exactly fourteen executable write bindings remain registered', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -418,7 +418,9 @@ describe('Architecture: production logic does not depend on telemetry', () => {
     expect(registry).toContain('RegisterCapitalDistributionWriteBinding');
     expect(registry).toContain('CreateReceivableWriteBinding');
     expect(registry).toContain('CreatePayableWriteBinding');
-    expect(registry).toContain('this.bindings.size !== 13');
+    expect(registry).toContain('ReverseExpenseWriteBinding');
+    expect(registry).toContain('ReverseTreasuryTransferWriteBinding');
+    expect(registry).toContain('this.bindings.size !== 14');
     const structured = fs.readFileSync(
       path.join(__dirname, '../../assistant/structured-assistant.service.ts'),
       'utf8',
@@ -433,6 +435,8 @@ describe('Architecture: production logic does not depend on telemetry', () => {
     expect(structured).toContain("'CREATE_RECEIVABLE'");
     expect(structured).toContain("'CREATE_PAYABLE'");
     expect(structured).toContain("'REGISTER_EXPENSE'");
+    expect(structured).toContain("'REVERSE_EXPENSE'");
+    expect(structured).toContain("'REVERSE_TREASURY_TRANSFER'");
     expect(structured).toContain("'CREATE_CLIENT'");
     expect(structured).toContain("'UPDATE_CLIENT'");
   });
