@@ -283,6 +283,39 @@ describe('responseToConversationBlocks', () => {
     assert.equal(preview.intro, 'Voy a crear este cliente:');
   });
 
+  it('maps executable REVERSE_TREASURY_TRANSFER to Revertir transferencia CTA (not gasto)', () => {
+    const candidate = response('READY_FOR_CONFIRMATION', 'ACTION_PREVIEW_CARD', {
+      executable: true,
+      planFingerprint: 'f'.repeat(64),
+      preview: {
+        title: 'Reverse Treasury Transfer',
+        fields: [
+          { label: 'Monto', value: '$100,000 MXN' },
+          { label: 'Original', value: 'Bancos → Efectivo' },
+        ],
+        warnings: [],
+        estimatedEffects: [
+          { area: 'Bancos', description: '+$100,000' },
+          { area: 'Efectivo', description: '−$100,000' },
+          { area: 'Liquidez total', description: 'Sin cambios' },
+        ],
+      },
+    });
+    (candidate as { actionRunId?: string }).actionRunId = 'run-rev-tt';
+    const blocks = responseToConversationBlocks('REVERSE_TREASURY_TRANSFER', candidate);
+    const preview = blocks[0] as {
+      ctaLabel: string;
+      ctaKind: string;
+      intro: string;
+      ctaTone?: string;
+    };
+    assert.equal(preview.ctaLabel, 'Revertir transferencia');
+    assert.notEqual(preview.ctaLabel, 'Revertir gasto');
+    assert.equal(preview.ctaKind, 'CONFIRM_REVERSE_TREASURY_TRANSFER');
+    assert.equal(preview.intro, 'Voy a revertir esta transferencia.');
+    assert.ok(!/gasto/i.test(preview.intro));
+  });
+
   it('every unbound write intent has a truthful non-"Confirmar" CTA label', () => {
     const intents = [
       'REGISTER_SETTLEMENT', 'REGISTER_CRYPTO_POSITION', 'REGISTER_CRYPTO_PRICE',

@@ -193,6 +193,15 @@ describe('Financial Reversal Safety Framework 26A', () => {
     );
     expect(fp).toHaveLength(64);
 
+    const drifted = transferReversalFingerprint(
+      buildTransferFingerprintInput({
+        transferId: 'xfer-1',
+        outflow,
+        inflow: { ...inflow, amount: d(99999) },
+      }),
+    );
+    expect(drifted).not.toBe(fp);
+
     const preview = buildTransferReversalPreview({
       kind: 'TREASURY_TRANSFER',
       amount: '100000.00',

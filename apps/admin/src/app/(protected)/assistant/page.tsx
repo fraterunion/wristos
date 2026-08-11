@@ -361,13 +361,16 @@ export default function AssistantPage() {
       const isContribution = item.intent === 'REGISTER_CAPITAL_CONTRIBUTION';
       const isDistribution = item.intent === 'REGISTER_CAPITAL_DISTRIBUTION';
       const isExpense = item.intent === 'REGISTER_EXPENSE';
-      const isReverseExpense = item.intent === 'REVERSE_EXPENSE' || item.intent === 'REVERSE_TREASURY_TRANSFER';
+      const isReverseExpense = item.intent === 'REVERSE_EXPENSE';
+      const isReverseTransfer = item.intent === 'REVERSE_TREASURY_TRANSFER';
       const isPurchase = item.intent === 'REGISTER_PURCHASE';
       const isCreateClient = item.intent === 'CREATE_CLIENT';
       const isUpdateClient = item.intent === 'UPDATE_CLIENT';
       const isReceivable = item.intent === 'CREATE_RECEIVABLE';
       const isPayable = item.intent === 'CREATE_PAYABLE';
-      const confirmLabel = isReverseExpense
+      const confirmLabel = isReverseTransfer
+        ? 'Revertir transferencia'
+        : isReverseExpense
         ? 'Revertir gasto'
         : isUpdateClient
         ? 'Guardar cambios'
@@ -436,11 +439,15 @@ export default function AssistantPage() {
           setMessageError(caught.message);
         } else {
           setMessageError(
-            isExpense
-              ? 'No pude confirmar el gasto. Reintenta la misma confirmación.'
-              : isPayment
-                ? 'No pude confirmar el pago. Reintenta la misma confirmación.'
-                : 'No pude confirmar la operación. Reintenta la misma confirmación.',
+            isReverseTransfer
+              ? 'No pude revertir la transferencia. Reintenta la misma confirmación.'
+              : isReverseExpense
+                ? 'No pude revertir el gasto. Reintenta la misma confirmación.'
+                : isExpense
+                  ? 'No pude confirmar el gasto. Reintenta la misma confirmación.'
+                  : isPayment
+                    ? 'No pude confirmar el pago. Reintenta la misma confirmación.'
+                    : 'No pude confirmar la operación. Reintenta la misma confirmación.',
           );
         }
       } finally {
