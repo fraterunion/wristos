@@ -5,6 +5,7 @@ import { CuentasService } from '../../cuentas/cuentas.service';
 import { HistoryService } from '../../history/history.service';
 import { InventoryService } from '../../inventory/inventory.service';
 import { OperationalIntelligenceService } from '../operational-intelligence/operational-intelligence.service';
+import { WatchInventoryResolver } from '../watch-intelligence/watch-inventory-resolver.service';
 import { createOperationalIntelligenceTools } from './read/operational-intelligence-tools';
 import { createReadTools } from './read/read-tools';
 import { ToolDefinition } from './tool-definition';
@@ -19,9 +20,10 @@ export class ToolRegistry {
     cuentas: CuentasService,
     history: HistoryService,
     operationalIntelligence: OperationalIntelligenceService,
+    watchInventory: WatchInventoryResolver,
   ) {
     const tools = [
-      ...createReadTools(analytics, inventory, crm, cuentas, history),
+      ...createReadTools(analytics, inventory, crm, cuentas, history, watchInventory),
       ...createOperationalIntelligenceTools(operationalIntelligence),
     ];
     if (new Set(tools.map((tool) => tool.name)).size !== tools.length) {

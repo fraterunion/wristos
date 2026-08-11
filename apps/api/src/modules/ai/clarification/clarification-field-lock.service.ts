@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CrmService } from '../../crm/crm.service';
-import { InventoryService } from '../../inventory/inventory.service';
 import { ContextEntityType, PresentedCandidate } from '../context/working-context';
+import { WatchInventoryResolver } from '../watch-intelligence/watch-inventory-resolver.service';
 import { mapClarificationAnswer } from './clarification-presenter';
 
 export type FieldLockBound = {
@@ -19,11 +19,21 @@ export type FieldLockPicker = {
   entities: Record<string, string | number | boolean>;
 };
 
+export type FieldLockClarify = {
+  kind: 'CLARIFY';
+  message: string;
+  entities: Record<string, string | number | boolean>;
+};
+
 export type FieldLockNoMatch = {
   kind: 'NO_MATCH';
 };
 
-export type FieldLockResult = FieldLockBound | FieldLockPicker | FieldLockNoMatch;
+export type FieldLockResult =
+  | FieldLockBound
+  | FieldLockPicker
+  | FieldLockClarify
+  | FieldLockNoMatch;
 
 function asLabel(entities: Record<string, string | number | boolean>, keys: string[]): string | null {
   for (const key of keys) {
@@ -60,14 +70,6 @@ function isInvestorField(field: string): boolean {
   return f === 'investorId' || f === 'investor';
 }
 
-function watchLabel(item: {
-  brand: string | null;
-  model: string | null;
-  reference: string | null;
-}): string {
-  return [item.brand, item.model, item.reference].filter(Boolean).join(' ').trim().slice(0, 160) || 'Reloj';
-}
-
 /**
  * Clarification Field Lock — while a missing field is pending, the next
  * utterance is resolved as an answer to that field before any unrestricted NLP.
@@ -75,7 +77,7 @@ function watchLabel(item: {
 @Injectable()
 export class ClarificationFieldLockService {
   constructor(
-    private readonly inventory: InventoryService,
+    private readonly watchInventory: WatchInventoryResolver,
     private readonly crm: CrmService,
   ) {}
 
@@ -108,7 +110,13 @@ export class ClarificationFieldLockService {
     }
 
     if (isWatchInventoryField(field, args.intent)) {
-      return this.resolveWatch(args.tenantId, answer, args.draftEntities, args.now ?? new Date());
+      return this.resolveWatch(
+        args.tenantId,
+        answer,
+        args.draftEntities,
+        args.intent,
+        args.now ?? new Date(),
+      );
     }
 
     if (isClientField(field)) {
@@ -166,47 +174,57 @@ export class ClarificationFieldLockService {
     tenantId: string,
     answer: string,
     draft: Record<string, string | number | boolean>,
-    now: Date,
+    intent: string,
+    _now: Date,
   ): Promise<FieldLockResult> {
-    // Entity lock: pending WATCH never opens a CLIENT/account search.
-    const items = await this.inventory.searchInventory(tenantId, answer, 'ALL', 10, now);
-    if (items.length === 0) {
-      return { kind: 'NO_MATCH' };
-    }
-
+    // Entity lock: pending WATCH → watch knowledge + inventory only (never CLIENT first).
     // Preserve already-known customer/price — do not reinterpret answer as customerQuery.
     const base: Record<string, string | number | boolean> = { ...draft, watchQuery: answer };
     delete base.customerQuery;
     delete base.clientQuery;
 
-    if (items.length === 1) {
-      const watch = items[0]!;
+    const eligibility = intent === 'REGISTER_SALE' ? 'SALE' : 'SEARCH';
+    const resolved = await this.watchInventory.resolve({
+      tenantId,
+      query: answer,
+      eligibility,
+    });
+
+    if (resolved.kind === 'UNIQUE') {
       return {
         kind: 'BOUND',
         entities: {
           ...base,
-          watchId: watch.id,
-          watchLabel: watchLabel(watch),
+          watchId: resolved.watchId,
+          watchLabel: resolved.watchLabel,
         },
       };
     }
 
-    const candidates: PresentedCandidate[] = items.slice(0, 10).map((w, i) => ({
-      id: w.id,
-      label: watchLabel(w),
-      ordinal: i + 1,
-    }));
-    const who = asLabel(draft, ['customerName', 'customerQuery', 'clientLabel', 'seller']);
-    const message = who
-      ? `Encontré varios relojes que coinciden. ¿Cuál le vendiste a ${who}? Di “el primero”, “el segundo”, o elige uno.`
-      : 'Encontré varios relojes que coinciden. ¿Cuál es? Di “el primero”, “el segundo”, o elige uno.';
+    if (resolved.kind === 'PICKER') {
+      const candidates: PresentedCandidate[] = resolved.candidates.map((w, i) => ({
+        id: w.id,
+        label: w.label,
+        ordinal: i + 1,
+      }));
+      const who = asLabel(draft, ['customerName', 'customerQuery', 'clientLabel', 'seller']);
+      const message = who
+        ? `${resolved.message.replace(/\¿Cuál es\?.*/, '').trim()} ¿Cuál le vendiste a ${who}? Di “el primero”, “el segundo”, o elige uno.`
+        : resolved.message;
+      return {
+        kind: 'PICKER',
+        entityType: 'WATCH',
+        message,
+        candidates,
+        items: candidates.map((c) => ({ id: c.id, label: c.label, name: c.label })),
+        entities: base,
+      };
+    }
 
+    // Stay on WATCH field — do not fall through to unrestricted NLP (Bruce Wayne ≠ CLIENT).
     return {
-      kind: 'PICKER',
-      entityType: 'WATCH',
-      message,
-      candidates,
-      items: candidates.map((c) => ({ id: c.id, label: c.label, name: c.label })),
+      kind: 'CLARIFY',
+      message: resolved.message,
       entities: base,
     };
   }

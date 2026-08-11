@@ -25,6 +25,7 @@ import { PlannerService } from '../planner/planner.service';
 import { BusinessExecutionPlan, StructuredEntities } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
+import { WatchInventoryResolver } from '../watch-intelligence/watch-inventory-resolver.service';
 import { AIRequestService } from './ai-request.service';
 import { PreparedAssistantRequest, StructuredAssistantPersistence } from './structured-assistant.persistence';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from './structured-assistant.types';
@@ -56,6 +57,7 @@ export class StructuredAssistantService {
     private readonly payablePaymentResolver: PayablePaymentEntityResolver,
     private readonly purchaseEntityResolver: PurchaseEntityResolver,
     private readonly saleCustomerEntityResolver: SaleCustomerEntityResolver,
+    private readonly watchInventoryResolver: WatchInventoryResolver,
     private readonly createClientEntityResolver: CreateClientEntityResolver,
     private readonly updateClientEntityResolver: UpdateClientEntityResolver,
     private readonly capitalInvestorEntityResolver: CapitalInvestorEntityResolver,
@@ -485,6 +487,45 @@ export class StructuredAssistantService {
         }
       }
       if (input.intent === 'REGISTER_SALE') {
+        // Watch intelligence first — dealer nicknames → tenant inventory (never invent watchId).
+        const watchResolved = await this.watchInventoryResolver.resolveSaleEntities(
+          actor.tenantId,
+          entities as Record<string, unknown>,
+          { requestId: request.id, conversationId: prepared.conversationId },
+        );
+        entities = watchResolved.entities as typeof entities;
+        if (watchResolved.clarify) {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: prepared.conversationId,
+            requestId: request.id,
+            capability: input.intent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: 'watch_disambiguation',
+            candidateCount: watchResolved.clarify.items.length,
+            multipleCandidates: watchResolved.clarify.items.length > 1,
+            entityPickerUsed: true,
+          });
+          const response = this.accountDisambiguationResponse(
+            request.id,
+            request.traceId,
+            prepared,
+            watchResolved.clarify.message,
+            watchResolved.clarify.items,
+            'WATCH',
+          );
+          return this.persistence.complete(
+            request.id,
+            actor,
+            response,
+            prepared.workspaceVersion,
+            AIAuditEventType.ASSISTANT_REQUEST_COMPLETED,
+            AIRequestStatus.NEEDS_CLARIFICATION,
+            { intent: input.intent, entities },
+          );
+        }
+
         const resolved = await this.saleCustomerEntityResolver.resolve(
           actor.tenantId,
           entities as Record<string, JsonValue>,
