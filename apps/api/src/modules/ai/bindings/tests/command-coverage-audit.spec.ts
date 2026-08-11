@@ -13,7 +13,7 @@ const COMPOSITION = join(
 const MANIFEST = join(ROOT, 'docs/ai/command-coverage.json');
 const AUDIT_DOC = join(ROOT, 'docs/ai/COMMAND_COVERAGE_AUDIT.md');
 
-const EXPECTED_THIRTEEN = [
+const EXPECTED_FOURTEEN = [
   'REGISTER_SALE',
   'REGISTER_RECEIVABLE_PAYMENT',
   'REGISTER_EXPENSE',
@@ -27,24 +27,24 @@ const EXPECTED_THIRTEEN = [
   'CREATE_RECEIVABLE',
   'CREATE_PAYABLE',
   'REVERSE_EXPENSE',
+  'REVERSE_TREASURY_TRANSFER',
 ] as const;
 
 const UNBOUND = [
   'REGISTER_SETTLEMENT',
   'REGISTER_CRYPTO_POSITION',
   'REGISTER_CRYPTO_PRICE',
-  'REVERSE_TREASURY_TRANSFER',
 ] as const;
 
-describe('Command Coverage Audit 26C (REVERSE_EXPENSE wired)', () => {
-  it('keeps production write registry at exactly THIRTEEN executable bindings', () => {
+describe('Command Coverage Audit 26D (REVERSE_TREASURY_TRANSFER wired)', () => {
+  it('keeps production write registry at exactly FOURTEEN executable bindings', () => {
     const src = readFileSync(REGISTRY, 'utf8');
-    expect(src).toContain('this.bindings.size !== 13');
-    for (const capability of EXPECTED_THIRTEEN) {
+    expect(src).toContain('this.bindings.size !== 14');
+    for (const capability of EXPECTED_FOURTEEN) {
       expect(src).toContain(`'${capability}'`);
     }
     expect(src).toContain('ReverseExpenseWriteBinding');
-    expect(src).not.toContain('ReverseTreasuryTransferWriteBinding');
+    expect(src).toContain('ReverseTreasuryTransferWriteBinding');
     // No settlement/crypto executable bindings.
     expect(src).not.toMatch(/RegisterSettlementWriteBinding/);
     expect(src).not.toMatch(/RegisterCryptoPositionWriteBinding/);
@@ -70,16 +70,16 @@ describe('Command Coverage Audit 26C (REVERSE_EXPENSE wired)', () => {
     expect(src).not.toMatch(/CREATE_PAYABLE[\s\S]{0,80}CREATE_CLIENT/);
   });
 
-  it('keeps command-coverage manifest aligned with the THIRTEEN executable writes', () => {
+  it('keeps command-coverage manifest aligned with the FOURTEEN executable writes', () => {
     const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
       productionExecutableWrites: string[];
       cataloguedUnboundWrites: string[];
       compositionV1: Array<{ parent: string; child: string; reason?: string }>;
       metrics: { full: number };
     };
-    expect(manifest.productionExecutableWrites).toEqual([...EXPECTED_THIRTEEN]);
+    expect(manifest.productionExecutableWrites).toEqual([...EXPECTED_FOURTEEN]);
     expect(manifest.cataloguedUnboundWrites).toEqual([...UNBOUND]);
-    expect(manifest.metrics.full).toBe(13);
+    expect(manifest.metrics.full).toBe(14);
     expect(manifest.compositionV1).toEqual([
       {
         parent: 'REGISTER_PURCHASE',
@@ -101,11 +101,12 @@ describe('Command Coverage Audit 26C (REVERSE_EXPENSE wired)', () => {
     expect(doc).toContain('LEVEL 2');
   });
 
-  it('binds REVERSE_EXPENSE in the write registry after 26C', () => {
+  it('binds REVERSE_EXPENSE and REVERSE_TREASURY_TRANSFER after 26D', () => {
     const src = readFileSync(REGISTRY, 'utf8');
     expect(src).toContain('REVERSE_EXPENSE');
     expect(src).toMatch(/ReverseExpenseWriteBinding/);
-    expect(src).toContain('this.bindings.size !== 13');
-    expect(src).not.toContain('ReverseTreasuryTransferWriteBinding');
+    expect(src).toContain('REVERSE_TREASURY_TRANSFER');
+    expect(src).toContain('this.bindings.size !== 14');
+    expect(src).toContain('ReverseTreasuryTransferWriteBinding');
   });
 });

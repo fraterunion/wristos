@@ -13,6 +13,19 @@ import { CreateReceivableWriteBinding } from '../write/create-receivable.binding
 import { CreatePayableWriteBinding } from '../write/create-payable.binding';
 import { UpdateClientWriteBinding } from '../write/update-client.binding';
 import { ReverseExpenseWriteBinding } from '../write/reverse-expense.binding';
+import { ReverseTreasuryTransferWriteBinding } from '../write/reverse-treasury-transfer.binding';
+
+function stubReverseTreasuryTransfer() {
+  return Object.assign(
+    new ReverseTreasuryTransferWriteBinding({} as never, {} as never, {} as never),
+    {
+      capability: 'REVERSE_TREASURY_TRANSFER' as const,
+      version: '1.0.0',
+      mode: 'WRITE' as const,
+      bindingName: 'reverse_treasury_transfer_canonical@1.0.0',
+    },
+  );
+}
 
 function buildRegistry() {
   const sale = Object.assign(new RegisterSaleWriteBinding({} as never, {} as never), {
@@ -117,6 +130,15 @@ function buildRegistry() {
       bindingName: 'reverse_expense_canonical@1.0.0',
     },
   );
+  const reverseTreasuryTransfer = Object.assign(
+    new ReverseTreasuryTransferWriteBinding({} as never, {} as never, {} as never),
+    {
+      capability: 'REVERSE_TREASURY_TRANSFER',
+      version: '1.0.0',
+      mode: 'WRITE',
+      bindingName: 'reverse_treasury_transfer_canonical@1.0.0',
+    },
+  );
   const registry = new WriteCapabilityBindingRegistry(
     sale,
     payment,
@@ -131,16 +153,17 @@ function buildRegistry() {
     createReceivable,
     createPayable,
     reverseExpense,
+    reverseTreasuryTransfer,
   );
   registry.onModuleInit();
   return registry;
 }
 
 describe('WriteCapabilityBindingRegistry', () => {
-  it('contains exactly thirteen WRITE bindings including REVERSE_EXPENSE', () => {
+  it('contains exactly fourteen WRITE bindings including REVERSE_EXPENSE', () => {
     const registry = buildRegistry();
     const bindings = registry.listBindings();
-    expect(bindings).toHaveLength(13);
+    expect(bindings).toHaveLength(14);
     expect(bindings.map((b) => b.capability).sort()).toEqual([
       'CREATE_CLIENT',
       'CREATE_PAYABLE',
@@ -154,6 +177,7 @@ describe('WriteCapabilityBindingRegistry', () => {
       'REGISTER_SALE',
       'REGISTER_TREASURY_TRANSFER',
       'REVERSE_EXPENSE',
+      'REVERSE_TREASURY_TRANSFER',
       'UPDATE_CLIENT',
     ]);
     expect(bindings.every((b) => b.mode === 'WRITE')).toBe(true);
@@ -166,7 +190,6 @@ describe('WriteCapabilityBindingRegistry', () => {
     'REGISTER_CRYPTO_PRICE',
     'DELETE_CLIENT',
     'MERGE_CLIENT',
-    'REVERSE_TREASURY_TRANSFER',
   ])('keeps %s explicitly unbound for WRITE', (capability) => {
     const registry = buildRegistry();
     expect(registry.hasBinding(capability)).toBe(false);
@@ -266,6 +289,7 @@ describe('WriteCapabilityBindingRegistry', () => {
       createReceivable,
       createPayable,
       reverseExpense,
+    stubReverseTreasuryTransfer(),
     );
     expect(() => registry.onModuleInit()).toThrow(
       /REVERSE_EXPENSE|UPDATE_CLIENT|CREATE_PAYABLE/,

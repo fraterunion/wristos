@@ -9,13 +9,13 @@ export interface BoundedConversationContext {
   lastIntent?: KnownIntent;
   /** Labels only — never trusted database IDs. */
   selectedEntity?: {
-    type: 'WATCH' | 'CLIENT' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE';
+    type: 'WATCH' | 'CLIENT' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE' | 'TREASURY_TRANSFER';
     label: string;
   };
   /** Ordinal + label only — never trusted database IDs. */
   presentedCandidates?: Array<{
     ordinal: number;
-    type: 'WATCH' | 'CLIENT' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE';
+    type: 'WATCH' | 'CLIENT' | 'ACCOUNT_ENTRY' | 'INVESTOR' | 'OPERATING_EXPENSE' | 'TREASURY_TRANSFER';
     label: string;
   }>;
   /** Field names the previous turn was still waiting on. */

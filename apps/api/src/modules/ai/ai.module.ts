@@ -40,6 +40,8 @@ import { RegisterCapitalDistributionWriteBinding } from './bindings/write/regist
 import { RegisterExpenseWriteBinding } from './bindings/write/register-expense.binding';
 import { ReverseExpenseWriteBinding } from './bindings/write/reverse-expense.binding';
 import { ReverseExpenseEntityResolver } from './bindings/write/reverse-expense-entity-resolver.service';
+import { ReverseTreasuryTransferWriteBinding } from './bindings/write/reverse-treasury-transfer.binding';
+import { ReverseTreasuryTransferEntityResolver } from './bindings/write/reverse-treasury-transfer-entity-resolver.service';
 import { RegisterPurchaseWriteBinding } from './bindings/write/register-purchase.binding';
 import { RegisterReceivablePaymentWriteBinding } from './bindings/write/register-receivable-payment.binding';
 import { RegisterSaleWriteBinding } from './bindings/write/register-sale.binding';
@@ -101,6 +103,8 @@ import { WatchInventoryResolver } from './watch-intelligence/watch-inventory-res
     RegisterExpenseWriteBinding,
     ReverseExpenseWriteBinding,
     ReverseExpenseEntityResolver,
+    ReverseTreasuryTransferWriteBinding,
+    ReverseTreasuryTransferEntityResolver,
     RegisterPurchaseWriteBinding,
     CreateClientWriteBinding,
     UpdateClientWriteBinding,

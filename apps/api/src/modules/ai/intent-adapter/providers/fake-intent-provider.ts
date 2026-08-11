@@ -1,5 +1,6 @@
 import { IntentAdapterProvider, IntentInterpretationInput, IntentInterpretationRawResult } from '../intent-adapter-provider';
 import { detectExpenseCorrectionLanguage } from '../../reversals/expense-correction-language';
+import { detectTransferCorrectionLanguage } from '../../reversals/transfer-correction-language';
 
 /**
  * Deterministic, dependency-free provider for local development and the
@@ -471,6 +472,20 @@ function classifyTreasuryTransfer(t: string): FakeOutput | null {
   };
 }
 
+
+function classifyReverseTreasuryTransfer(t: string): FakeOutput | null {
+  const detected = detectTransferCorrectionLanguage(t);
+  if (!detected) return null;
+  return {
+    intent: 'REVERSE_TREASURY_TRANSFER',
+    entities: detected.entities,
+    missingEntities: [],
+    ambiguities: [],
+    confidence: detected.kind === 'LAST_ACTION_DEIXIS' ? 'MEDIUM' : 'HIGH',
+    language: 'es',
+  };
+}
+
 function classifyReverseExpense(t: string): FakeOutput | null {
   const detected = detectExpenseCorrectionLanguage(t);
   if (!detected) return null;
@@ -763,6 +778,10 @@ function classify(
   }
 
   // --- Write detection only ---
+
+  // Transfer reverse before expense reverse / register — closed allowlist.
+  const reverseTransfer = classifyReverseTreasuryTransfer(t);
+  if (reverseTransfer) return reverseTransfer;
 
   // REVERSE_EXPENSE before REGISTER_EXPENSE / sale — financial "delete" means reverse.
   const reverseExpense = classifyReverseExpense(t);

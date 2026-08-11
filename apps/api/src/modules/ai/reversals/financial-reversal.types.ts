@@ -5,7 +5,7 @@
  * Domain economics stay in ExpenseRegistrationService / TreasuryTransferService.
  *
  * 26C: REVERSE_EXPENSE is AI-bound (WRITE #13).
- * REVERSE_TREASURY_TRANSFER remains AI-UNBOUND.
+ * 26D: REVERSE_TREASURY_TRANSFER is AI-bound (WRITE #14).
  */
 
 import type { ExpenseReversalEconomicClass } from './expense-reversal-classification';
@@ -22,10 +22,10 @@ export const REVERSAL_CAPABILITIES = [
 
 export type ReversalCapability = (typeof REVERSAL_CAPABILITIES)[number];
 
-/** Still AI-unbound — must not appear in WriteCapabilityBindingRegistry. */
-export const FUTURE_REVERSAL_CAPABILITIES = ['REVERSE_TREASURY_TRANSFER'] as const;
+/** Future unbound reversals — must not appear in WriteCapabilityBindingRegistry yet. */
+export const FUTURE_REVERSAL_CAPABILITIES = [] as const;
 
-export type FutureReversalCapability = (typeof FUTURE_REVERSAL_CAPABILITIES)[number] | 'REVERSE_EXPENSE';
+export type FutureReversalCapability = ReversalCapability;
 
 export type ReversalTargetType = 'OPERATING_EXPENSE' | 'TREASURY_TRANSFER';
 

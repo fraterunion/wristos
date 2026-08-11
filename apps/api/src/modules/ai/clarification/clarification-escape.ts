@@ -29,6 +29,11 @@ export function detectHighConfidenceTopicChange(
 
   const rules: Array<{ intent: string; pattern: RegExp }> = [
     {
+      intent: 'REVERSE_TREASURY_TRANSFER',
+      pattern:
+        /^(revierte|deshaz|borra|elimina|anula).*(transferencia|traspaso)/i,
+    },
+    {
       intent: 'REVERSE_EXPENSE',
       pattern:
         /^(revierte|deshaz|borra|elimina|anula).*(gasto)|^(deshaz eso|me equivoqu[eé])/i,

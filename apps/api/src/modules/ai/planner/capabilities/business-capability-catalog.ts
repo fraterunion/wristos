@@ -34,6 +34,7 @@ export const BUSINESS_CAPABILITIES: readonly BusinessCapabilityDefinition[] = [
   capability('REGISTER_PURCHASE', 'Register Purchase', 'INVENTORY'),
   capability('REGISTER_EXPENSE', 'Register Expense', 'EXPENSES'),
   capability('REVERSE_EXPENSE', 'Reverse Expense', 'EXPENSES'),
+  capability('REVERSE_TREASURY_TRANSFER', 'Reverse Treasury Transfer', 'TREASURY'),
   capability('CREATE_CLIENT', 'Create Client', 'CRM'),
   capability('UPDATE_CLIENT', 'Update Client', 'CRM'),
   capability('CREATE_RECEIVABLE', 'Create Receivable', 'ACCOUNTS'),

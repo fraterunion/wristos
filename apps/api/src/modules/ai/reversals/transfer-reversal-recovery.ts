@@ -52,13 +52,43 @@ export function classifyTransferReversalRecovery(args: {
     return { kind: 'MISSING' };
   }
 
-  const stamped =
-    (outflow.reversalIdempotencyKey &&
-      outflow.reversalIdempotencyKey === commandKey) ||
-    (inflow.reversalIdempotencyKey && inflow.reversalIdempotencyKey === commandKey);
+  const outKey = outflow.reversalIdempotencyKey;
+  const inKey = inflow.reversalIdempotencyKey;
 
-  if (stamped || args.domainCausality === 'SAME_COMMAND') {
-    return { kind: 'MATCH', causality: 'SAME_COMMAND', recovered: true };
+  // Mismatched causal keys on a reversed pair → INVARIANT (never SAME_COMMAND).
+  if (outKey && inKey && outKey !== inKey) {
+    return {
+      kind: 'INVARIANT',
+      code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+    };
+  }
+
+  // SAME_COMMAND only when BOTH legs carry the same command key.
+  const bothMatch =
+    Boolean(outKey) &&
+    Boolean(inKey) &&
+    outKey === commandKey &&
+    inKey === commandKey;
+
+  if (bothMatch || args.domainCausality === 'SAME_COMMAND') {
+    // Domain SAME_COMMAND already proved both legs; still require both deleted.
+    if (args.domainCausality === 'SAME_COMMAND' && !(outDeleted && inDeleted)) {
+      return {
+        kind: 'INVARIANT',
+        code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+      };
+    }
+    if (bothMatch || args.domainCausality === 'SAME_COMMAND') {
+      return { kind: 'MATCH', causality: 'SAME_COMMAND', recovered: true };
+    }
+  }
+
+  // One leg stamped, the other not → never recover from a single matching leg.
+  if ((outKey === commandKey) !== (inKey === commandKey)) {
+    return {
+      kind: 'INVARIANT',
+      code: 'STALE_TREASURY_TRANSFER_INVARIANT',
+    };
   }
 
   return { kind: 'EXTERNAL_ALREADY_REVERSED', causality: 'EXTERNAL' };

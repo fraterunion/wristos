@@ -149,6 +149,7 @@ export function ConversationBlocks({
                     block.ctaKind === 'CONFIRM_DISTRIBUTION' ||
                     block.ctaKind === 'CONFIRM_EXPENSE' ||
                     block.ctaKind === 'CONFIRM_REVERSE_EXPENSE' ||
+                    block.ctaKind === 'CONFIRM_REVERSE_TREASURY_TRANSFER' ||
                     block.ctaKind === 'CONFIRM_CLIENT' ||
                     block.ctaKind === 'CONFIRM_CLIENT_UPDATE' ||
                     block.ctaKind === 'CONFIRM_PURCHASE' ||

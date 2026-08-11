@@ -35,6 +35,7 @@ export const WRITE_INTENTS = [
   'REGISTER_PURCHASE',
   'REGISTER_EXPENSE',
   'REVERSE_EXPENSE',
+  'REVERSE_TREASURY_TRANSFER',
   'CREATE_CLIENT',
   'UPDATE_CLIENT',
   'CREATE_RECEIVABLE',
@@ -396,6 +397,25 @@ export const entitySchemas = {
       useLastReversibleAction: z.boolean().optional(),
       dateLabel: z.string().trim().min(1).max(32).optional(),
       // Trusted ids are merged server-side after picker/last-action resolve — never from LLM.
+    })
+    .strip(),
+
+  REVERSE_TREASURY_TRANSFER: z
+    .object({
+      amount: money.optional(),
+      currency: currency.optional(),
+      sourceAccount: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      destinationAccount: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      source: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      destination: z.enum(['CASH', 'BANK', 'CESAR']).optional(),
+      fromAccount: z.string().trim().min(1).max(64).optional(),
+      toAccount: z.string().trim().min(1).max(64).optional(),
+      effectiveDate: isoDate.optional(),
+      transferDate: isoDate.optional(),
+      date: isoDate.optional(),
+      dateLabel: z.string().trim().min(1).max(32).optional(),
+      useLastAction: z.boolean().optional(),
+      useLastReversibleAction: z.boolean().optional(),
     })
     .strip(),
 
