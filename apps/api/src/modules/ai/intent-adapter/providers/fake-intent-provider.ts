@@ -1,4 +1,5 @@
 import { IntentAdapterProvider, IntentInterpretationInput, IntentInterpretationRawResult } from '../intent-adapter-provider';
+import { detectExpenseCorrectionLanguage } from '../../reversals/expense-correction-language';
 
 /**
  * Deterministic, dependency-free provider for local development and the
@@ -471,106 +472,29 @@ function classifyTreasuryTransfer(t: string): FakeOutput | null {
 }
 
 function classifyReverseExpense(t: string): FakeOutput | null {
-  // Transfer / purchase / sale cancel language is NOT expense reverse.
-  if (
-    /\b(transferencia|transfer[ií]|venta|compra|aportaci[oó]n|distribuci[oó]n|pago|cxc|cxp)\b/.test(
-      t,
-    ) &&
-    !/\bgasto\b/.test(t)
-  ) {
-    // "Deshaz la transferencia" → unbound / unknown — not expense.
-    if (
-      /(?:deshaz|revierte|revertir|borra|eliminar?|cancela(?:r)?|anul(?:a|ar)|me equivoqu[eé]).*(transferencia|transfer)/.test(
-        t,
-      ) ||
-      /(?:deshaz|revierte).*(venta|compra)/.test(t)
-    ) {
-      return {
-        intent: 'UNKNOWN',
-        entities: {},
-        missingEntities: [],
-        ambiguities: [
-          {
-            field: 'intent',
-            reason: 'transfer/sale/purchase reversal is not REVERSE_EXPENSE',
-          },
-        ],
-        confidence: 'LOW',
-        language: 'es',
-      };
-    }
-  }
-
-  const lastAction =
-    /^(deshaz eso|revierte eso|deshaz lo|revierte lo|me equivoqu[eé]\.?|deshaz lo que acabo de (hacer|registrar)|revierte lo que acabo de (hacer|registrar)|deshaz lo que acabo de hacer)$/.test(
-      t,
-    );
-  if (lastAction) {
+  const detected = detectExpenseCorrectionLanguage(t);
+  if (!detected) return null;
+  if (detected.kind === 'BLOCKED_NON_EXPENSE_REVERSAL') {
     return {
-      intent: 'REVERSE_EXPENSE',
-      entities: { useLastAction: true },
+      intent: 'UNKNOWN',
+      entities: {},
       missingEntities: [],
-      ambiguities: [],
-      confidence: 'MEDIUM',
+      ambiguities: [
+        {
+          field: 'intent',
+          reason: detected.reason,
+        },
+      ],
+      confidence: 'LOW',
       language: 'es',
     };
   }
-
-  const isReverse =
-    /(?:revierte|revertir|deshaz|deshacer|borra|borrar|elimina|eliminar|anula|anular|cancela el gasto|me equivoqu[eé].*gasto)/.test(
-      t,
-    ) &&
-    (/\bgasto\b/.test(t) ||
-      /gasolina|estacionamiento|comida|vi[aá]ticos|comisi[oó]n/.test(t) ||
-      /me equivoqu[eé]/.test(t));
-
-  if (!isReverse && !/(?:borra|elimina|revierte|deshaz).*(?:gasto|gasolina)/.test(t)) {
-    return null;
-  }
-
-  // Prefer explicit gasto reverse phrasing.
-  if (
-    !(
-      /(?:revierte|deshaz|borra|elimina|anula).*(?:gasto|gasolina)/.test(t) ||
-      /(?:gasto|gasolina).*(?:revierte|deshaz|borra|elimina)/.test(t) ||
-      /me equivoqu[eé].*(?:gasto|con (?:ese |el )?gasto)/.test(t) ||
-      /borra ese gasto|elimina el gasto|deshaz el gasto|revierte el gasto/.test(t)
-    )
-  ) {
-    return null;
-  }
-
-  const entities: Record<string, string | boolean | number> = {};
-  const amountMatch = t.match(
-    /(?:de\s+)?([\d.,]+(?:\s*(?:mil|k))?)\s*(?:pesos|mxn)?/,
-  );
-  if (amountMatch) {
-    entities.amount = parseFakeAmount(amountMatch[1]!);
-  }
-  if (/gasolina|combustible/.test(t)) {
-    entities.category = 'GASOLINE';
-    entities.concept = 'gasolina';
-  } else if (/estacionamiento|parking/.test(t)) {
-    entities.category = 'PARKING';
-    entities.concept = 'estacionamiento';
-  } else if (/comida|almuerzo|cena/.test(t)) {
-    entities.category = 'MEALS';
-    entities.concept = 'comida';
-  }
-  if (/\bhoy\b/.test(t)) {
-    entities.dateLabel = 'hoy';
-  } else if (/\bayer\b/.test(t)) {
-    entities.dateLabel = 'ayer';
-  }
-  if (/banco|bancos/.test(t)) entities.source = 'BANK';
-  if (/efectivo|caja/.test(t)) entities.source = 'CASH';
-
   return {
     intent: 'REVERSE_EXPENSE',
-    entities,
+    entities: detected.entities,
     missingEntities: [],
     ambiguities: [],
-    confidence: 'HIGH',
+    confidence: detected.kind === 'LAST_ACTION_DEIXIS' ? 'MEDIUM' : 'HIGH',
     language: 'es',
   };
 }

@@ -11,6 +11,31 @@ First conversational financial reversal.
 - **Risk:** HIGH
 - **Confirm:** `POST /api/ai/action-runs/:id/confirm` only
 
+## 26C.1 Hardening
+
+### Last-action NL (deterministic)
+
+Server-side `detectExpenseCorrectionLanguage` runs in `NaturalLanguageAssistantService`
+**before** pure deictic `"eso"` selection and before Anthropic.
+
+High-confidence phrases such as `Deshaz eso.` / `Reviértelo` force:
+
+`REVERSE_EXPENSE` + `{ useLastAction: true }`
+
+Provider `useLastAction` remains assistive, not required.
+
+Transfer/client/watch cancel language is blocked from becoming REVERSE_EXPENSE.
+
+### Economic classification
+
+| Class | Evidence | Behavior |
+|-------|----------|----------|
+| `LEGACY_VALID` | No `operating-expense:<id>:outflow` provenance row ever | OpEx-only reverse; Tesorería Sin cambios |
+| `CANONICAL_VALID` | Active coherent OUTFLOW provenance | Restore source liquidity |
+| `CANONICAL_INVARIANT` | Provenance exists but soft-deleted/malformed while expense active | Fail closed — no preview, no mutation |
+
+Never: “no active outflow ⇒ legacy”.
+
 ## Domain
 
 Calls only:
@@ -35,8 +60,9 @@ Never trusts provider `expenseId`, raw DB ids from the prompt, amount-only silen
 
 ## Preview semantics
 
-- **Canonical** (Treasury OUTFLOW present): restores liquidity; preview shows account `+$amount`
-- **Legacy** (expense-only): Treasury Δ0 — never claims cash restore
+- **Canonical valid**: restores liquidity; preview shows account `+$amount`
+- **Legacy valid**: Treasury Δ0 — never claims cash restore
+- **Canonical invariant**: non-executable; natural incomplete-state copy
 
 ## Causality (26B)
 
@@ -46,6 +72,7 @@ Never trusts provider `expenseId`, raw DB ids from the prompt, amount-only silen
 | EXTERNAL | STALE / already reversed — no success |
 | Fingerprint drift | STALE_PLAN |
 | Missing target | Non-success |
+| Canonical invariant | REVERSAL_INVARIANT |
 
 ## Still unbound
 
@@ -57,4 +84,4 @@ Unchanged: only `PURCHASE_SELLER` / `SALE_CUSTOMER` → `CREATE_CLIENT`.
 
 ## Schema
 
-No migration. Uses live `OperatingExpense.reversalIdempotencyKey`.
+No migration. Uses live `OperatingExpense.reversalIdempotencyKey` and Treasury provenance history (including soft-deleted legs) for positive canonical identity.

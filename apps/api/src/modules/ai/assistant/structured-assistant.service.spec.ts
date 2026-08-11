@@ -61,6 +61,13 @@ describe('StructuredAssistantService', () => {
       entities,
     })),
   };
+  const reverseExpenseEntityResolver = {
+    resolve: jest.fn(async () => ({
+      kind: 'READY' as const,
+      entities: {},
+      targetSource: 'search' as const,
+    })),
+  };
   const compositionOrchestrator = {
     loadActive: jest.fn(async () => ({ composition: null, version: 1, resolvedContext: {} })),
     recoverPendingResume: jest.fn(async () => null),
@@ -85,6 +92,7 @@ describe('StructuredAssistantService', () => {
     updateClientEntityResolver as never,
     capitalInvestorEntityResolver as never,
     createManualAccountEntityResolver as never,
+    reverseExpenseEntityResolver as never,
     { getSummary: jest.fn(async () => ({ investors: [] })) } as never,
     compositionOrchestrator as never,
   );

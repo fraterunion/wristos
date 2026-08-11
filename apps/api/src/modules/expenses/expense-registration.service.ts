@@ -17,6 +17,10 @@ import {
   operatingExpenseOutflowProvenanceKey,
   TreasuryService,
 } from '../treasury/treasury.service';
+import {
+  CANONICAL_EXPENSE_INVARIANT_MESSAGE,
+  classifyExpenseReversalEconomics,
+} from '../ai/reversals/expense-reversal-classification';
 
 export type ExpenseMoneySource = 'CASH' | 'BANK' | 'CESAR';
 
@@ -310,6 +314,32 @@ export class ExpenseRegistrationService {
           reversalKey,
         ),
       };
+    }
+
+    // 26C.1 — refuse corrupt canonical state (provenance exists but leg incoherent).
+    {
+      const treasury = await this.prisma.treasuryEntry.findFirst({
+        where: {
+          tenantId,
+          provenanceKey: operatingExpenseOutflowProvenanceKey(expenseId),
+        },
+        select: {
+          id: true,
+          deletedAt: true,
+          direction: true,
+          amountMxn: true,
+          account: true,
+        },
+      });
+      const economicClass = classifyExpenseReversalEconomics({
+        expense: existing,
+        treasuryOutflow: treasury,
+      });
+      if (economicClass === 'CANONICAL_INVARIANT') {
+        throw new ConflictException(
+          `REVERSAL_INVARIANT: ${CANONICAL_EXPENSE_INVARIANT_MESSAGE}`,
+        );
+      }
     }
 
     const now = new Date();

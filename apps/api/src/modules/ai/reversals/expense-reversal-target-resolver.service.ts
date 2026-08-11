@@ -9,6 +9,7 @@ import {
   utcDayBucket,
 } from './expense-reversal-fingerprint';
 import { TrustedReversalTarget } from './financial-reversal.types';
+import { CANONICAL_EXPENSE_INVARIANT_MESSAGE } from './expense-reversal-classification';
 
 export type ExpenseReversalSearchQuery = {
   amount?: Prisma.Decimal | number | string | null;
@@ -32,7 +33,13 @@ export type ExpenseReversalResolveResult =
       }>;
     }
   | { kind: 'NONE' }
-  | { kind: 'ALREADY_REVERSED'; targetId: string; safeLabel: string };
+  | { kind: 'ALREADY_REVERSED'; targetId: string; safeLabel: string }
+  | {
+      kind: 'CANONICAL_INVARIANT';
+      targetId: string;
+      safeLabel: string;
+      message: string;
+    };
 
 /**
  * Read-only expense reversal target resolver (26A).
@@ -60,7 +67,13 @@ export class ExpenseReversalTargetResolver {
         tenantId,
         provenanceKey: expenseOutflowProvenanceKey(expense.id),
       },
-      select: { id: true, deletedAt: true },
+      select: {
+        id: true,
+        deletedAt: true,
+        direction: true,
+        amountMxn: true,
+        account: true,
+      },
     });
 
     const snapshot = expenseReversalSnapshot(expense, treasury);
@@ -68,6 +81,15 @@ export class ExpenseReversalTargetResolver {
 
     if (expense.deletedAt) {
       return { kind: 'ALREADY_REVERSED', targetId: expense.id, safeLabel };
+    }
+
+    if (snapshot.economicClass === 'CANONICAL_INVARIANT') {
+      return {
+        kind: 'CANONICAL_INVARIANT',
+        targetId: expense.id,
+        safeLabel,
+        message: CANONICAL_EXPENSE_INVARIANT_MESSAGE,
+      };
     }
 
     const fpInput = buildExpenseFingerprintInput(expense, treasury);

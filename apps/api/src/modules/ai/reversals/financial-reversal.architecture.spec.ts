@@ -71,7 +71,13 @@ describe('Financial Reversal Safety Framework 26A', () => {
       deletedAt: null,
       notes: 'gasolina centro',
     };
-    const treasury = { id: 't1', deletedAt: null };
+    const treasury = {
+      id: 't1',
+      deletedAt: null,
+      direction: 'OUTFLOW' as const,
+      amountMxn: d(2500),
+      account: 'CASH' as const,
+    };
     const a = expenseReversalFingerprint(buildExpenseFingerprintInput(base, treasury));
     const b = expenseReversalFingerprint(
       buildExpenseFingerprintInput({ ...base, notes: 'edited notes' }, treasury),
@@ -87,6 +93,7 @@ describe('Financial Reversal Safety Framework 26A', () => {
   it('legacy expense preview does not claim liquidity restore', () => {
     const snapshot = expenseReversalSnapshot(
       {
+        id: 'e-legacy',
         amount: d(2500),
         category: OperatingExpenseCategory.GASOLINE,
         sourceAccount: null,
@@ -97,6 +104,7 @@ describe('Financial Reversal Safety Framework 26A', () => {
       },
       null,
     );
+    expect(snapshot.economicClass).toBe('LEGACY_VALID');
     const preview = buildExpenseReversalPreview(snapshot);
     expect(preview.legacyMode).toBe(true);
     expect(preview.restoresLiquidity).toBe(false);
@@ -109,6 +117,7 @@ describe('Financial Reversal Safety Framework 26A', () => {
   it('canonical expense preview restores source liquidity', () => {
     const snapshot = expenseReversalSnapshot(
       {
+        id: 'e-canon',
         amount: d(2500),
         category: OperatingExpenseCategory.GASOLINE,
         sourceAccount: 'CASH',
@@ -117,13 +126,47 @@ describe('Financial Reversal Safety Framework 26A', () => {
         deletedAt: null,
         notes: 'gasolina',
       },
-      { id: 't1' },
+      {
+        id: 't1',
+        deletedAt: null,
+        direction: 'OUTFLOW',
+        amountMxn: d(2500),
+        account: 'CASH',
+      },
     );
+    expect(snapshot.economicClass).toBe('CANONICAL_VALID');
     const preview = buildExpenseReversalPreview(snapshot);
     expect(preview.legacyMode).toBe(false);
     expect(preview.restoresLiquidity).toBe(true);
     expect(preview.changesPnl).toBe(true);
     expect(preview.changesCapital).toBe(false);
+  });
+
+  it('soft-deleted provenance with active expense is CANONICAL_INVARIANT not legacy', () => {
+    const snapshot = expenseReversalSnapshot(
+      {
+        id: 'e-corrupt',
+        amount: d(2500),
+        category: OperatingExpenseCategory.GASOLINE,
+        sourceAccount: 'BANK',
+        expenseDate: new Date('2026-08-10T00:00:00.000Z'),
+        currency: 'MXN',
+        deletedAt: null,
+        notes: 'corrupt',
+      },
+      {
+        id: 't-soft',
+        deletedAt: new Date('2026-08-11T00:00:00.000Z'),
+        direction: 'OUTFLOW',
+        amountMxn: d(2500),
+        account: 'BANK',
+      },
+    );
+    expect(snapshot.economicClass).toBe('CANONICAL_INVARIANT');
+    expect(snapshot.hasCanonicalTreasuryOutflow).toBe(false);
+    const preview = buildExpenseReversalPreview(snapshot);
+    // Preview helpers may still show Sin cambios; planning must refuse TRUSTED.
+    expect(preview.restoresLiquidity).toBe(false);
   });
 
   it('transfer fingerprint requires pair identity and preview is liquidity-neutral', () => {

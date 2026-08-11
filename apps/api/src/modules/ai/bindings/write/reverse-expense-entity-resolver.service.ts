@@ -26,7 +26,8 @@ export type ReverseExpenseClarify = {
     | 'ALREADY_REVERSED'
     | 'MISSING_AMOUNT'
     | 'WEAK_SEARCH'
-    | 'NO_LAST_ACTION';
+    | 'NO_LAST_ACTION'
+    | 'CANONICAL_INVARIANT';
 };
 
 export type ReverseExpenseResolution =
@@ -282,6 +283,20 @@ export class ReverseExpenseEntityResolver {
             },
           };
         }
+        if (resolved.kind === 'CANONICAL_INVARIANT') {
+          return {
+            kind: 'CLARIFY',
+            entities: next,
+            clarify: {
+              field: 'target',
+              entityType: 'OPERATING_EXPENSE',
+              code: 'CANONICAL_INVARIANT',
+              message: resolved.message,
+              candidates: [],
+              items: [],
+            },
+          };
+        }
         if (resolved.kind === 'TRUSTED') {
           return this.mapResolve(next, resolved, 'last_action');
         }
@@ -376,6 +391,20 @@ export class ReverseExpenseEntityResolver {
           entityType: 'OPERATING_EXPENSE',
           code: 'ALREADY_REVERSED',
           message: 'Ese gasto ya fue revertido.',
+          candidates: [],
+          items: [],
+        },
+      };
+    }
+    if (resolved.kind === 'CANONICAL_INVARIANT') {
+      return {
+        kind: 'CLARIFY',
+        entities,
+        clarify: {
+          field: 'target',
+          entityType: 'OPERATING_EXPENSE',
+          code: 'CANONICAL_INVARIANT',
+          message: resolved.message,
           candidates: [],
           items: [],
         },
