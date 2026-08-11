@@ -93,12 +93,14 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       load: jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
       persistSelection: jest.fn(),
       persistClarificationTurn: jest.fn(),
+      persistEntityPickerTurn: jest.fn(),
       readPendingClarificationEntities: jest.fn().mockReturnValue({}),
       buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
     };
     const compositionOrchestrator = {
       loadActive: jest.fn().mockResolvedValue({ composition: null, version: 1, resolvedContext: {} }),
     };
+    const clarificationFieldLock = { resolve: jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }) };
     const service = new NaturalLanguageAssistantService(
       aiRequests,
       intentAdapter as never,
@@ -107,6 +109,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       workingContext as never,
       prisma as never,
       compositionOrchestrator as never,
+      clarificationFieldLock as never,
     );
 
     const [resultA, resultB] = await Promise.all([
@@ -140,12 +143,14 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       load: jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
       persistSelection: jest.fn(),
       persistClarificationTurn: jest.fn(),
+      persistEntityPickerTurn: jest.fn(),
       readPendingClarificationEntities: jest.fn().mockReturnValue({}),
       buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
     };
     const compositionOrchestrator = {
       loadActive: jest.fn().mockResolvedValue({ composition: null, version: 1, resolvedContext: {} }),
     };
+    const clarificationFieldLock = { resolve: jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }) };
     const service = new NaturalLanguageAssistantService(
       aiRequests,
       { interpret } as never,
@@ -154,6 +159,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       workingContext as never,
       prisma as never,
       compositionOrchestrator as never,
+      clarificationFieldLock as never,
     );
 
     await service.handleMessage(actor, dto);

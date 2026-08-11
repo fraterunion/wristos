@@ -14,7 +14,11 @@ import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
-import { mapClarificationAnswer } from '../clarification/clarification-presenter';
+import { ClarificationFieldLockService } from '../clarification/clarification-field-lock.service';
+import {
+  detectHighConfidenceTopicChange,
+  looksLikeClarificationCancel,
+} from '../clarification/clarification-escape';
 import { CompositionOrchestrator } from '../composition/composition-orchestrator.service';
 import {
   COMPOSITION_CANCEL_ID,
@@ -47,7 +51,7 @@ const WRITE_CLARIFICATION_INTENTS = new Set<string>([
 ]);
 
 function looksLikeCancel(text: string): boolean {
-  return /^(cancela|cancelar|olvida(?:lo)?|olv[ií]dalo|deja|no|mejor no)\.?$/i.test(text.trim());
+  return looksLikeClarificationCancel(text);
 }
 export interface NaturalLanguageAssistantResult {
   /** The intent the message ultimately resolved to, or 'UNKNOWN' for anything that never reached the orchestrator. */
@@ -82,6 +86,7 @@ export class NaturalLanguageAssistantService {
     private readonly workingContext: WorkingContextService,
     private readonly prisma: PrismaService,
     private readonly compositionOrchestrator: CompositionOrchestrator,
+    private readonly clarificationFieldLock: ClarificationFieldLockService,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -128,6 +133,8 @@ export class NaturalLanguageAssistantService {
 
     const loaded = await this.workingContext.load(actor.tenantId, actor.userId, dto.workspaceId);
     const deterministicRef = detectDeterministicReference(normalizedText);
+    /** May be cleared when the user cancels or switches topics mid-clarification. */
+    let workingForProvider = loaded.working;
 
     // Active clarification continuation: map closed answers into the pending write
     // without losing prior entities. Cancel phrases clear the draft politely.
@@ -139,9 +146,10 @@ export class NaturalLanguageAssistantService {
       WRITE_CLARIFICATION_INTENTS.has(pendingIntent) &&
       !deterministicRef
     ) {
+      // 1) Explicit cancel — destroy draft, never trap the user.
       if (looksLikeCancel(normalizedText)) {
         let response = buildReferenceClarificationResponse(
-          'De acuerdo, cancelé ese borrador.',
+          'De acuerdo. Cancelé ese borrador.',
           responseCtx,
           'CLARIFICATION_CANCELLED',
         );
@@ -174,90 +182,169 @@ export class NaturalLanguageAssistantService {
         return { resolvedIntent: pendingIntent, response, resolvedEntities: {} };
       }
 
-      const mapped = mapClarificationAnswer(pendingField, normalizedText);
-      if (mapped) {
-        const conversationIdForPrior = dto.conversationId;
-        const prior = conversationIdForPrior
-          ? await this.prisma.aIRequest.findFirst({
-              where: {
-                tenantId: actor.tenantId,
-                conversationId: conversationIdForPrior,
-                id: { not: request.id },
-                requestPayload: {
-                  path: ['resolvedIntent'],
-                  equals: pendingIntent,
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-              select: { requestPayload: true },
-            })
-          : null;
-        const priorPayload =
-          prior?.requestPayload && typeof prior.requestPayload === 'object'
-            ? (prior.requestPayload as Record<string, unknown>)
-            : null;
-        const priorEntities = Object.fromEntries(
-          (
-            priorPayload?.resolvedEntities &&
-            typeof priorPayload.resolvedEntities === 'object' &&
-            !Array.isArray(priorPayload.resolvedEntities)
-              ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
-              : []
-          ).filter(
-            (entry): entry is [string, string | number | boolean] =>
-              typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
-          ),
-        );
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-
-        // Expense uses `source`; payment destination uses `destination`.
-        let fieldKey = mapped.field;
-        let fieldValue: string | number | boolean = mapped.value;
-        if (pendingIntent === 'REGISTER_EXPENSE' && (fieldKey === 'sourceAccount' || fieldKey === 'cashAccount')) {
-          fieldKey = 'source';
+      // 2) High-confidence new intent — abandon draft, then unrestricted NLP.
+      const topicChange = detectHighConfidenceTopicChange(normalizedText, pendingIntent);
+      if (topicChange) {
+        try {
+          await this.workingContext.persistClarificationTurn({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            surface: dto.surface ?? 'DESKTOP',
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            requestId: request.id,
+            intent: pendingIntent,
+            entities: {},
+            response: {
+              interactionState: 'IDLE',
+              responseType: 'ERROR_RECOVERY_CARD',
+              payload: { code: 'CLARIFICATION_ABANDONED' },
+            },
+            mode: 'CLEAR',
+          });
+        } catch {
+          // Continue with NLP even if clear races; do not trap the user.
         }
-
-        const continuedEntities: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-          [fieldKey]: fieldValue,
-        };
-        // Mirror common aliases used by enrichers.
-        if (fieldKey === 'source') continuedEntities.sourceAccount = fieldValue;
-        if (fieldKey === 'destination') continuedEntities.destinationAccount = fieldValue;
-
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: pendingIntent,
-          entities: continuedEntities,
-          candidateHash: `clarification:${pendingField}`,
-        });
+        workingForProvider = workingForProvider
+          ? (() => {
+              const { pendingMissingFields: _drop, pendingActionRunId: _drop2, ...rest } =
+                workingForProvider;
+              return { ...rest, contextUpdatedAt: new Date().toISOString() };
+            })()
+          : null;
         telem(this.telemetry, {
           event: 'ClarificationAnswered',
           tenantId: actor.tenantId,
           conversationId: dto.conversationId,
           requestId: request.id,
           capability: pendingIntent,
-          clarificationReason: pendingField,
-          answered: true,
+          clarificationReason: 'TOPIC_CHANGE',
+          answered: false,
         });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: pendingIntent as BusinessActionId,
-            entities: continuedEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
+        // Fall through to full NLP with cleared pending context.
+      } else {
+        // 3) Field lock — resolve the pending field before unrestricted NLP.
+        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
+        const priorEntities = await this.loadPriorWriteEntities(
+          actor.tenantId,
+          dto.conversationId,
+          request.id,
+          pendingIntent,
         );
-        return {
-          resolvedIntent: pendingIntent,
-          response: continued,
-          resolvedEntities: continuedEntities,
+        const lockedDraft: Record<string, string | number | boolean> = {
+          ...draftEntities,
+          ...priorEntities,
         };
+
+        const lock = await this.clarificationFieldLock.resolve({
+          tenantId: actor.tenantId,
+          intent: pendingIntent,
+          pendingField,
+          answer: normalizedText,
+          draftEntities: lockedDraft,
+        });
+
+        if (lock.kind === 'BOUND') {
+          await this.aiRequests.recordInterpretation(request.id, {
+            intent: pendingIntent,
+            entities: lock.entities,
+            candidateHash: `clarification-lock:${pendingField}`,
+          });
+          telem(this.telemetry, {
+            event: 'ClarificationAnswered',
+            tenantId: actor.tenantId,
+            conversationId: dto.conversationId,
+            requestId: request.id,
+            capability: pendingIntent,
+            clarificationReason: pendingField,
+            answered: true,
+          });
+          const continued = await this.assistant.executeClaimed(
+            actor,
+            {
+              intent: pendingIntent as BusinessActionId,
+              entities: lock.entities,
+              surface: dto.surface ?? 'DESKTOP',
+              clientRequestId: dto.clientRequestId,
+              conversationId: dto.conversationId,
+              workspaceId: dto.workspaceId,
+              userDisplayText: dto.text,
+            },
+            request,
+          );
+          return {
+            resolvedIntent: pendingIntent,
+            response: continued,
+            resolvedEntities: lock.entities,
+          };
+        }
+
+        if (lock.kind === 'PICKER') {
+          let response: StructuredAssistantResponse = {
+            requestId: request.id,
+            conversationId: dto.conversationId ?? '',
+            workspaceId: dto.workspaceId ?? '',
+            interactionState: 'NEEDS_DISAMBIGUATION',
+            responseType: 'ENTITY_PICKER',
+            payload: {
+              message: lock.message,
+              entityType: lock.entityType,
+              clarificationField: pendingField,
+              data: { items: lock.items },
+              unchanged: 'No se ejecutó ninguna acción.',
+              nextAction: 'Elige con “el primero”, “el segundo”, o nómbralo.',
+            },
+            warnings: [],
+            suggestedActions: [],
+            traceId,
+            createdAt: new Date().toISOString(),
+          };
+          try {
+            const persisted = await this.workingContext.persistEntityPickerTurn({
+              tenantId: actor.tenantId,
+              userId: actor.userId,
+              surface: dto.surface ?? 'DESKTOP',
+              conversationId: dto.conversationId,
+              workspaceId: dto.workspaceId,
+              requestId: request.id,
+              intent: pendingIntent,
+              entities: lock.entities,
+              response: {
+                interactionState: response.interactionState,
+                responseType: response.responseType,
+                payload: response.payload as Record<string, unknown>,
+              },
+            });
+            response = {
+              ...response,
+              conversationId: persisted.conversationId,
+              workspaceId: persisted.workspaceId,
+            };
+          } catch {
+            // Picker still returned; ordinal may need a fresh ask if persist races.
+          }
+          await this.aiRequests.recordInterpretation(request.id, {
+            intent: pendingIntent,
+            entities: lock.entities,
+            candidateHash: `clarification-picker:${pendingField}`,
+          });
+          await this.aiRequests.failUnattached(request, actor, pendingIntent, response, 'FIELD_LOCK_PICKER');
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: dto.conversationId,
+            requestId: request.id,
+            capability: pendingIntent,
+            clarificationType: 'ENTITY_AMBIGUITY',
+            clarificationReason: pendingField,
+            entityPickerUsed: true,
+            candidateCount: lock.candidates.length,
+            multipleCandidates: true,
+          });
+          return { resolvedIntent: pendingIntent, response, resolvedEntities: lock.entities };
+        }
+
+        // 4) lock.kind === 'NO_MATCH' → fall through to unrestricted NLP.
       }
     }
 
@@ -320,6 +407,98 @@ export class NaturalLanguageAssistantService {
         uniqueResolution: true,
         candidateCount: 1,
       });
+
+      // Field-lock WATCH picker continuation for sale/purchase drafts.
+      if (
+        (loaded.working?.lastIntent === 'REGISTER_SALE' ||
+          loaded.working?.lastIntent === 'REGISTER_PURCHASE') &&
+        resolution.entityType === 'WATCH'
+      ) {
+        const writeIntent = loaded.working.lastIntent;
+        const priorEntities = await this.loadPriorWriteEntities(
+          actor.tenantId,
+          dto.conversationId,
+          request.id,
+          writeIntent,
+        );
+        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
+        const writeEntities: Record<string, string | number | boolean> = {
+          ...draftEntities,
+          ...priorEntities,
+          watchId: resolution.id,
+          watchLabel: resolution.label,
+        };
+        delete (writeEntities as Record<string, unknown>).customerQuery;
+        delete (writeEntities as Record<string, unknown>).clientQuery;
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: writeIntent,
+          entities: writeEntities,
+          candidateHash: resolution.resolvedEntityHash,
+        });
+        const continued = await this.assistant.executeClaimed(
+          actor,
+          {
+            intent: writeIntent,
+            entities: writeEntities,
+            surface: dto.surface ?? 'DESKTOP',
+            clientRequestId: dto.clientRequestId,
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            userDisplayText: dto.text,
+          },
+          request,
+        );
+        return {
+          resolvedIntent: writeIntent,
+          response: continued,
+          resolvedEntities: writeEntities,
+        };
+      }
+
+      // Field-lock CLIENT picker continuation for sale drafts (not composition CTAs).
+      if (
+        loaded.working?.lastIntent === 'REGISTER_SALE' &&
+        resolution.entityType === 'CLIENT' &&
+        !resolution.id.startsWith('__')
+      ) {
+        const priorEntities = await this.loadPriorWriteEntities(
+          actor.tenantId,
+          dto.conversationId,
+          request.id,
+          'REGISTER_SALE',
+        );
+        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
+        const saleEntities: Record<string, string | number | boolean> = {
+          ...draftEntities,
+          ...priorEntities,
+          customerId: resolution.id,
+          clientId: resolution.id,
+          customerName: resolution.label,
+        };
+        await this.aiRequests.recordInterpretation(request.id, {
+          intent: 'REGISTER_SALE',
+          entities: saleEntities,
+          candidateHash: resolution.resolvedEntityHash,
+        });
+        const continued = await this.assistant.executeClaimed(
+          actor,
+          {
+            intent: 'REGISTER_SALE',
+            entities: saleEntities,
+            surface: dto.surface ?? 'DESKTOP',
+            clientRequestId: dto.clientRequestId,
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            userDisplayText: dto.text,
+          },
+          request,
+        );
+        return {
+          resolvedIntent: 'REGISTER_SALE',
+          response: continued,
+          resolvedEntities: saleEntities,
+        };
+      }
 
       // UPDATE_CLIENT client picker: continue with trusted id + prior mutation entities.
       if (
@@ -584,7 +763,7 @@ export class NaturalLanguageAssistantService {
       return { resolvedIntent: 'GET_CLIENT_ACCOUNTS', response, resolvedEntities: entities };
     }
 
-    const providerContext = toProviderConversationContext(loaded.working, dto.locale?.startsWith('es') ? 'es' : dto.locale);
+    const providerContext = toProviderConversationContext(workingForProvider, dto.locale?.startsWith('es') ? 'es' : dto.locale);
     const outcome = await this.intentAdapter.interpret({
       userText: normalizedText,
       locale: dto.locale ?? 'es-MX',
@@ -929,6 +1108,44 @@ export class NaturalLanguageAssistantService {
     };
     const response = await this.assistant.executeClaimed(actor, structuredRequest, request);
     return { resolvedIntent: intent, response, resolvedEntities: entities };
+  }
+
+  private async loadPriorWriteEntities(
+    tenantId: string,
+    conversationId: string | undefined,
+    requestId: string,
+    intent: string,
+  ): Promise<Record<string, string | number | boolean>> {
+    if (!conversationId) return {};
+    const prior = await this.prisma.aIRequest.findFirst({
+      where: {
+        tenantId,
+        conversationId,
+        id: { not: requestId },
+        requestPayload: {
+          path: ['resolvedIntent'],
+          equals: intent,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { requestPayload: true },
+    });
+    const priorPayload =
+      prior?.requestPayload && typeof prior.requestPayload === 'object'
+        ? (prior.requestPayload as Record<string, unknown>)
+        : null;
+    return Object.fromEntries(
+      (
+        priorPayload?.resolvedEntities &&
+        typeof priorPayload.resolvedEntities === 'object' &&
+        !Array.isArray(priorPayload.resolvedEntities)
+          ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
+          : []
+      ).filter(
+        (entry): entry is [string, string | number | boolean] =>
+          typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
+      ),
+    );
   }
 
   private async handleCompositionPickerSelection(args: {
