@@ -338,6 +338,36 @@ export class WorkingContextService {
       ),
     );
   }
+
+  /**
+   * Persist a field-lock entity picker (WATCH/CLIENT/…) so ordinal follow-ups
+   * stay on the pending write intent without unrestricted NLP.
+   */
+  async persistEntityPickerTurn(args: {
+    tenantId: string;
+    userId: string;
+    surface: AIConversationSurface;
+    conversationId?: string;
+    workspaceId?: string;
+    requestId: string;
+    intent: string;
+    entities: Record<string, string | number | boolean>;
+    response: {
+      interactionState: string;
+      responseType: string;
+      payload: Record<string, unknown>;
+    };
+  }): Promise<{ conversationId: string; workspaceId: string; version: number }> {
+    return this.persistClarificationTurn({
+      ...args,
+      mode: 'MISSING_FIELDS',
+      response: {
+        interactionState: args.response.interactionState,
+        responseType: 'ENTITY_PICKER',
+        payload: args.response.payload,
+      },
+    });
+  }
 }
 
 export function deriveWorkingContextAfterResponse(args: {
@@ -363,6 +393,17 @@ export function deriveWorkingContextAfterResponse(args: {
         lastResponseType: args.responseType,
         now,
       });
+    }
+    const clarificationField =
+      typeof args.payload.clarificationField === 'string' ? args.payload.clarificationField : null;
+    if (clarificationField) {
+      working = {
+        ...(working ?? emptyWorkingContext(now)),
+        lastIntent: (args.intent as AssistantWorkingContext['lastIntent']) ?? working?.lastIntent,
+        lastResponseType: args.responseType,
+        pendingMissingFields: [clarificationField],
+        contextUpdatedAt: now.toISOString(),
+      };
     }
   }
 

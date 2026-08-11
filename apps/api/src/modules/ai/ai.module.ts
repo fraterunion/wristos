@@ -46,6 +46,7 @@ import { UpdateClientWriteBinding } from './bindings/write/update-client.binding
 import { WriteCapabilityBindingRegistry } from './bindings/write-capability-binding-registry';
 import { WritePlanRunner } from './bindings/write-plan-runner';
 import { SaleCustomerEntityResolver } from './bindings/write/sale-customer-entity-resolver.service';
+import { ClarificationFieldLockService } from './clarification/clarification-field-lock.service';
 import { CompositionOrchestrator } from './composition/composition-orchestrator.service';
 import { CompositionService } from './composition/composition.service';
 import { AIRequestService } from './assistant/ai-request.service';
@@ -125,6 +126,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     IntentAdapterService,
     ReferenceResolverService,
     WorkingContextService,
+    ClarificationFieldLockService,
     NaturalLanguageAssistantService,
     IntentAdapterRateLimitGuard,
   ],

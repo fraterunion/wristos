@@ -25,6 +25,7 @@ function buildService(overrides: {
     load: overrides.workingLoad ?? jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
     persistSelection: overrides.persistSelection ?? jest.fn().mockResolvedValue({ version: 2, working: {} }),
     persistClarificationTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
+    persistEntityPickerTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
     readPendingClarificationEntities: jest.fn().mockReturnValue({}),
     buildAuditFromResolution: jest.fn().mockReturnValue({
       contextSchemaVersion: '1.1',
@@ -40,6 +41,9 @@ function buildService(overrides: {
     cancelComposition: jest.fn(),
     resumeParentAfterClient: jest.fn(),
   };
+  const clarificationFieldLock = {
+    resolve: jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }),
+  };
   const service = new NaturalLanguageAssistantService(
     aiRequests as never,
     intentAdapter as never,
@@ -48,8 +52,9 @@ function buildService(overrides: {
     workingContext as never,
     prisma as never,
     compositionOrchestrator as never,
+    clarificationFieldLock as never,
   );
-  return { service, request, aiRequests, intentAdapter, assistant, workingContext, prisma };
+  return { service, request, aiRequests, intentAdapter, assistant, workingContext, prisma, clarificationFieldLock };
 }
 
 const actor = { tenantId: 't1', userId: 'u1', role: 'OWNER', permissions: [] as string[] };
@@ -227,8 +232,8 @@ describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling th
     // optional TelemetryEmitter.
     // AIRequestService, IntentAdapterService, StructuredAssistantService,
     // ReferenceResolverService, WorkingContextService, PrismaService,
-    // CompositionOrchestrator, optional TelemetryEmitter.
-    expect(NaturalLanguageAssistantService.length).toBe(8);
+    // CompositionOrchestrator, ClarificationFieldLockService, optional TelemetryEmitter.
+    expect(NaturalLanguageAssistantService.length).toBe(9);
   });
 });
 

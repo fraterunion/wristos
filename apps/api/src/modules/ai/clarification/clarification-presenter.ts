@@ -149,9 +149,28 @@ function currencyQuestion(entities: PartialEntities, capability: string): Presen
   return '¿Fue en pesos o en dólares?';
 }
 
+function partyLabel(entities: PartialEntities): string | null {
+  for (const key of [
+    'customerName',
+    'clientLabel',
+    'sellerLabel',
+    'seller',
+    'supplierName',
+    'counterpartyName',
+    'customerQuery',
+    'clientQuery',
+  ]) {
+    const value = entities[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function amountQuestion(capability: string, entities: PartialEntities): string {
   if (capability === 'REGISTER_EXPENSE') return '¿De cuánto fue el gasto?';
   if (capability === 'REGISTER_SALE') {
+    const who = partyLabel(entities);
+    if (who) return `¿En cuánto se la vendiste a ${who}?`;
     const watch = typeof entities.watchLabel === 'string' ? entities.watchLabel : null;
     return watch ? `¿Por cuánto vendiste el ${watch}?` : '¿Por cuánto lo vendiste?';
   }
@@ -173,7 +192,7 @@ function amountQuestion(capability: string, entities: PartialEntities): string {
 function treasuryQuestion(capability: string, field: string): string {
   if (field === 'destination' || field === 'destinationAccount') {
     if (capability === 'REGISTER_RECEIVABLE_PAYMENT') {
-      return '¿Dónde recibiste el dinero?';
+      return '¿En qué cuenta recibiste el dinero?';
     }
     if (capability === 'REGISTER_TREASURY_TRANSFER') {
       return '¿A qué cuenta va?';
@@ -187,9 +206,20 @@ function treasuryQuestion(capability: string, field: string): string {
     return '¿De qué cuenta sale?';
   }
   if (capability === 'REGISTER_RECEIVABLE_PAYMENT') {
-    return '¿Dónde recibiste el dinero?';
+    return '¿En qué cuenta recibiste el dinero?';
   }
   return '¿De dónde salió el dinero?';
+}
+
+function watchQuestion(capability: string, entities: PartialEntities): string {
+  const who = partyLabel(entities);
+  if (capability === 'REGISTER_SALE' && who) {
+    return `¿Qué reloj le vendiste a ${who}?`;
+  }
+  if (capability === 'REGISTER_PURCHASE' && who) {
+    return `¿Qué reloj le compraste a ${who}?`;
+  }
+  return '¿Qué reloj fue?';
 }
 
 function fieldPresentation(
@@ -260,10 +290,13 @@ function fieldPresentation(
     const sale = capability === 'REGISTER_SALE';
     const purchase = capability === 'REGISTER_PURCHASE';
     const update = capability === 'UPDATE_CLIENT';
+    const watch = typeof entities.watchLabel === 'string' ? entities.watchLabel : null;
     return {
       field: normalized === 'clientId' || normalized === 'client' ? 'clientId' : 'customerId',
       question: sale
-        ? '¿A quién se lo vendiste?'
+        ? watch
+          ? `¿A quién le vendiste el ${watch}?`
+          : '¿A quién se lo vendiste?'
         : purchase
           ? '¿A quién se lo compraste?'
           : update
@@ -293,7 +326,7 @@ function fieldPresentation(
   if (normalized === 'watchId' || normalized === 'watch' || normalized === 'brand' || normalized === 'model') {
     return {
       field: normalized === 'watchId' ? 'watchId' : 'watch',
-      question: '¿Qué reloj fue?',
+      question: watchQuestion(capability, entities),
       usedFallback: false,
     };
   }
