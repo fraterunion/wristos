@@ -92,6 +92,8 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
     const workingContext = {
       load: jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
       persistSelection: jest.fn(),
+      persistClarificationTurn: jest.fn(),
+      readPendingClarificationEntities: jest.fn().mockReturnValue({}),
       buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
     };
     const compositionOrchestrator = {
@@ -137,6 +139,8 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
     const workingContext = {
       load: jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
       persistSelection: jest.fn(),
+      persistClarificationTurn: jest.fn(),
+      readPendingClarificationEntities: jest.fn().mockReturnValue({}),
       buildAuditFromResolution: jest.fn().mockReturnValue({ contextSchemaVersion: '1.1', contextVersion: 0, resolutionResult: 'RESOLVED' }),
     };
     const compositionOrchestrator = {

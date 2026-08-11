@@ -140,22 +140,48 @@ export class NaturalLanguageAssistantService {
       !deterministicRef
     ) {
       if (looksLikeCancel(normalizedText)) {
-        const response = buildReferenceClarificationResponse(
+        let response = buildReferenceClarificationResponse(
           'De acuerdo, cancelé ese borrador.',
           responseCtx,
           'CLARIFICATION_CANCELLED',
         );
+        try {
+          const cleared = await this.workingContext.persistClarificationTurn({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            surface: dto.surface ?? 'DESKTOP',
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            requestId: request.id,
+            intent: pendingIntent,
+            entities: {},
+            response: {
+              interactionState: response.interactionState,
+              responseType: response.responseType,
+              payload: response.payload as Record<string, unknown>,
+            },
+            mode: 'CLEAR',
+          });
+          response = {
+            ...response,
+            conversationId: cleared.conversationId,
+            workspaceId: cleared.workspaceId,
+          };
+        } catch {
+          // Cancel still returns politely even if workspace clear races.
+        }
         await this.aiRequests.failUnattached(request, actor, pendingIntent, response, 'CLARIFICATION_CANCELLED');
         return { resolvedIntent: pendingIntent, response, resolvedEntities: {} };
       }
 
       const mapped = mapClarificationAnswer(pendingField, normalizedText);
       if (mapped) {
-        const prior = dto.conversationId
+        const conversationIdForPrior = dto.conversationId;
+        const prior = conversationIdForPrior
           ? await this.prisma.aIRequest.findFirst({
               where: {
                 tenantId: actor.tenantId,
-                conversationId: dto.conversationId,
+                conversationId: conversationIdForPrior,
                 id: { not: request.id },
                 requestPayload: {
                   path: ['resolvedIntent'],
@@ -182,6 +208,7 @@ export class NaturalLanguageAssistantService {
               typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
           ),
         );
+        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
 
         // Expense uses `source`; payment destination uses `destination`.
         let fieldKey = mapped.field;
@@ -191,6 +218,7 @@ export class NaturalLanguageAssistantService {
         }
 
         const continuedEntities: Record<string, string | number | boolean> = {
+          ...draftEntities,
           ...priorEntities,
           [fieldKey]: fieldValue,
         };
@@ -802,8 +830,36 @@ export class NaturalLanguageAssistantService {
         capability: outcome.candidate.intent,
         entities,
       });
-      await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, response, policy.action);
-      return { resolvedIntent: outcome.candidate.intent, response, resolvedEntities: entities };
+      let attached = response;
+      if (policy.action === 'CLARIFY_AMBIGUITY' && response.responseType === 'MISSING_FIELDS_CARD') {
+        try {
+          const persisted = await this.workingContext.persistClarificationTurn({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            surface: dto.surface ?? 'DESKTOP',
+            conversationId: dto.conversationId,
+            workspaceId: dto.workspaceId,
+            requestId: request.id,
+            intent: outcome.candidate.intent,
+            entities,
+            response: {
+              interactionState: response.interactionState,
+              responseType: response.responseType,
+              payload: response.payload as Record<string, unknown>,
+            },
+            mode: 'MISSING_FIELDS',
+          });
+          attached = {
+            ...response,
+            conversationId: persisted.conversationId,
+            workspaceId: persisted.workspaceId,
+          };
+        } catch {
+          // Still return the clarification; continuation may fail closed without workspace.
+        }
+      }
+      await this.aiRequests.failUnattached(request, actor, outcome.candidate.intent, attached, policy.action);
+      return { resolvedIntent: outcome.candidate.intent, response: attached, resolvedEntities: entities };
     }
 
     const intent = outcome.candidate.intent as BusinessActionId;
@@ -845,7 +901,11 @@ export class NaturalLanguageAssistantService {
             typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
         ),
       );
-      entities = { ...priorEntities, ...entities };
+      entities = {
+        ...this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw),
+        ...priorEntities,
+        ...entities,
+      };
       telem(this.telemetry, {
         event: 'ClarificationAnswered',
         tenantId: actor.tenantId,
