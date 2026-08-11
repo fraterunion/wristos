@@ -18,6 +18,13 @@ describe('ToolRegistry', () => {
     getAttentionItems: jest.fn(),
     getBusinessSummary: jest.fn(),
   };
+  const watchInventory = {
+    resolve: jest.fn().mockResolvedValue({
+      kind: 'NO_MATCH',
+      reason: 'no_candidates',
+      message: '¿Qué reloj fue?',
+    }),
+  };
   const registry = new ToolRegistry(
     analytics as never,
     inventory as never,
@@ -25,6 +32,7 @@ describe('ToolRegistry', () => {
     cuentas as never,
     history as never,
     oi as never,
+    watchInventory as never,
   );
 
   it('lists eighteen unique, versioned, read-only tools including operational intelligence', () => {

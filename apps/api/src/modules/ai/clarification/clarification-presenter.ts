@@ -213,11 +213,24 @@ function treasuryQuestion(capability: string, field: string): string {
 
 function watchQuestion(capability: string, entities: PartialEntities): string {
   const who = partyLabel(entities);
+  const priorQuery =
+    typeof entities.watchQuery === 'string' && entities.watchQuery.trim()
+      ? entities.watchQuery.trim().slice(0, 60)
+      : null;
   if (capability === 'REGISTER_SALE' && who) {
-    return `¿Qué reloj le vendiste a ${who}?`;
+    return priorQuery
+      ? `No encontré “${priorQuery}” activo. ¿Qué reloj le vendiste a ${who}?`
+      : `¿Qué reloj le vendiste a ${who}?`;
   }
   if (capability === 'REGISTER_PURCHASE' && who) {
     return `¿Qué reloj le compraste a ${who}?`;
+  }
+  if (priorQuery) {
+    const looksNickname = /\b(elephant|pepsi|batman|panda|sprite|bruce\s*wayne)\b/i.test(priorQuery);
+    if (looksNickname) {
+      return `No encontré un ${priorQuery} activo en Inventario. ¿Qué reloj fue?`;
+    }
+    return `¿Qué ${priorQuery} fue exactamente?`;
   }
   return '¿Qué reloj fue?';
 }

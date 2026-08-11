@@ -60,6 +60,7 @@ import { ReferenceResolverService } from './context/reference-resolver.service';
 import { WorkingContextService } from './context/working-context.service';
 import { OperationalIntelligenceService } from './operational-intelligence/operational-intelligence.service';
 import { TelemetryModule } from './telemetry/telemetry.module';
+import { WatchInventoryResolver } from './watch-intelligence/watch-inventory-resolver.service';
 
 @Module({
   imports: [
@@ -105,6 +106,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     PayablePaymentEntityResolver,
     PurchaseEntityResolver,
     SaleCustomerEntityResolver,
+    WatchInventoryResolver,
     CreateClientEntityResolver,
     UpdateClientEntityResolver,
     CapitalInvestorEntityResolver,

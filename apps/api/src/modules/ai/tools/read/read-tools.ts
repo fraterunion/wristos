@@ -5,6 +5,7 @@ import { CrmService } from '../../../crm/crm.service';
 import { CuentasService } from '../../../cuentas/cuentas.service';
 import { HistoryService } from '../../../history/history.service';
 import { InventoryService } from '../../../inventory/inventory.service';
+import { WatchInventoryResolver } from '../../watch-intelligence/watch-inventory-resolver.service';
 import { ToolDefinition } from '../tool-definition';
 
 const money = z.string().regex(/^-?\d+\.\d{2}$/);
@@ -12,7 +13,14 @@ const limit = z.number().int().min(1).max(50).default(20);
 const definition = <I, O>(value: Omit<ToolDefinition<I, O>, 'inputSchema' | 'outputSchema' | 'mode' | 'confirmationTier' | 'version'>): ToolDefinition<I, O> => ({ ...value, version: '1.0.0', mode: 'READ', confirmationTier: 0, inputSchema: z.toJSONSchema(value.inputValidator) as Record<string, unknown>, outputSchema: z.toJSONSchema(value.outputValidator) as Record<string, unknown> });
 const accountOutput = z.object({ id: z.string(), type: z.string(), status: z.string(), counterpartyName: z.string(), concept: z.string(), totalAmount: money, paidTotal: money, balance: money, currency: z.string(), issuedAt: z.string().nullable(), dueDate: z.string().nullable(), payments: z.array(z.unknown()) }).passthrough();
 
-export function createReadTools(analytics: AnalyticsService, inventory: InventoryService, crm: CrmService, cuentas: CuentasService, history: HistoryService): ToolDefinition[] {
+export function createReadTools(
+  analytics: AnalyticsService,
+  inventory: InventoryService,
+  crm: CrmService,
+  cuentas: CuentasService,
+  history: HistoryService,
+  watchInventory?: WatchInventoryResolver,
+): ToolDefinition[] {
   const liquidityOut = z.object({ cashMxn: money, bankMxn: money, cryptoMxn: money, cesarMxn: money, totalLiquidityMxn: money, cryptoPriceStatus: z.string(), cryptoOldestPriceCapturedAt: z.string().nullable(), warnings: z.array(z.string()) }).strict();
   const inventorySummaryOut = z.object({ activeItemCount: z.number().int(), totalInventoryCostMxn: money, averageCostMxn: money }).strict();
   const inventoryItem = z.object({ id: z.string(), brand: z.string().nullable(), model: z.string().nullable(), reference: z.string().nullable(), serialNumber: z.string().nullable(), status: z.string(), cost: money.nullable(), createdAt: z.string(), ageDays: z.number().int(), location: z.string().nullable() }).strict();
@@ -22,7 +30,54 @@ export function createReadTools(analytics: AnalyticsService, inventory: Inventor
   return [
     definition({ name: 'get_liquidity', description: 'Canonical current liquidity across cash, bank, crypto and César.', category: 'FINANCE', permission: null, canonicalService: 'AnalyticsService.getLiquidity', inputValidator: z.object({}).strict(), outputValidator: liquidityOut, execute: async (ctx) => { const data = await analytics.getLiquidity(ctx.tenantId, ctx.now); return { data, summary: `Total liquidity MXN ${data.totalLiquidityMxn}`, warnings: data.warnings }; } }),
     definition({ name: 'get_inventory_summary', description: 'Canonical active inventory count and cost.', category: 'INVENTORY', permission: null, canonicalService: 'InventoryService.getSummary', inputValidator: z.object({}).strict(), outputValidator: inventorySummaryOut, execute: async (ctx) => { const row = await inventory.getSummary(ctx.tenantId); const data = { activeItemCount: row.activeItemCount, totalInventoryCostMxn: new Prisma.Decimal(row.totalInventoryValue).toFixed(2), averageCostMxn: new Prisma.Decimal(row.averageCost).toFixed(2) }; return { data, summary: `${data.activeItemCount} active inventory items` }; } }),
-    definition({ name: 'search_inventory', description: 'Search active inventory candidates without selecting one.', category: 'INVENTORY', permission: null, canonicalService: 'InventoryService.searchInventory', inputValidator: z.object({ query: z.string().trim().min(1).max(120), status: z.enum(['AVAILABLE', 'RESERVED', 'ALL']).default('ALL'), limit }).strict(), outputValidator: z.object({ items: z.array(inventoryItem) }).strict(), execute: async (ctx, input) => { const items = await inventory.searchInventory(ctx.tenantId, input.query, input.status, input.limit, ctx.now); return { data: { items }, summary: `${items.length} inventory candidates` }; } }),
+    definition({
+      name: 'search_inventory',
+      description: 'Search active inventory candidates without selecting one.',
+      category: 'INVENTORY',
+      permission: null,
+      canonicalService: 'InventoryService.searchInventory',
+      inputValidator: z.object({ query: z.string().trim().min(1).max(120), status: z.enum(['AVAILABLE', 'RESERVED', 'ALL']).default('ALL'), limit }).strict(),
+      outputValidator: z.object({ items: z.array(inventoryItem) }).strict(),
+      execute: async (ctx, input) => {
+        if (watchInventory) {
+          const resolved = await watchInventory.resolve({
+            tenantId: ctx.tenantId,
+            query: input.query,
+            eligibility: 'SEARCH',
+            limit: input.limit,
+            meta: { capability: 'SEARCH_INVENTORY' },
+          });
+          if (resolved.kind === 'UNIQUE' || resolved.kind === 'PICKER') {
+            const candidates =
+              resolved.kind === 'UNIQUE' ? [resolved.candidate] : resolved.candidates;
+            const items = candidates
+              .filter((c) => input.status === 'ALL' || c.status === input.status)
+              .slice(0, input.limit)
+              .map((c) => ({
+                id: c.id,
+                brand: c.brand,
+                model: c.model,
+                reference: c.reference,
+                serialNumber: null as string | null,
+                status: c.status,
+                cost: null as string | null,
+                createdAt: new Date(0).toISOString(),
+                ageDays: 0,
+                location: null as string | null,
+              }));
+            return { data: { items }, summary: `${items.length} inventory candidates` };
+          }
+        }
+        const items = await inventory.searchInventory(
+          ctx.tenantId,
+          input.query,
+          input.status,
+          input.limit,
+          ctx.now,
+        );
+        return { data: { items }, summary: `${items.length} inventory candidates` };
+      },
+    }),
     definition({ name: 'search_clients', description: 'Search tenant clients and open AccountEntry receivables.', category: 'CRM', permission: null, canonicalService: 'CrmService.searchClientsForTools', inputValidator: z.object({ query: z.string().trim().min(1).max(120), limit }).strict(), outputValidator: z.object({ items: z.array(clientItem) }).strict(), execute: async (ctx, input) => { const items = await crm.searchClientsForTools(ctx.tenantId, input.query, input.limit); return { data: { items }, summary: `${items.length} client candidates` }; } }),
     definition({ name: 'get_client_accounts', description: 'Read a client AccountEntry ledger.', category: 'ACCOUNTS', permission: null, canonicalService: 'CuentasService.getClientAccountsForTools', inputValidator: z.object({ clientId: z.string().min(1), type: z.enum(['RECEIVABLE', 'PAYABLE', 'ALL']).default('ALL'), status: z.enum(['OPEN', 'PARTIAL', 'PAID', 'ALL']).default('ALL') }).strict(), outputValidator: z.object({ entries: z.array(accountOutput) }).strict(), execute: async (ctx, input) => { const entries = await cuentas.getClientAccountsForTools(ctx.tenantId, input.clientId, input.type === 'ALL' ? undefined : input.type as AccountEntryType, input.status === 'ALL' ? undefined : input.status as AccountEntryStatus); return { data: { entries }, summary: `${entries.length} client accounts` }; } }),
     ...(['RECEIVABLE', 'PAYABLE'] as const).map((type) => definition({ name: type === 'RECEIVABLE' ? 'get_open_receivables' : 'get_open_payables', description: `Read open ${type.toLowerCase()} AccountEntry balances.`, category: 'ACCOUNTS', permission: null, canonicalService: 'CuentasService.getOpenAccountsForTools', inputValidator: z.object({ clientId: z.string().optional(), currency: z.enum(['MXN', 'USD']).optional(), limit, sort: z.enum(['OUTSTANDING_DESC', 'OLDEST', 'NEWEST']).default('OUTSTANDING_DESC') }).strict(), outputValidator: openOutput, execute: async (ctx, input) => { let allEntries = await cuentas.getOpenAccountsForTools(ctx.tenantId, type as AccountEntryType, input.clientId); if (input.currency) allEntries = allEntries.filter((e) => e.currency === input.currency); const totals = { MXN: new Prisma.Decimal(0), USD: new Prisma.Decimal(0) }; for (const e of allEntries) totals[e.currency as 'MXN'|'USD'] = totals[e.currency as 'MXN'|'USD'].plus(e.balance); allEntries.sort((a, b) => input.sort === 'OLDEST' ? (a.issuedAt ?? a.createdAt).localeCompare(b.issuedAt ?? b.createdAt) : input.sort === 'NEWEST' ? (b.issuedAt ?? b.createdAt).localeCompare(a.issuedAt ?? a.createdAt) : new Prisma.Decimal(b.balance).comparedTo(a.balance)); const entries = allEntries.slice(0, input.limit); const data = { totalOutstandingByCurrency: { MXN: totals.MXN.toFixed(2), USD: totals.USD.toFixed(2) }, count: allEntries.length, entries }; return { data, summary: `${allEntries.length} open ${type.toLowerCase()} entries` }; } })),

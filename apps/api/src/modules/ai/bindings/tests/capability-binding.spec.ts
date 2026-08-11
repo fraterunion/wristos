@@ -15,6 +15,8 @@ const toolRegistry = () =>
     getTopSales: jest.fn(),
     getAttentionItems: jest.fn(),
     getBusinessSummary: jest.fn(),
+  } as never, {
+    resolve: jest.fn().mockResolvedValue({ kind: 'NO_MATCH', reason: 'no_candidates', message: '' }),
   } as never);
 const step = (capability: BusinessCapability, args: Record<string, any> = {}): BusinessPlanStep => ({ stepId: 's1', capability, arguments: args, dependsOn: [], estimatedEffects: [], reversibility: 'FULL' });
 const context = { tenantId: 't1', userId: 'u1', permissions: [], conversationId: null, workspaceId: null, actionRunId: null, requestId: 'trace-1', locale: 'en', timezone: 'UTC', now: new Date('2026-08-06T00:00:00Z') };

@@ -30,6 +30,13 @@ describe('StructuredAssistantService', () => {
       dependencyRequired: null,
     })),
   };
+  const watchInventoryResolver = {
+    resolveSaleEntities: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
+      entities,
+      clarify: null,
+      noMatchMessage: null,
+    })),
+  };
   const createClientEntityResolver = {
     resolve: jest.fn(async (_tenantId: string, entities: Record<string, unknown>) => ({
       kind: 'READY' as const,
@@ -73,6 +80,7 @@ describe('StructuredAssistantService', () => {
     payablePaymentResolver as never,
     purchaseEntityResolver as never,
     saleCustomerEntityResolver as never,
+    watchInventoryResolver as never,
     createClientEntityResolver as never,
     updateClientEntityResolver as never,
     capitalInvestorEntityResolver as never,

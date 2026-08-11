@@ -344,6 +344,71 @@ export class NaturalLanguageAssistantService {
           return { resolvedIntent: pendingIntent, response, resolvedEntities: lock.entities };
         }
 
+        if (lock.kind === 'CLARIFY') {
+          // Stay on pending WATCH with contextual copy — never CLIENT picker / unrestricted NLP.
+          const clarifyPayload = {
+            message: lock.message,
+            clarificationField: pendingField,
+            missing: [{ entity: pendingField, question: lock.message }],
+            unchanged: 'No se ejecutó ninguna acción.',
+            nextAction: 'Responde con el reloj o una referencia más precisa.',
+          };
+          let response: StructuredAssistantResponse = {
+            requestId: request.id,
+            conversationId: dto.conversationId ?? '',
+            workspaceId: dto.workspaceId ?? '',
+            interactionState: 'NEEDS_INPUT',
+            responseType: 'MISSING_FIELDS_CARD',
+            payload: clarifyPayload,
+            warnings: [],
+            suggestedActions: [],
+            traceId,
+            createdAt: new Date().toISOString(),
+          };
+          try {
+            const persisted = await this.workingContext.persistClarificationTurn({
+              tenantId: actor.tenantId,
+              userId: actor.userId,
+              surface: dto.surface ?? 'DESKTOP',
+              conversationId: dto.conversationId,
+              workspaceId: dto.workspaceId,
+              requestId: request.id,
+              intent: pendingIntent,
+              entities: lock.entities,
+              mode: 'MISSING_FIELDS',
+              response: {
+                interactionState: response.interactionState,
+                responseType: response.responseType,
+                payload: response.payload as Record<string, unknown>,
+              },
+            });
+            response = {
+              ...response,
+              conversationId: persisted.conversationId,
+              workspaceId: persisted.workspaceId,
+            };
+          } catch {
+            // Clarification still returned.
+          }
+          await this.aiRequests.recordInterpretation(request.id, {
+            intent: pendingIntent,
+            entities: lock.entities,
+            candidateHash: `clarification-clarify:${pendingField}`,
+          });
+          await this.aiRequests.failUnattached(request, actor, pendingIntent, response, 'FIELD_LOCK_CLARIFY');
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: dto.conversationId,
+            requestId: request.id,
+            capability: pendingIntent,
+            clarificationType: 'MISSING_FIELD',
+            clarificationReason: pendingField,
+            zeroCandidates: true,
+          });
+          return { resolvedIntent: pendingIntent, response, resolvedEntities: lock.entities };
+        }
+
         // 4) lock.kind === 'NO_MATCH' → fall through to unrestricted NLP.
       }
     }
