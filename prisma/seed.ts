@@ -1,14 +1,27 @@
 import {
+  AccountEntryCategory,
+  AccountEntryStatus,
+  AccountEntryType,
+  AccountEntrySource,
   AutomationRuleType,
   AutomationRunStatus,
+  CapitalAccount,
+  ChannelType,
+  ClassificationStatus,
   ClientInteractionType,
+  CounterpartyType,
   DealStage,
+  ImportStatus,
+  MarketListingIntent,
   OperatingExpenseCategory,
   PaymentMethod,
   PaymentStatus,
   Prisma,
   PrismaClient,
+  ReviewStatus,
   TenantStatus,
+  TreasuryAccount,
+  TreasuryDirection,
   UserStatus,
   WatchExpenseCategory,
   WatchOwnershipType,
@@ -1523,6 +1536,20 @@ export async function seedDemoTenant(prisma: PrismaClient = defaultPrismaClient)
   });
 
   // Reset tenant business data so seed is idempotent.
+  // Radar: deleting Channel cascades RadarImport -> ChannelMessage -> MarketListing.
+  await prisma.channel.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.contact.deleteMany({ where: { tenantId: tenant.id } });
+  // Cuentas: AccountPayment before AccountEntry (FK).
+  await prisma.accountPayment.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.accountEntry.deleteMany({ where: { tenantId: tenant.id } });
+  // Treasury before Capital — TreasuryEntry.contributionId/distributionId are SetNull,
+  // but deleting it first keeps the ordering obviously safe either way.
+  await prisma.treasuryEntry.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.physicalCashBalanceAdjustment.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.investorContribution.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.investorDistribution.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.investorOpeningBalance.deleteMany({ where: { tenantId: tenant.id } });
+  await prisma.investor.deleteMany({ where: { tenantId: tenant.id } });
   await prisma.automationRun.deleteMany({ where: { tenantId: tenant.id } });
   await prisma.automationRule.deleteMany({ where: { tenantId: tenant.id } });
   await prisma.matchSuggestion.deleteMany({ where: { tenantId: tenant.id } });
@@ -1910,10 +1937,11 @@ export async function seedDemoTenant(prisma: PrismaClient = defaultPrismaClient)
   const allPaymentSeeds: PaymentSeed[] = [...paymentSeeds, ...generatedPayments];
 
   let paymentCount = 0;
+  const paidPaymentRefs: Array<{ id: string; amount: number; method: PaymentMethod; paidAtDaysAgo: number }> = [];
   for (const payment of allPaymentSeeds) {
     const deal = dealByKey.get(payment.dealKey);
     if (!deal) continue;
-    await prisma.payment.create({
+    const created = await prisma.payment.create({
       data: {
         tenantId: tenant.id,
         dealId: deal.id,
@@ -1924,9 +1952,18 @@ export async function seedDemoTenant(prisma: PrismaClient = defaultPrismaClient)
         paidAt: payment.paidAtDaysAgo === null ? null : daysAgo(payment.paidAtDaysAgo),
         notes: payment.notes,
       },
+      select: { id: true },
     });
     if (payment.paidAtDaysAgo !== null) {
       timelineCoverageDates.push(daysAgo(payment.paidAtDaysAgo));
+    }
+    if (payment.status === PaymentStatus.PAID && payment.paidAtDaysAgo !== null) {
+      paidPaymentRefs.push({
+        id: created.id,
+        amount: payment.amount,
+        method: payment.method,
+        paidAtDaysAgo: payment.paidAtDaysAgo,
+      });
     }
     paymentCount += 1;
   }
@@ -2039,6 +2076,383 @@ export async function seedDemoTenant(prisma: PrismaClient = defaultPrismaClient)
   for (const watch of watchSeeds) {
     timelineCoverageDates.push(daysAgo(watch.createdAtDaysAgo));
   }
+
+  // ---------------------------------------------------------------------------
+  // Investors (Capital de socios)
+  // ---------------------------------------------------------------------------
+  const investorSeeds: Array<{ key: string; name: string; ownershipPercent: number; notes: string }> = [
+    { key: 'inv1', name: 'Alejandro Torres', ownershipPercent: 45, notes: 'Socio fundador. Aporta capital de trabajo para inventario de alta rotación.' },
+    { key: 'inv2', name: 'Diego Navarro', ownershipPercent: 35, notes: 'Socio capitalista. Enfocado en piezas de alto valor y consignaciones.' },
+    { key: 'inv3', name: 'Renata Beltrán', ownershipPercent: 20, notes: 'Socia capitalista. Incorporada para financiar expansión de showroom.' },
+  ];
+  const investorByKey = new Map<string, { id: string }>();
+  for (const inv of investorSeeds) {
+    const created = await prisma.investor.create({
+      data: {
+        tenantId: tenant.id,
+        name: inv.name,
+        ownershipPercent: new Prisma.Decimal(inv.ownershipPercent),
+        isActive: true,
+        notes: inv.notes,
+      },
+      select: { id: true },
+    });
+    investorByKey.set(inv.key, { id: created.id });
+  }
+
+  const openingBalanceSeeds: Array<{ investorKey: string; amount: number; daysAgo: number }> = [
+    { investorKey: 'inv1', amount: 4185000, daysAgo: 210 },
+    { investorKey: 'inv2', amount: 3255000, daysAgo: 210 },
+    { investorKey: 'inv3', amount: 1860000, daysAgo: 210 },
+  ];
+  for (const ob of openingBalanceSeeds) {
+    const investor = investorByKey.get(ob.investorKey);
+    if (!investor) continue;
+    await prisma.investorOpeningBalance.create({
+      data: {
+        tenantId: tenant.id,
+        investorId: investor.id,
+        amount: new Prisma.Decimal(ob.amount),
+        currency: 'MXN',
+        effectiveDate: daysAgo(ob.daysAgo),
+        source: `demo-seed-opening-${ob.investorKey}`,
+        notes: 'Posición de capital inicial al comenzar operación en WristOS.',
+      },
+    });
+    timelineCoverageDates.push(daysAgo(ob.daysAgo));
+  }
+
+  const contributionSeeds: Array<{ investorKey: string; amount: number; account: CapitalAccount; daysAgo: number; notes: string }> = [
+    { investorKey: 'inv1', amount: 555000, account: CapitalAccount.BANK, daysAgo: 150, notes: 'Aportación para compra de lote de relojes deportivos.' },
+    { investorKey: 'inv1', amount: 312000, account: CapitalAccount.CASH, daysAgo: 63, notes: 'Refuerzo de caja para temporada alta.' },
+    { investorKey: 'inv2', amount: 740000, account: CapitalAccount.BANK, daysAgo: 118, notes: 'Aportación para pieza de consignación Patek Philippe.' },
+    { investorKey: 'inv3', amount: 260000, account: CapitalAccount.BANK, daysAgo: 95, notes: 'Aportación inicial tras incorporación como socia.' },
+    { investorKey: 'inv3', amount: 175000, account: CapitalAccount.CESAR_ACCOUNT, daysAgo: 40, notes: 'Aportación adicional para gastos operativos.' },
+  ];
+  let contributionCount = 0;
+  for (const c of contributionSeeds) {
+    const investor = investorByKey.get(c.investorKey);
+    if (!investor) continue;
+    await prisma.investorContribution.create({
+      data: {
+        tenantId: tenant.id,
+        investorId: investor.id,
+        amount: new Prisma.Decimal(c.amount),
+        account: c.account,
+        notes: c.notes,
+        contributedAt: daysAgo(c.daysAgo),
+      },
+    });
+    contributionCount += 1;
+    timelineCoverageDates.push(daysAgo(c.daysAgo));
+  }
+
+  const distributionSeeds: Array<{ investorKey: string; amount: number; account: CapitalAccount; daysAgo: number; notes: string }> = [
+    { investorKey: 'inv1', amount: 210000, account: CapitalAccount.BANK, daysAgo: 52, notes: 'Distribución de utilidades — cierre trimestral.' },
+    { investorKey: 'inv2', amount: 165000, account: CapitalAccount.BANK, daysAgo: 52, notes: 'Distribución de utilidades — cierre trimestral.' },
+    { investorKey: 'inv2', amount: 88000, account: CapitalAccount.CASH, daysAgo: 21, notes: 'Retiro parcial autorizado.' },
+    { investorKey: 'inv3', amount: 94000, account: CapitalAccount.BANK, daysAgo: 52, notes: 'Distribución de utilidades — cierre trimestral.' },
+  ];
+  let distributionCount = 0;
+  for (const d of distributionSeeds) {
+    const investor = investorByKey.get(d.investorKey);
+    if (!investor) continue;
+    await prisma.investorDistribution.create({
+      data: {
+        tenantId: tenant.id,
+        investorId: investor.id,
+        amount: new Prisma.Decimal(d.amount),
+        account: d.account,
+        notes: d.notes,
+        paidAt: daysAgo(d.daysAgo),
+      },
+    });
+    distributionCount += 1;
+    timelineCoverageDates.push(daysAgo(d.daysAgo));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Treasury (cash ledger) — linked to already-seeded sale payments where
+  // possible so the ledger derives from real transactions, not invented totals.
+  // ---------------------------------------------------------------------------
+  let treasuryEntryCount = 0;
+  for (const p of paidPaymentRefs.slice(0, 20)) {
+    const account: TreasuryAccount = p.method === PaymentMethod.CASH ? TreasuryAccount.CASH : TreasuryAccount.BANK;
+    await prisma.treasuryEntry.create({
+      data: {
+        tenantId: tenant.id,
+        account,
+        direction: TreasuryDirection.INFLOW,
+        amount: new Prisma.Decimal(p.amount),
+        currency: 'MXN',
+        amountMxn: new Prisma.Decimal(p.amount),
+        transactionDate: daysAgo(p.paidAtDaysAgo),
+        description: 'Cobro de venta registrada',
+        dealPaymentId: p.id,
+      },
+    });
+    treasuryEntryCount += 1;
+  }
+
+  const treasuryOutflowSeeds: Array<{ account: TreasuryAccount; amount: number; daysAgo: number; description: string }> = [
+    { account: TreasuryAccount.BANK, amount: 68000, daysAgo: 140, description: 'Pago a taller — servicio de movimientos consignación' },
+    { account: TreasuryAccount.BANK, amount: 41500, daysAgo: 88, description: 'Pago a proveedor de logística — envío asegurado' },
+    { account: TreasuryAccount.CASH, amount: 18500, daysAgo: 34, description: 'Gastos operativos de caja chica' },
+    { account: TreasuryAccount.BANK, amount: 95000, daysAgo: 60, description: 'Comisión de venta — Royal Oak Jumbo' },
+    { account: TreasuryAccount.CESAR, amount: 52000, daysAgo: 105, description: 'Pago a proveedor — adquisición inventario' },
+  ];
+  for (const t of treasuryOutflowSeeds) {
+    await prisma.treasuryEntry.create({
+      data: {
+        tenantId: tenant.id,
+        account: t.account,
+        direction: TreasuryDirection.OUTFLOW,
+        amount: new Prisma.Decimal(t.amount),
+        currency: 'MXN',
+        amountMxn: new Prisma.Decimal(t.amount),
+        transactionDate: daysAgo(t.daysAgo),
+        description: t.description,
+      },
+    });
+    treasuryEntryCount += 1;
+    timelineCoverageDates.push(daysAgo(t.daysAgo));
+  }
+
+  await prisma.physicalCashBalanceAdjustment.create({
+    data: {
+      tenantId: tenant.id,
+      currency: 'MXN',
+      previousBalance: new Prisma.Decimal(0),
+      adjustmentAmount: new Prisma.Decimal(185000),
+      resultingBalance: new Prisma.Decimal(185000),
+      reason: 'Conteo inicial de caja física al comenzar operación en WristOS.',
+      source: 'demo-seed',
+      actor: userEmail,
+      effectiveDate: daysAgo(209),
+    },
+  });
+  timelineCoverageDates.push(daysAgo(209));
+
+  // ---------------------------------------------------------------------------
+  // Cuentas (AR/AP) — deliberately independent of Deal/Payment records (not
+  // Deal-linked) so this doesn't double-count revenue already reflected in
+  // the Payment ledger above.
+  // ---------------------------------------------------------------------------
+  const accountEntrySeeds: Array<{
+    type: AccountEntryType;
+    status: AccountEntryStatus;
+    category: AccountEntryCategory;
+    counterpartyName: string;
+    counterpartyType: CounterpartyType;
+    concept: string;
+    totalAmount: number;
+    issuedDaysAgo: number;
+    dueDaysOffset: number | null;
+    notes: string | null;
+  }> = [
+    { type: AccountEntryType.RECEIVABLE, status: AccountEntryStatus.PARTIAL, category: AccountEntryCategory.SALE_BALANCE, counterpartyName: 'Isabela Fontanez', counterpartyType: CounterpartyType.CLIENT, concept: 'Saldo pendiente — Patek Philippe Grand Complications', totalAmount: 172000, issuedDaysAgo: 26, dueDaysOffset: 14, notes: 'Cliente cubrió anticipo; saldo pactado en dos exhibiciones.' },
+    { type: AccountEntryType.RECEIVABLE, status: AccountEntryStatus.OPEN, category: AccountEntryCategory.SALE_BALANCE, counterpartyName: 'Carlos Guzmán', counterpartyType: CounterpartyType.CLIENT, concept: 'Saldo pendiente — Richard Mille RM 067-01', totalAmount: 610000, issuedDaysAgo: 9, dueDaysOffset: 21, notes: 'Factura emitida, en espera de transferencia internacional.' },
+    { type: AccountEntryType.RECEIVABLE, status: AccountEntryStatus.OVERDUE, category: AccountEntryCategory.COMMISSION, counterpartyName: 'Baltazar Huerta', counterpartyType: CounterpartyType.CLIENT, concept: 'Comisión por intermediación — venta AP Royal Oak', totalAmount: 48000, issuedDaysAgo: 46, dueDaysOffset: -12, notes: 'Recordatorio de pago enviado dos veces.' },
+    { type: AccountEntryType.PAYABLE, status: AccountEntryStatus.OPEN, category: AccountEntryCategory.PURCHASE, counterpartyName: 'Relojería del Centro S.A.', counterpartyType: CounterpartyType.SUPPLIER, concept: 'Compra de inventario — lote Tudor/Omega', totalAmount: 285000, issuedDaysAgo: 15, dueDaysOffset: 15, notes: 'Pago pactado a 30 días con proveedor recurrente.' },
+    { type: AccountEntryType.PAYABLE, status: AccountEntryStatus.PARTIAL, category: AccountEntryCategory.SERVICE, counterpartyName: 'Taller Suizo de Relojería', counterpartyType: CounterpartyType.WORKSHOP, concept: 'Servicio de mantenimiento — lote de piezas consignadas', totalAmount: 62000, issuedDaysAgo: 33, dueDaysOffset: -3, notes: 'Primer abono cubierto; resta liquidar al entregar piezas.' },
+    { type: AccountEntryType.PAYABLE, status: AccountEntryStatus.OPEN, category: AccountEntryCategory.LOAN, counterpartyName: 'Logística Premium Express', counterpartyType: CounterpartyType.LOGISTICS, concept: 'Servicio de traslado asegurado — feria Watches & Wonders', totalAmount: 34500, issuedDaysAgo: 6, dueDaysOffset: 24, notes: null },
+  ];
+
+  const accountEntryByIndex: Array<{ id: string }> = [];
+  for (const e of accountEntrySeeds) {
+    const created = await prisma.accountEntry.create({
+      data: {
+        tenantId: tenant.id,
+        type: e.type,
+        status: e.status,
+        category: e.category,
+        source: AccountEntrySource.MANUAL,
+        counterpartyName: e.counterpartyName,
+        counterpartyType: e.counterpartyType,
+        concept: e.concept,
+        totalAmount: new Prisma.Decimal(e.totalAmount),
+        currency: 'MXN',
+        issuedAt: daysAgo(e.issuedDaysAgo),
+        dueDate: e.dueDaysOffset === null ? null : daysFromNow(e.dueDaysOffset),
+        notes: e.notes,
+      },
+      select: { id: true },
+    });
+    accountEntryByIndex.push({ id: created.id });
+    timelineCoverageDates.push(daysAgo(e.issuedDaysAgo));
+  }
+
+  // Partial payments against the two PARTIAL-status entries above (indices 0 and 4).
+  const accountPaymentSeeds: Array<{ entryIndex: number; amount: number; method: PaymentMethod; daysAgo: number }> = [
+    { entryIndex: 0, amount: 86000, method: PaymentMethod.TRANSFER, daysAgo: 20 },
+    { entryIndex: 4, amount: 31000, method: PaymentMethod.TRANSFER, daysAgo: 27 },
+  ];
+  let accountPaymentCount = 0;
+  for (const p of accountPaymentSeeds) {
+    const entry = accountEntryByIndex[p.entryIndex];
+    if (!entry) continue;
+    await prisma.accountPayment.create({
+      data: {
+        tenantId: tenant.id,
+        entryId: entry.id,
+        amount: new Prisma.Decimal(p.amount),
+        currency: 'MXN',
+        method: p.method,
+        paidAt: daysAgo(p.daysAgo),
+      },
+    });
+    accountPaymentCount += 1;
+    timelineCoverageDates.push(daysAgo(p.daysAgo));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Radar (market listening)
+  // ---------------------------------------------------------------------------
+  const channelSeeds: Array<{ key: string; type: ChannelType; name: string; externalChannelId: string }> = [
+    { key: 'ch1', type: ChannelType.WHATSAPP, name: 'Grupo Relojeros CDMX', externalChannelId: 'wa-grupo-relojeros-cdmx' },
+    { key: 'ch2', type: ChannelType.TELEGRAM, name: 'Mercado de Relojes LATAM', externalChannelId: 'tg-mercado-relojes-latam' },
+  ];
+  const channelByKey = new Map<string, { id: string }>();
+  for (const ch of channelSeeds) {
+    const created = await prisma.channel.create({
+      data: {
+        tenantId: tenant.id,
+        type: ch.type,
+        name: ch.name,
+        externalChannelId: ch.externalChannelId,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    channelByKey.set(ch.key, { id: created.id });
+  }
+
+  const importByChannelKey = new Map<string, { id: string }>();
+  for (const ch of channelSeeds) {
+    const channel = channelByKey.get(ch.key)!;
+    const created = await prisma.radarImport.create({
+      data: {
+        tenantId: tenant.id,
+        channelId: channel.id,
+        status: ImportStatus.COMPLETED,
+        startedAt: daysAgo(30),
+        completedAt: daysAgo(30),
+        sourceGroupName: ch.name,
+        listingsCreated: 0,
+      },
+      select: { id: true },
+    });
+    importByChannelKey.set(ch.key, { id: created.id });
+  }
+
+  const contactSeeds: Array<{ key: string; displayName: string; phone?: string; whatsappId?: string; telegramUsername?: string }> = [
+    { key: 'rc1', displayName: 'Manuel Ordóñez', phone: '+52 55 6602 4471', whatsappId: '5215566024471' },
+    { key: 'rc2', displayName: 'Regina Palacios', phone: '+52 33 4471 2290', whatsappId: '5213344712290' },
+    { key: 'rc3', displayName: 'Iker Montemayor', telegramUsername: 'iker_relojes' },
+    { key: 'rc4', displayName: 'Daniela Cabrera', phone: '+52 81 5527 6693', whatsappId: '5218155276693' },
+    { key: 'rc5', displayName: 'Saúl Berrocal', telegramUsername: 'saul_watchdeals' },
+  ];
+  const contactByKey = new Map<string, { id: string }>();
+  for (const c of contactSeeds) {
+    const created = await prisma.contact.create({
+      data: {
+        tenantId: tenant.id,
+        displayName: c.displayName,
+        phone: c.phone ?? null,
+        whatsappId: c.whatsappId ?? null,
+        telegramUsername: c.telegramUsername ?? null,
+        firstSeenAt: daysAgo(45),
+        lastSeenAt: daysAgo(5),
+      },
+      select: { id: true },
+    });
+    contactByKey.set(c.key, { id: created.id });
+  }
+
+  const messageSeeds: Array<{
+    key: string;
+    channelKey: string;
+    senderRaw: string;
+    content: string;
+    postedDaysAgo: number;
+    contactKey?: string;
+  }> = [
+    { key: 'm1', channelKey: 'ch1', senderRaw: 'Manuel Ordóñez', content: 'Vendo Rolex Submariner 126610LN, full set, factura original. ¿Interesados?', postedDaysAgo: 28, contactKey: 'rc1' },
+    { key: 'm2', channelKey: 'ch1', senderRaw: 'Regina Palacios', content: 'Busco Cartier Santos mediano, de preferencia con caja y papeles.', postedDaysAgo: 24, contactKey: 'rc2' },
+    { key: 'm3', channelKey: 'ch2', senderRaw: 'Iker Montemayor', content: 'Precio de referencia hoy: AP Royal Oak 15500ST rondando 780k en mercado gris.', postedDaysAgo: 20, contactKey: 'rc3' },
+    { key: 'm4', channelKey: 'ch1', senderRaw: 'Daniela Cabrera', content: 'Tengo un Omega Speedmaster Moonwatch poco uso, acepto ofertas serias.', postedDaysAgo: 17, contactKey: 'rc4' },
+    { key: 'm5', channelKey: 'ch2', senderRaw: 'Saúl Berrocal', content: 'Se buscan referencias Patek Nautilus 5711, pago de contado.', postedDaysAgo: 13, contactKey: 'rc5' },
+    { key: 'm6', channelKey: 'ch1', senderRaw: 'Manuel Ordóñez', content: 'Actualizo: Submariner ya con comprador en proceso, gracias a todos.', postedDaysAgo: 9 },
+    { key: 'm7', channelKey: 'ch2', senderRaw: 'Regina Palacios', content: '¿Alguien vende Tudor Black Bay GMT disponible en CDMX?', postedDaysAgo: 6 },
+    { key: 'm8', channelKey: 'ch1', senderRaw: 'Iker Montemayor', content: 'Buen día grupo, feliz jueves a todos los coleccionistas.', postedDaysAgo: 4 },
+  ];
+
+  const messageByKey = new Map<string, { id: string }>();
+  let channelMessageCount = 0;
+  for (const m of messageSeeds) {
+    const channel = channelByKey.get(m.channelKey)!;
+    const imp = importByChannelKey.get(m.channelKey)!;
+    const created = await prisma.channelMessage.create({
+      data: {
+        tenantId: tenant.id,
+        channelId: channel.id,
+        importId: imp.id,
+        content: m.content,
+        contentHash: `demo-seed-${m.key}`,
+        postedAt: daysAgo(m.postedDaysAgo),
+        senderRaw: m.senderRaw,
+        classificationStatus: ClassificationStatus.COMPLETED,
+        processedAt: daysAgo(m.postedDaysAgo),
+      },
+      select: { id: true },
+    });
+    messageByKey.set(m.key, { id: created.id });
+    channelMessageCount += 1;
+    timelineCoverageDates.push(daysAgo(m.postedDaysAgo));
+  }
+
+  const listingSeeds: Array<{
+    messageKey: string;
+    contactKey?: string;
+    intent: MarketListingIntent;
+    reviewStatus: ReviewStatus;
+    brand: string;
+    title: string;
+    priceAmount: number | null;
+    confirmed?: boolean;
+    dismissed?: boolean;
+  }> = [
+    { messageKey: 'm1', contactKey: 'rc1', intent: MarketListingIntent.SELL_OFFER, reviewStatus: ReviewStatus.CONFIRMED, brand: 'Rolex', title: 'Rolex Submariner 126610LN — full set', priceAmount: 255000, confirmed: true },
+    { messageKey: 'm2', contactKey: 'rc2', intent: MarketListingIntent.BUY_REQUEST, reviewStatus: ReviewStatus.PENDING_REVIEW, brand: 'Cartier', title: 'Busca Cartier Santos mediano', priceAmount: null },
+    { messageKey: 'm3', contactKey: 'rc3', intent: MarketListingIntent.PRICE_SIGNAL, reviewStatus: ReviewStatus.CONFIRMED, brand: 'Audemars Piguet', title: 'Referencia de precio AP Royal Oak 15500ST', priceAmount: 780000, confirmed: true },
+    { messageKey: 'm4', contactKey: 'rc4', intent: MarketListingIntent.SELL_OFFER, reviewStatus: ReviewStatus.PENDING_REVIEW, brand: 'Omega', title: 'Omega Speedmaster Moonwatch poco uso', priceAmount: 118000 },
+    { messageKey: 'm5', contactKey: 'rc5', intent: MarketListingIntent.BUY_REQUEST, reviewStatus: ReviewStatus.PENDING_REVIEW, brand: 'Patek Philippe', title: 'Busca Patek Nautilus 5711, contado', priceAmount: null },
+    { messageKey: 'm7', intent: MarketListingIntent.BUY_REQUEST, reviewStatus: ReviewStatus.DISMISSED, brand: 'Tudor', title: 'Busca Tudor Black Bay GMT en CDMX', priceAmount: null, dismissed: true },
+  ];
+
+  let marketListingCount = 0;
+  for (const l of listingSeeds) {
+    const message = messageByKey.get(l.messageKey);
+    if (!message) continue;
+    const contact = l.contactKey ? contactByKey.get(l.contactKey) : undefined;
+    await prisma.marketListing.create({
+      data: {
+        tenantId: tenant.id,
+        messageId: message.id,
+        contactId: contact?.id ?? null,
+        intent: l.intent,
+        reviewStatus: l.reviewStatus,
+        brand: l.brand,
+        title: l.title,
+        priceAmount: l.priceAmount === null ? null : new Prisma.Decimal(l.priceAmount),
+        priceCurrency: l.priceAmount === null ? null : 'MXN',
+        confirmedAt: l.confirmed ? daysAgo(2) : null,
+        dismissedAt: l.dismissed ? daysAgo(2) : null,
+      },
+    });
+    marketListingCount += 1;
+  }
+
   const earliestDate = new Date(Math.min(...timelineCoverageDates.map((d) => d.getTime())));
   const latestDate = new Date(Math.max(...timelineCoverageDates.map((d) => d.getTime())));
 
@@ -2063,6 +2477,17 @@ export async function seedDemoTenant(prisma: PrismaClient = defaultPrismaClient)
       automationRules: 3,
       automationRuns: 3,
       watchReferences: watchReferenceCount,
+      investors: investorSeeds.length,
+      investorOpeningBalances: openingBalanceSeeds.length,
+      investorContributions: contributionCount,
+      investorDistributions: distributionCount,
+      treasuryEntries: treasuryEntryCount,
+      accountEntries: accountEntryByIndex.length,
+      accountPayments: accountPaymentCount,
+      radarChannels: channelSeeds.length,
+      radarContacts: contactSeeds.length,
+      radarMessages: channelMessageCount,
+      radarListings: marketListingCount,
     },
     coverage: {
       earliest: earliestDate.toISOString(),
