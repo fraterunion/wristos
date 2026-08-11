@@ -63,7 +63,7 @@ describe('PlannerService', () => {
     const plan = planner.plan({ intent: 'REGISTER_SALE', entities: { watchId: 'watch-1' } }, context);
     expect(plan.state).toBe('NEEDS_CLARIFICATION');
     expect(plan.missingEntities.map((item) => item.entity)).toEqual(['customerId', 'price', 'currency', 'paymentMode']);
-    expect(plan.clarificationQuestions[0]).toBe('Who is the customer?');
+    expect(plan.clarificationQuestions[0]).toBe('¿A quién se lo vendiste?');
     expect(plan.executionSteps).toEqual([]);
     expect(plan.preview).toBeNull();
   });
