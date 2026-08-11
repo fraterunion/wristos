@@ -24,6 +24,8 @@ function buildService(overrides: {
   const workingContext = {
     load: overrides.workingLoad ?? jest.fn().mockResolvedValue({ working: null, version: null, resolvedContextRaw: null }),
     persistSelection: overrides.persistSelection ?? jest.fn().mockResolvedValue({ version: 2, working: {} }),
+    persistClarificationTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
+    readPendingClarificationEntities: jest.fn().mockReturnValue({}),
     buildAuditFromResolution: jest.fn().mockReturnValue({
       contextSchemaVersion: '1.1',
       contextVersion: 1,
