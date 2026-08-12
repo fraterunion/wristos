@@ -34,6 +34,7 @@ export class AuthController {
       email: user.email,
       tenantId: user.tenantId,
       role: user.role,
+      isDemo: user.isDemo,
     };
   }
 

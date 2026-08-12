@@ -55,6 +55,7 @@ export class AuthService {
       email: user.email,
       tenantId: activeTenantMembership.tenantId,
       role: activeTenantMembership.role?.name,
+      isDemo: activeTenantMembership.tenant.isDemo,
     };
   }
 
@@ -101,6 +102,7 @@ export class AuthService {
       email: user.email,
       tenantId: membership.tenantId,
       role: membership.role?.name,
+      isDemo: membership.tenant.isDemo,
     };
 
     return this.issueTokens(currentUser);
@@ -131,6 +133,7 @@ export class AuthService {
       email: membership.user.email,
       tenantId: membership.tenantId,
       role: membership.role?.name,
+      isDemo: membership.tenant.isDemo,
     };
 
     return this.issueTokens(currentUser);
@@ -147,6 +150,7 @@ export class AuthService {
       email: user.email,
       tenantId: user.tenantId,
       role: user.role,
+      isDemo: user.isDemo,
     };
 
     const jwtSecret =
