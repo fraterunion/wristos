@@ -51,12 +51,36 @@ describe('wipeDemoOperationalData scoping', () => {
       },
     );
     await wipeDemoOperationalData(tx as never, 'demo-tenant');
+    expect(order).not.toContain('aIAuditEvent');
+    expect(order).not.toContain('aIMessage');
     expect(order.indexOf('accountSettlement')).toBeLessThan(order.indexOf('accountPayment'));
     expect(order.indexOf('accountPayment')).toBeLessThan(order.indexOf('accountEntry'));
     expect(order.indexOf('storefrontReservation')).toBeLessThan(order.indexOf('watch'));
     expect(order.indexOf('receivablePayment')).toBeLessThan(order.indexOf('receivable'));
     expect(order.indexOf('receivable')).toBeLessThan(order.indexOf('deal'));
     expect(order.indexOf('payment')).toBeLessThan(order.indexOf('deal'));
+  });
+
+  it('does not attempt to delete append-only AIAuditEvent or AIMessage', async () => {
+    const models: string[] = [];
+    const tx = new Proxy(
+      {},
+      {
+        get(_target, model: string) {
+          return {
+            deleteMany: async () => {
+              models.push(model);
+              return { count: 0 };
+            },
+          };
+        },
+      },
+    );
+    await wipeDemoOperationalData(tx as never, 'demo-tenant');
+    expect(models).not.toContain('aIAuditEvent');
+    expect(models).not.toContain('aIMessage');
+    expect(models).toContain('aIRequest');
+    expect(models).toContain('watch');
   });
 });
 
@@ -94,5 +118,7 @@ describe('demo reset source guards', () => {
     expect(controller).not.toMatch(/@Body|@Query|@Param/);
     expect(reset).toMatch(/slug: DEMO_TENANT_SLUG/);
     expect(wipe).not.toMatch(/user\.|tenantUser\.|passwordHash/);
+    expect(wipe).not.toMatch(/aIAuditEvent\.deleteMany/);
+    expect(wipe).not.toMatch(/aIMessage\.deleteMany/);
   });
 });

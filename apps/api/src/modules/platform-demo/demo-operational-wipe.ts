@@ -1,9 +1,15 @@
 import { Prisma } from '@prisma/client';
 
 /**
- * Tenant-scoped wipe of every operational table that normal demo use can
- * populate. Identity tables (User, TenantUser, Role, Tenant) are intentionally
- * excluded. WatchReference is global and is not touched.
+ * Tenant-scoped wipe of mutable operational tables that normal demo use can
+ * populate.
+ *
+ * Intentionally retained (not operational state):
+ * - Identity: User, TenantUser, Role, Tenant
+ * - Global catalog: WatchReference
+ * - Immutable AI audit history: AIAuditEvent, AIMessage (DB append-only
+ *   triggers). Conversations / action runs / workspaces referenced by those
+ *   rows also survive because their FKs are Restrict.
  *
  * Every deleteMany is scoped by tenantId directly or via a nested tenant
  * relation. There is no unscoped deleteMany in this module.
@@ -14,13 +20,26 @@ export async function wipeDemoOperationalData(
 ): Promise<void> {
   const tenant = { tenantId };
 
-  // --- AI runtime (children before parents; AIMessage has no tenantId) ---
+  // --- AI runtime ---
+  // AIAuditEvent and AIMessage are append-only at the database layer.
+  // Do not delete them. Unreferenced workspaces/action-runs/conversations
+  // remain deletable; rows pinned by surviving audit/messages are skipped.
   await tx.aIRequest.deleteMany({ where: tenant });
-  await tx.aIAuditEvent.deleteMany({ where: tenant });
-  await tx.aIWorkspace.deleteMany({ where: tenant });
-  await tx.aIActionRun.deleteMany({ where: tenant });
-  await tx.aIMessage.deleteMany({ where: { conversation: tenant } });
-  await tx.aIConversation.deleteMany({ where: tenant });
+  await tx.aIWorkspace.deleteMany({
+    where: { tenantId, auditEvents: { none: {} } },
+  });
+  await tx.aIActionRun.deleteMany({
+    where: { tenantId, auditEvents: { none: {} }, activeWorkspaces: { none: {} } },
+  });
+  await tx.aIConversation.deleteMany({
+    where: {
+      tenantId,
+      messages: { none: {} },
+      auditEvents: { none: {} },
+      workspaces: { none: {} },
+      actionRuns: { none: {} },
+    },
+  });
 
   // --- Wrist Caviar migration staging (tenant-scoped; cascade children first) ---
   await tx.wristCaviarMigrationResolution.deleteMany({ where: tenant });

@@ -25,6 +25,7 @@ const RESET_MAX_WAIT_MS = 15_000;
  * Wipe + reseed demo operational data only.
  *
  * Never creates/updates User, passwordHash, or TenantUser.
+ * Never deletes immutable AI audit history (AIAuditEvent / AIMessage).
  * Target slug is compiled-in. isDemo must already be true (set by provisioning).
  * Destructive work + reseed run in one interactive transaction so a failure
  * rolls back instead of leaving a half-reset tenant.
