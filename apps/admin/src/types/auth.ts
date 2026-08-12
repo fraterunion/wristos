@@ -3,6 +3,7 @@ export type AuthUser = {
   email: string;
   tenantId: string;
   role?: string;
+  isDemo?: boolean;
 };
 
 export type AuthSession = {

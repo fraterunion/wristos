@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -54,6 +55,7 @@ export class AuthService {
       email: user.email,
       tenantId: activeTenantMembership.tenantId,
       role: activeTenantMembership.role?.name,
+      isDemo: activeTenantMembership.tenant.isDemo,
     };
   }
 
@@ -100,9 +102,57 @@ export class AuthService {
       email: user.email,
       tenantId: membership.tenantId,
       role: membership.role?.name,
+      isDemo: membership.tenant.isDemo,
     };
 
     return this.issueTokens(currentUser);
+  }
+
+  /**
+   * Reissues tokens scoped to a different tenant the caller already belongs
+   * to — e.g. a platform owner moving between Wrist Caviar and the demo
+   * tenant. Requires an existing, verified TenantUser membership; does not
+   * grant access to any tenant the caller isn't already a member of.
+   */
+  async switchTenant(userId: string, tenantId: string): Promise<{ accessToken: string; refreshToken: string; user: CurrentUser }> {
+    const membership = await this.prisma.tenantUser.findUnique({
+      where: { tenantId_userId: { tenantId, userId } },
+      include: { tenant: true, role: true, user: true },
+    });
+
+    if (
+      !membership ||
+      membership.tenant.status !== TenantStatus.ACTIVE ||
+      membership.user.status !== UserStatus.ACTIVE
+    ) {
+      throw new ForbiddenException('No active membership for the requested tenant');
+    }
+
+    const currentUser: CurrentUser = {
+      userId: membership.user.id,
+      email: membership.user.email,
+      tenantId: membership.tenantId,
+      role: membership.role?.name,
+      isDemo: membership.tenant.isDemo,
+    };
+
+    return this.issueTokens(currentUser);
+  }
+
+  /** Tenants the caller has an active membership on — powers the tenant switcher UI. */
+  async listMyTenants(userId: string) {
+    const memberships = await this.prisma.tenantUser.findMany({
+      where: { userId, tenant: { status: TenantStatus.ACTIVE } },
+      include: { tenant: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return memberships.map((m) => ({
+      tenantId: m.tenant.id,
+      name: m.tenant.name,
+      slug: m.tenant.slug,
+      isDemo: m.tenant.isDemo,
+    }));
   }
 
   async logout() {
@@ -116,6 +166,7 @@ export class AuthService {
       email: user.email,
       tenantId: user.tenantId,
       role: user.role,
+      isDemo: user.isDemo,
     };
 
     const jwtSecret =
