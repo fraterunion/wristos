@@ -12,6 +12,7 @@ import {
   Radar,
   ReceiptText,
   ScanSearch,
+  Sparkles,
   Store,
   TrendingUp,
   Users,
@@ -41,6 +42,7 @@ const navItems: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/data-onboarding', label: 'Importar datos', icon: Upload },
   { href: '/platform/migrations/wrist-caviar', label: 'Migración WC', icon: Upload },
   { href: '/platform/assistant-health', label: 'Assistant Health', icon: Activity },
+  { href: '/platform/demo', label: 'WristOS Demo', icon: Sparkles },
 ];
 export function Sidebar() {
   const pathname = usePathname();
