@@ -12,6 +12,7 @@ export class DemoResetController {
   @Post('reset')
   @HttpCode(HttpStatus.OK)
   reset() {
+    // No Body/Query/Param — target is compiled-in DEMO_TENANT_SLUG.
     return this.demoResetService.resetDemoTenant();
   }
 }
