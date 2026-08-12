@@ -36,7 +36,7 @@ export default function PlatformDemoPage() {
       setLoadError(null);
     } catch (err) {
       setLoadError(
-        err instanceof Error ? err.message : 'No se pudieron cargar los tenants (requiere PLATFORM_ADMIN).',
+        err instanceof Error ? err.message : 'No se pudieron cargar los tenants de tu membresía.',
       );
       setTenants(null);
     }
@@ -87,13 +87,17 @@ export default function PlatformDemoPage() {
         </div>
         <h1 className="text-3xl font-semibold tracking-tight text-white">WristOS Demo</h1>
         <p className="mt-2 max-w-xl text-sm text-white/55">
-          Cambia entre tenants a los que tienes acceso y reinicia el tenant demo a su estado
-          base. Solo PLATFORM_ADMIN.
+          Cambia entre los tenants en los que ya tienes membresía. Reiniciar el tenant demo
+          a su estado base requiere PLATFORM_ADMIN.
         </p>
       </header>
 
       <section className="mb-10 space-y-3 border-b border-white/10 pb-8">
         <h2 className="text-sm font-medium text-white/70">Cambiar de tenant</h2>
+        <p className="text-sm text-white/55">
+          Solo aparecen tenants donde tu usuario ya tiene una membresía activa. Cambiar de
+          tenant no requiere PLATFORM_ADMIN.
+        </p>
         {loadError && <p className="text-sm text-rose-400">{loadError}</p>}
         {!tenants && !loadError && <p className="text-sm text-white/50">Cargando…</p>}
         {tenants && (
@@ -138,8 +142,8 @@ export default function PlatformDemoPage() {
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-white/70">Reiniciar tenant demo</h2>
         <p className="text-sm text-white/55">
-          Elimina únicamente los datos operativos del tenant demo y vuelve a ejecutar el seed
-          determinístico. No afecta a ningún otro tenant.
+          Solo PLATFORM_ADMIN. Elimina los datos operativos del tenant demo (no usuarios ni
+          membresías) y restaura el dataset canónico. No afecta a ningún otro tenant.
         </p>
         <button
           type="button"
