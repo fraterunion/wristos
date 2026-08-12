@@ -5,6 +5,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { SwitchTenantDto } from './dto/switch-tenant.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -34,5 +35,11 @@ export class AuthController {
       tenantId: user.tenantId,
       role: user.role,
     };
+  }
+
+  @Post('switch-tenant')
+  @UseGuards(JwtAuthGuard)
+  switchTenant(@CurrentUser() user: CurrentUserType, @Body() dto: SwitchTenantDto) {
+    return this.authService.switchTenant(user.userId, dto.tenantId);
   }
 }
