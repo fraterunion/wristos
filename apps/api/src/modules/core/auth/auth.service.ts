@@ -139,6 +139,22 @@ export class AuthService {
     return this.issueTokens(currentUser);
   }
 
+  /** Tenants the caller has an active membership on — powers the tenant switcher UI. */
+  async listMyTenants(userId: string) {
+    const memberships = await this.prisma.tenantUser.findMany({
+      where: { userId, tenant: { status: TenantStatus.ACTIVE } },
+      include: { tenant: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return memberships.map((m) => ({
+      tenantId: m.tenant.id,
+      name: m.tenant.name,
+      slug: m.tenant.slug,
+      isDemo: m.tenant.isDemo,
+    }));
+  }
+
   async logout() {
     // V1 no-op (no token revocation storage yet)
     return { success: true };

@@ -43,4 +43,10 @@ export class AuthController {
   switchTenant(@CurrentUser() user: CurrentUserType, @Body() dto: SwitchTenantDto) {
     return this.authService.switchTenant(user.userId, dto.tenantId);
   }
+
+  @Get('tenants')
+  @UseGuards(JwtAuthGuard)
+  listMyTenants(@CurrentUser() user: CurrentUserType) {
+    return this.authService.listMyTenants(user.userId);
+  }
 }
