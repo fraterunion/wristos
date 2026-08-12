@@ -9,6 +9,7 @@ import {
   AccountEntryStatus,
   AccountEntryType,
   AccountEntrySource,
+  AIAuditEventType,
   AIConversationSurface,
   AssetType,
   CounterpartyType,
@@ -183,6 +184,32 @@ describeDb('demo reset isolation (test database)', () => {
     await prisma.tenant.update({ where: { id: demoId }, data: { isDemo: true } });
     await resetDemoOperationalData(prisma);
 
+    const wcAudit = await prisma.aIAuditEvent.create({
+      data: {
+        tenantId: wcId,
+        actorUserId: userId,
+        type: AIAuditEventType.CONVERSATION_CREATED,
+        payload: { marker: 'wc-isolation-audit' },
+      },
+    });
+    const auditLinkedConversation = await prisma.aIConversation.create({
+      data: {
+        tenantId: demoId,
+        userId,
+        surface: AIConversationSurface.DESKTOP,
+        title: 'audit-linked',
+      },
+    });
+    const demoAudit = await prisma.aIAuditEvent.create({
+      data: {
+        tenantId: demoId,
+        actorUserId: userId,
+        conversationId: auditLinkedConversation.id,
+        type: AIAuditEventType.CONVERSATION_CREATED,
+        payload: { marker: 'demo-isolation-audit' },
+      },
+    });
+
     const wcBefore = await snapshotTenant(prisma, wcId);
     const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const membershipsBefore = await prisma.tenantUser.findMany({
@@ -331,8 +358,25 @@ describeDb('demo reset isolation (test database)', () => {
     expect(await prisma.accountSettlement.count({ where: { tenantId: demoId } })).toBe(0);
     expect(await prisma.storefrontReservation.count({ where: { tenantId: demoId } })).toBe(0);
     expect(await prisma.receivable.count({ where: { tenantId: demoId } })).toBe(0);
-    expect(await prisma.aIConversation.count({ where: { tenantId: demoId } })).toBe(0);
     expect(await prisma.assetHolding.count({ where: { tenantId: demoId } })).toBe(0);
+    expect(
+      await prisma.aIConversation.findFirst({ where: { tenantId: demoId, title: 'runtime' } }),
+    ).toBeNull();
+
+    const survivingDemoAudit = await prisma.aIAuditEvent.findUnique({ where: { id: demoAudit.id } });
+    expect(survivingDemoAudit).toMatchObject({
+      id: demoAudit.id,
+      tenantId: demoId,
+      conversationId: auditLinkedConversation.id,
+    });
+    expect(await prisma.aIConversation.findUnique({ where: { id: auditLinkedConversation.id } })).toBeTruthy();
+
+    const survivingWcAudit = await prisma.aIAuditEvent.findUnique({ where: { id: wcAudit.id } });
+    expect(survivingWcAudit).toMatchObject({
+      id: wcAudit.id,
+      tenantId: wcId,
+    });
+    expect(await prisma.aIAuditEvent.count({ where: { tenantId: wcId, id: wcAudit.id } })).toBe(1);
 
     const afterFirst = await demoFingerprint(prisma, demoId);
     expect(afterFirst).toBe(baseline);
