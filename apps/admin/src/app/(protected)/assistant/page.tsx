@@ -11,19 +11,29 @@ import {
   confirmResultToAssistantResponse,
   createAssistantAction,
   createAssistantMessageAction,
+  createPickerSelectionAction,
   readResumeHint,
   resumeAssistantWorkspace,
   writeResumeHint,
   type AssistantAction,
   type AssistantMessageAction,
+  type PickerSelectionAction,
 } from '@/lib/assistant-api';
 import { useAuthContext } from '@/lib/auth-context';
-import type {
-  AssistantHistoryItem,
-  BusinessActionId,
-  JsonValue,
-  WritePreviewAction,
+import {
+  CONTEXT_ENTITY_TYPES,
+  type AssistantHistoryItem,
+  type BusinessActionId,
+  type ContextEntityType,
+  type JsonValue,
+  type WritePreviewAction,
 } from '@/lib/assistant-types';
+
+function asContextEntityType(value: JsonValue | undefined): ContextEntityType | null {
+  return typeof value === 'string' && (CONTEXT_ENTITY_TYPES as readonly string[]).includes(value)
+    ? (value as ContextEntityType)
+    : null;
+}
 
 /** Manual module fallbacks for recovery links — not shown as homepage actions. */
 const manualModuleHrefs: Partial<Record<WritePreviewAction | BusinessActionId, string>> = {
@@ -94,9 +104,9 @@ export default function AssistantPage() {
   const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<AssistantAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [messagePending, setMessagePending] = useState<AssistantMessageAction | null>(null);
+  const [messagePending, setMessagePending] = useState<AssistantMessageAction | PickerSelectionAction | null>(null);
   const [messagePendingLabel, setMessagePendingLabel] = useState<string | null>(null);
-  const [messageRetryAction, setMessageRetryAction] = useState<AssistantMessageAction | null>(null);
+  const [messageRetryAction, setMessageRetryAction] = useState<AssistantMessageAction | PickerSelectionAction | null>(null);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [confirmingSale, setConfirmingSale] = useState(false);
   const [composerValue, setComposerValue] = useState('');
@@ -198,7 +208,7 @@ export default function AssistantPage() {
   );
 
   const runMessageAction = useCallback(
-    async (action: AssistantMessageAction, label: string) => {
+    async (action: AssistantMessageAction | PickerSelectionAction, label: string) => {
       if (pending || messagePending) return;
       setMessagePending(action);
       setMessagePendingLabel(label);
@@ -292,10 +302,14 @@ export default function AssistantPage() {
       void runMessageAction(action, label);
       return;
     }
+    // Composition dependency CTAs (search/cancel/create-new) and the
+    // CREATE_CLIENT probable-duplicate sentinel aren't real presented
+    // candidates from a resolver — they stay on the free-text pipeline,
+    // which still special-cases their exact copy server-side.
+    const isSentinel = id.startsWith('__');
     const pickerWrite =
       latest?.response.responseType === 'ENTITY_PICKER' &&
-      (id.startsWith('__COMPOSITION_') ||
-        id.startsWith('__CREATE_NEW_CLIENT__') ||
+      (isSentinel ||
         latest.intent === 'REGISTER_PURCHASE' ||
         latest.intent === 'REGISTER_SALE' ||
         latest.intent === 'CREATE_CLIENT' ||
@@ -305,6 +319,22 @@ export default function AssistantPage() {
         latest.intent === 'CREATE_RECEIVABLE' ||
         latest.intent === 'CREATE_PAYABLE');
     if (pickerWrite) {
+      // Real presented-candidate ids resolve as a structured picker EVENT —
+      // never re-enters NLP/Claude/the router; the server already knows
+      // this id from the ENTITY_PICKER it just showed and only fills the
+      // one slot it resolves to, leaving every other Draft slot untouched.
+      const entityType = !isSentinel ? asContextEntityType(latest?.response.payload.entityType) : null;
+      if (entityType) {
+        const action = createPickerSelectionAction({
+          entityType,
+          selectedId: id,
+          selectedLabel: label,
+          conversationId: workspace.conversationId,
+          workspaceId: workspace.workspaceId,
+        });
+        void runMessageAction(action, label);
+        return;
+      }
       const action = createAssistantMessageAction({
         text: label,
         conversationId: workspace.conversationId,
@@ -498,7 +528,13 @@ export default function AssistantPage() {
   const combinedOnRetry = retryAction
     ? () => void runAction(retryAction, 'Reintentando la última solicitud.')
     : messageRetryAction
-      ? () => void runMessageAction(messageRetryAction, messageRetryAction.request.text)
+      ? () =>
+          void runMessageAction(
+            messageRetryAction,
+            'text' in messageRetryAction.request
+              ? messageRetryAction.request.text
+              : messageRetryAction.request.selectedLabel,
+          )
       : undefined;
 
   const hasConversation = history.length > 0 || busy || !!combinedError;

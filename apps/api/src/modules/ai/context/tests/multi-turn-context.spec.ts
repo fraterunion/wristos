@@ -2,16 +2,19 @@ import { ReferenceResolverService } from '../reference-resolver.service';
 import { detectDeterministicReference, isPureReferentialUtterance, looksLikeAccountsContinuation } from '../ordinal-reference';
 import { toProviderConversationContext } from '../provider-context';
 import { stripUntrustedEntityIds, mergeTrustedIds } from '../trusted-entities';
+import { applyDraftPatch } from '../conversation-draft';
 import {
   AssistantWorkingContext,
   CANDIDATE_CONTEXT_TTL_MS,
   applyPresentedCandidates,
   applySelectedEntity,
+  clearConversationDraftFromResolvedContext,
   emptyWorkingContext,
   extractPresentedCandidatesFromEntityList,
   isCandidateContextFresh,
   mergePlanCheckpointIntoResolvedContext,
   readWorkingContext,
+  setConversationDraftInResolvedContext,
   writeWorkingContext,
 } from '../working-context';
 import { buildUserPrompt } from '../../intent-adapter/prompt-policy';
@@ -180,5 +183,117 @@ describe('V1.1 multi-turn working context', () => {
     const { intentReferenceSchema } = require('../reference-schema');
     expect(intentReferenceSchema.safeParse({ kind: 'ORDINAL', ordinal: 1, id: 'abc' }).success).toBe(false);
     expect(intentReferenceSchema.safeParse({ kind: 'ORDINAL', ordinal: 1 }).success).toBe(true);
+  });
+
+  describe('resolveByCandidateId — the picker-selection EVENT path', () => {
+    it('resolves a real presented candidate by id, independent of ordinal/deictic text', () => {
+      const ctx = clientsContext(3);
+      const resolved = resolver.resolveByCandidateId('client-2', ctx);
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2', label: 'José B', entityType: 'CLIENT' });
+    });
+
+    it('an id that was never presented clarifies rather than trusting a client-forged id', () => {
+      const ctx = clientsContext(3);
+      const resolved = resolver.resolveByCandidateId('client-forged', ctx);
+      expect(resolved).toMatchObject({ kind: 'CLARIFY', failureType: 'NOT_FOUND' });
+    });
+
+    it('no context / expired context fail exactly like the ordinal path', () => {
+      expect(resolver.resolveByCandidateId('client-1', null)).toMatchObject({
+        kind: 'CLARIFY',
+        failureType: 'NO_CONTEXT',
+      });
+      const staleAt = new Date(Date.now() - CANDIDATE_CONTEXT_TTL_MS - 1000).toISOString();
+      const stale = clientsContext(2, staleAt);
+      expect(resolver.resolveByCandidateId('client-1', stale)).toMatchObject({
+        kind: 'CLARIFY',
+        failureType: 'EXPIRED',
+      });
+    });
+  });
+
+  describe('resolveByTypedLabel — typed conversational continuation while an ENTITY_PICKER is active', () => {
+    function namedClientsContext(labels: string[], presentedAt = new Date().toISOString()): AssistantWorkingContext {
+      const base = emptyWorkingContext();
+      return applyPresentedCandidates(
+        base,
+        {
+          type: 'CLIENT',
+          candidates: labels.map((label, i) => ({ id: `client-${i + 1}`, label, ordinal: i + 1 })),
+        },
+        { lastIntent: 'REGISTER_SALE', lastResponseType: 'ENTITY_PICKER', now: new Date(presentedAt) },
+      );
+    }
+    const abrahams = () => namedClientsContext(['Abraham Díaz', 'Abraham Valdez', 'Abraham Bosquez']);
+
+    it('a partial typed match ("Valdez") uniquely resolves to the one candidate it substring-matches', () => {
+      const resolved = resolver.resolveByTypedLabel('Valdez', abrahams());
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2', label: 'Abraham Valdez', entityType: 'CLIENT' });
+    });
+
+    it('the exact full label matches identically', () => {
+      const resolved = resolver.resolveByTypedLabel('Abraham Valdez', abrahams());
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2', label: 'Abraham Valdez' });
+    });
+
+    it('is accent/case-insensitive', () => {
+      const resolved = resolver.resolveByTypedLabel('VALDEZ', abrahams());
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2' });
+    });
+
+    it('a shared substring across multiple candidates ("Abraham") is ambiguous, never a guess', () => {
+      const resolved = resolver.resolveByTypedLabel('Abraham', abrahams());
+      expect(resolved).toMatchObject({ kind: 'CLARIFY', failureType: 'AMBIGUOUS' });
+    });
+
+    it('an exact match is preferred over a broader substring match when both exist', () => {
+      const ctx = namedClientsContext(['Valdez', 'Abraham Valdez']);
+      const resolved = resolver.resolveByTypedLabel('Valdez', ctx);
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-1', label: 'Valdez' });
+    });
+
+    it('text matching no candidate returns NOT_FOUND — caller falls through to normal NLP, no error shown', () => {
+      const resolved = resolver.resolveByTypedLabel('Roberto', abrahams());
+      expect(resolved).toMatchObject({ kind: 'CLARIFY', failureType: 'NOT_FOUND' });
+    });
+
+    it('no context / expired context fail exactly like the ordinal and candidateId paths', () => {
+      expect(resolver.resolveByTypedLabel('Valdez', null)).toMatchObject({ kind: 'CLARIFY', failureType: 'NO_CONTEXT' });
+      const staleAt = new Date(Date.now() - CANDIDATE_CONTEXT_TTL_MS - 1000).toISOString();
+      const stale = namedClientsContext(['Abraham Valdez'], staleAt);
+      expect(resolver.resolveByTypedLabel('Valdez', stale)).toMatchObject({ kind: 'CLARIFY', failureType: 'EXPIRED' });
+    });
+  });
+
+  describe('ConversationDraft shell persistence — plain set/clear; patch semantics live in conversation-draft.spec.ts', () => {
+    const sampleDraft = applyDraftPatch(null, { watch: { raw: 'Bruce Wayne' } }, 'REGISTER_SALE');
+
+    it('sets the draft in an empty shell', () => {
+      const shell = setConversationDraftInResolvedContext({}, sampleDraft);
+      expect(shell.conversationDraft).toEqual(sampleDraft);
+    });
+
+    it('overwrites whatever draft was there before — the caller (applyDraftPatch) already produced the complete next draft', () => {
+      const replacement = applyDraftPatch(sampleDraft, { watch: { raw: 'Robin' } }, 'REGISTER_SALE');
+      const first = setConversationDraftInResolvedContext({}, sampleDraft);
+      const second = setConversationDraftInResolvedContext(first, replacement);
+      expect(second.conversationDraft).toEqual(replacement);
+    });
+
+    it('preserves other resolvedContext shell keys (entityVersions/planFingerprint) untouched', () => {
+      const shell = setConversationDraftInResolvedContext(
+        { entityVersions: { client: 1 }, planFingerprint: 'fp-1' },
+        sampleDraft,
+      );
+      expect(shell.entityVersions).toEqual({ client: 1 });
+      expect(shell.planFingerprint).toBe('fp-1');
+    });
+
+    it('clearing removes the draft but nothing else', () => {
+      const withDraft = setConversationDraftInResolvedContext({ entityVersions: { client: 1 } }, sampleDraft);
+      const cleared = clearConversationDraftFromResolvedContext(withDraft);
+      expect(cleared.conversationDraft).toBeUndefined();
+      expect(cleared.entityVersions).toEqual({ client: 1 });
+    });
   });
 });

@@ -5,7 +5,9 @@ import type {
   AssistantResumeHint,
   AssistantWorkspace,
   BusinessActionId,
+  ContextEntityType,
   JsonValue,
+  PickerSelectionRequest,
   StructuredAssistantRequest,
   StructuredAssistantResponse,
 } from '@/lib/assistant-types';
@@ -146,6 +148,61 @@ export function createAssistantMessageAction(input: {
     try {
       return await apiPost<AssistantMessageResult, AssistantMessageRequest>(
         '/ai/assistant/message',
+        request,
+        { authenticated: true },
+      );
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new AssistantMessageRequestError(
+          error.status,
+          statusMessages[error.status] ?? 'El asistente no está disponible en este momento. No se realizó ningún cambio.',
+          isAssistantMessageResult(error.payload) ? error.payload : undefined,
+        );
+      }
+      throw error;
+    }
+  };
+  return { clientRequestId, request, execute, retry: execute };
+}
+
+export interface PickerSelectionAction {
+  readonly clientRequestId: string;
+  readonly request: PickerSelectionRequest;
+  execute(): Promise<AssistantMessageResult>;
+  retry(): Promise<AssistantMessageResult>;
+}
+
+/**
+ * Structured picker-selection EVENT — POST /ai/assistant/picker-selection.
+ * Never re-encodes the selected candidate's label as free text: the id came
+ * straight from the server's own last ENTITY_PICKER response, so the server
+ * resolves it against its own durably-stored candidate list and resumes the
+ * write in progress without ever re-entering NLP/Claude/the router. Returns
+ * the identical AssistantMessageResult shape as the free-text endpoint, so
+ * callers (runMessageAction) don't need to know which path produced it.
+ */
+export function createPickerSelectionAction(input: {
+  entityType: ContextEntityType;
+  selectedId: string;
+  selectedLabel: string;
+  conversationId?: string;
+  workspaceId?: string;
+}): PickerSelectionAction {
+  const clientRequestId = newClientRequestId();
+  const request: PickerSelectionRequest = {
+    ...input,
+    clientRequestId,
+    surface: 'MOBILE',
+    locale: typeof navigator === 'undefined' ? 'es' : navigator.language,
+    timezone:
+      typeof Intl === 'undefined'
+        ? 'UTC'
+        : Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  const execute = async () => {
+    try {
+      return await apiPost<AssistantMessageResult, PickerSelectionRequest>(
+        '/ai/assistant/picker-selection',
         request,
         { authenticated: true },
       );

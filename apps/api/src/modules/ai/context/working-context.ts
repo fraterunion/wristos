@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { KnownIntent, KNOWN_INTENTS } from '../intent-adapter/intent-schema';
+import { ConversationDraft } from './conversation-draft';
 import { CONTEXT_ENTITY_TYPES, ContextEntityType } from './entity-types';
 
 export { CONTEXT_ENTITY_TYPES, type ContextEntityType } from './entity-types';
@@ -66,6 +67,19 @@ export interface ResolvedContextShell {
   entityVersions?: Record<string, string | number>;
   planFingerprint?: string;
   workingContext?: AssistantWorkingContext;
+  /**
+   * The ConversationDraft — the single source of truth for the write intent
+   * currently in progress (see conversation-draft.ts). Every message,
+   * picker, and correction PATCHes this same document; it is never rebuilt.
+   * Distinct from `workingContext.lastResolvedEntities`, which only ever
+   * holds trusted `*Id` fields for ordinal/deictic continuation — this
+   * holds the FULL typed document (raw queries, resolved ids, amount,
+   * currency, payment, …) so an already-known field is never re-asked.
+   * Written by StructuredAssistantPersistence.complete() and
+   * WorkingContextService.persistClarificationTurn(); read by
+   * readConversationDraft().
+   */
+  conversationDraft?: ConversationDraft;
   [key: string]: unknown;
 }
 
@@ -86,6 +100,12 @@ export function readWorkingContext(rawResolvedContext: unknown): AssistantWorkin
   if (!shell.workingContext) return null;
   const parsed = assistantWorkingContextSchema.safeParse(shell.workingContext);
   return parsed.success ? parsed.data : null;
+}
+
+/** The ConversationDraft — the single source of truth for the write intent in progress. Null if none is active. */
+export function readConversationDraft(rawResolvedContext: unknown): ConversationDraft | null {
+  const shell = parseResolvedContextShell(rawResolvedContext);
+  return shell.conversationDraft ?? null;
 }
 
 export function writeWorkingContext(
@@ -110,6 +130,37 @@ export function mergePlanCheckpointIntoResolvedContext(
     planFingerprint: planFields.planFingerprint,
     workingContext: shell.workingContext,
   };
+}
+
+/**
+ * Persists an already-patched ConversationDraft — the caller (StructuredAssistantPersistence.complete(),
+ * WorkingContextService.persistClarificationTurn()) always builds `draft`
+ * via conversation-draft.ts's applyDraftPatch() first, so this is a plain
+ * write, not a merge: the patch semantics (one field changes, everything
+ * else survives; a capability change starts a fresh Draft) already happened
+ * before this function ever runs.
+ */
+export function setConversationDraftInResolvedContext(
+  rawResolvedContext: unknown,
+  draft: ConversationDraft,
+): ResolvedContextShell {
+  const shell = parseResolvedContextShell(rawResolvedContext);
+  return {
+    ...shell,
+    conversationDraft: draft,
+  };
+}
+
+/**
+ * Clears the Draft once a write intent reaches a truly terminal outcome —
+ * successful execution or a hard error. Deliberately NOT triggered by
+ * ACTION_PREVIEW_CARD: the Draft must survive a shown preview so "No. Era
+ * Batman." can still correct it before confirmation.
+ */
+export function clearConversationDraftFromResolvedContext(rawResolvedContext: unknown): ResolvedContextShell {
+  const shell = parseResolvedContextShell(rawResolvedContext);
+  const { conversationDraft: _drop, ...rest } = shell;
+  return rest;
 }
 
 export function isCandidateContextFresh(

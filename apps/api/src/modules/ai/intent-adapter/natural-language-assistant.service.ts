@@ -1,20 +1,38 @@
 import { ConflictException, Injectable, Optional } from '@nestjs/common';
+import { AIRequest } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AIRequestService } from '../assistant/ai-request.service';
 import { StructuredAssistantService } from '../assistant/structured-assistant.service';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from '../assistant/structured-assistant.types';
 import { toProviderConversationContext } from '../context/provider-context';
 import { detectDeterministicReference, isPureReferentialUtterance, looksLikeAccountsContinuation } from '../context/ordinal-reference';
-import { ReferenceResolverService, trustedIdsFromResolution } from '../context/reference-resolver.service';
+import {
+  ReferenceResolutionResult,
+  ReferenceResolverService,
+  trustedIdsFromResolution,
+} from '../context/reference-resolver.service';
 import { IntentReference } from '../context/reference-schema';
 import { mergeTrustedIds, stripUntrustedEntityIds } from '../context/trusted-entities';
-import { WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
+import { AssistantWorkingContext, WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
 import { WorkingContextService } from '../context/working-context.service';
+import { applyDraftPatch, ConversationDraft, draftToEntities, emptyDraft } from '../context/conversation-draft';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
+import { PickerSelectionDto } from '../dto/picker-selection.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
-import { ClarificationFieldLockService } from '../clarification/clarification-field-lock.service';
+import {
+  ClarificationFieldLockService,
+  FieldLockBound,
+  FieldLockClarify,
+  FieldLockPicker,
+} from '../clarification/clarification-field-lock.service';
+import {
+  detectCorrectedAccount,
+  detectCorrectedCurrency,
+  detectDraftCorrectionLanguage,
+  parseCorrectedAmount,
+} from './draft-correction-language';
 import {
   detectHighConfidenceTopicChange,
   looksLikeClarificationCancel,
@@ -231,17 +249,7 @@ export class NaturalLanguageAssistantService {
         // Fall through to full NLP with cleared pending context.
       } else {
         // 3) Field lock — resolve the pending field before unrestricted NLP.
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-        const priorEntities = await this.loadPriorWriteEntities(
-          actor.tenantId,
-          dto.conversationId,
-          request.id,
-          pendingIntent,
-        );
-        const lockedDraft: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-        };
+        const lockedDraft = this.currentDraftEntities(loaded, pendingIntent);
 
         const lock = await this.clarificationFieldLock.resolve({
           tenantId: actor.tenantId,
@@ -251,172 +259,72 @@ export class NaturalLanguageAssistantService {
           draftEntities: lockedDraft,
         });
 
-        if (lock.kind === 'BOUND') {
-          await this.aiRequests.recordInterpretation(request.id, {
-            intent: pendingIntent,
-            entities: lock.entities,
-            candidateHash: `clarification-lock:${pendingField}`,
-          });
-          telem(this.telemetry, {
-            event: 'ClarificationAnswered',
-            tenantId: actor.tenantId,
-            conversationId: dto.conversationId,
-            requestId: request.id,
-            capability: pendingIntent,
-            clarificationReason: pendingField,
-            answered: true,
-          });
-          const continued = await this.assistant.executeClaimed(
-            actor,
-            {
-              intent: pendingIntent as BusinessActionId,
-              entities: lock.entities,
-              surface: dto.surface ?? 'DESKTOP',
-              clientRequestId: dto.clientRequestId,
-              conversationId: dto.conversationId,
-              workspaceId: dto.workspaceId,
-              userDisplayText: dto.text,
-            },
-            request,
-          );
-          return {
-            resolvedIntent: pendingIntent,
-            response: continued,
-            resolvedEntities: lock.entities,
-          };
-        }
-
-        if (lock.kind === 'PICKER') {
-          let response: StructuredAssistantResponse = {
-            requestId: request.id,
-            conversationId: dto.conversationId ?? '',
-            workspaceId: dto.workspaceId ?? '',
-            interactionState: 'NEEDS_DISAMBIGUATION',
-            responseType: 'ENTITY_PICKER',
-            payload: {
-              message: lock.message,
-              entityType: lock.entityType,
-              clarificationField: pendingField,
-              data: { items: lock.items },
-              unchanged: 'No se ejecutó ninguna acción.',
-              nextAction: 'Elige con “el primero”, “el segundo”, o nómbralo.',
-            },
-            warnings: [],
-            suggestedActions: [],
-            traceId,
-            createdAt: new Date().toISOString(),
-          };
-          try {
-            const persisted = await this.workingContext.persistEntityPickerTurn({
-              tenantId: actor.tenantId,
-              userId: actor.userId,
-              surface: dto.surface ?? 'DESKTOP',
-              conversationId: dto.conversationId,
-              workspaceId: dto.workspaceId,
-              requestId: request.id,
-              intent: pendingIntent,
-              entities: lock.entities,
-              response: {
-                interactionState: response.interactionState,
-                responseType: response.responseType,
-                payload: response.payload as Record<string, unknown>,
-              },
-            });
-            response = {
-              ...response,
-              conversationId: persisted.conversationId,
-              workspaceId: persisted.workspaceId,
-            };
-          } catch {
-            // Picker still returned; ordinal may need a fresh ask if persist races.
-          }
-          await this.aiRequests.recordInterpretation(request.id, {
-            intent: pendingIntent,
-            entities: lock.entities,
-            candidateHash: `clarification-picker:${pendingField}`,
-          });
-          await this.aiRequests.failUnattached(request, actor, pendingIntent, response, 'FIELD_LOCK_PICKER');
-          telem(this.telemetry, {
-            event: 'ClarificationShown',
-            tenantId: actor.tenantId,
-            conversationId: dto.conversationId,
-            requestId: request.id,
-            capability: pendingIntent,
-            clarificationType: 'ENTITY_AMBIGUITY',
-            clarificationReason: pendingField,
-            entityPickerUsed: true,
-            candidateCount: lock.candidates.length,
-            multipleCandidates: true,
-          });
-          return { resolvedIntent: pendingIntent, response, resolvedEntities: lock.entities };
-        }
-
-        if (lock.kind === 'CLARIFY') {
-          // Stay on pending WATCH with contextual copy — never CLIENT picker / unrestricted NLP.
-          const clarifyPayload = {
-            message: lock.message,
-            clarificationField: pendingField,
-            missing: [{ entity: pendingField, question: lock.message }],
-            unchanged: 'No se ejecutó ninguna acción.',
-            nextAction: 'Responde con el reloj o una referencia más precisa.',
-          };
-          let response: StructuredAssistantResponse = {
-            requestId: request.id,
-            conversationId: dto.conversationId ?? '',
-            workspaceId: dto.workspaceId ?? '',
-            interactionState: 'NEEDS_INPUT',
-            responseType: 'MISSING_FIELDS_CARD',
-            payload: clarifyPayload,
-            warnings: [],
-            suggestedActions: [],
-            traceId,
-            createdAt: new Date().toISOString(),
-          };
-          try {
-            const persisted = await this.workingContext.persistClarificationTurn({
-              tenantId: actor.tenantId,
-              userId: actor.userId,
-              surface: dto.surface ?? 'DESKTOP',
-              conversationId: dto.conversationId,
-              workspaceId: dto.workspaceId,
-              requestId: request.id,
-              intent: pendingIntent,
-              entities: lock.entities,
-              mode: 'MISSING_FIELDS',
-              response: {
-                interactionState: response.interactionState,
-                responseType: response.responseType,
-                payload: response.payload as Record<string, unknown>,
-              },
-            });
-            response = {
-              ...response,
-              conversationId: persisted.conversationId,
-              workspaceId: persisted.workspaceId,
-            };
-          } catch {
-            // Clarification still returned.
-          }
-          await this.aiRequests.recordInterpretation(request.id, {
-            intent: pendingIntent,
-            entities: lock.entities,
-            candidateHash: `clarification-clarify:${pendingField}`,
-          });
-          await this.aiRequests.failUnattached(request, actor, pendingIntent, response, 'FIELD_LOCK_CLARIFY');
-          telem(this.telemetry, {
-            event: 'ClarificationShown',
-            tenantId: actor.tenantId,
-            conversationId: dto.conversationId,
-            requestId: request.id,
-            capability: pendingIntent,
-            clarificationType: 'MISSING_FIELD',
-            clarificationReason: pendingField,
-            zeroCandidates: true,
-          });
-          return { resolvedIntent: pendingIntent, response, resolvedEntities: lock.entities };
+        if (lock.kind === 'BOUND' || lock.kind === 'PICKER' || lock.kind === 'CLARIFY') {
+          return this.applyFieldLockResult({ actor, dto, request, intent: pendingIntent, pendingField, lock });
         }
 
         // 4) lock.kind === 'NO_MATCH' → fall through to unrestricted NLP.
+      }
+    }
+
+    // Typed picker continuation: while an ENTITY_PICKER is fresh, a typed
+    // candidate label ("Valdez" / "Abraham Valdez") resolves exactly like
+    // clicking the matching button — no NLP/router/Claude involved. Only
+    // engages when the picker is still open and the text uniquely matches
+    // one presented candidate; ambiguous asks again, no-match/expired falls
+    // through to the rest of this method (eventually unrestricted NLP) —
+    // outside an active picker this block never even runs.
+    if (!pendingField && loaded.working?.lastPresentedCandidates && !deterministicRef) {
+      const typedResolution = this.referenceResolver.resolveByTypedLabel(normalizedText, loaded.working);
+      if (typedResolution.kind === 'RESOLVED') {
+        return this.continueFromResolvedReference({
+          actor,
+          dto,
+          request,
+          responseCtx,
+          loaded,
+          resolution: typedResolution,
+          telemetryMeta: { ordinalUsed: false, deicticUsed: false },
+        });
+      }
+      if (typedResolution.kind === 'CLARIFY' && typedResolution.failureType === 'AMBIGUOUS') {
+        telem(this.telemetry, {
+          event: 'ClarificationShown',
+          tenantId: actor.tenantId,
+          conversationId: dto.conversationId,
+          requestId: request.id,
+          clarificationType: mapClarificationType(typedResolution.failureType),
+          clarificationReason: typedResolution.failureType,
+          entityPickerUsed: true,
+        });
+        const response = buildReferenceClarificationResponse(typedResolution.message, responseCtx, typedResolution.failureType);
+        await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, typedResolution.failureType);
+        return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+      }
+      // NOT_FOUND / EXPIRED / NO_CONTEXT — fall through; this typed text may
+      // simply be an unrelated message, not a picker selection at all.
+    }
+
+    // Draft correction: "No. Era Batman." / "No. Fueron 480." / "No. Fue por
+    // Bancos." / "No. Era Abraham Bosquez." mutate exactly one slot of the
+    // in-progress Draft and resume the SAME planner/resolver pipeline.
+    // Never re-runs NLP for anything else already known.
+    if (!pendingField && pendingIntent) {
+      const correctionMatch = detectDraftCorrectionLanguage(normalizedText, pendingIntent);
+      if (correctionMatch) {
+        const applied = await this.applyDraftCorrection({
+          actor,
+          dto,
+          request,
+          responseCtx,
+          loaded,
+          intent: pendingIntent,
+          match: correctionMatch,
+        });
+        if (applied) return applied;
+        // Neither interpretation resolved (e.g. "watch-or-customer" matched
+        // neither inventory nor CRM) — fall back safely to unrestricted NLP
+        // rather than trapping the user on a guess that couldn't be verified.
       }
     }
 
@@ -564,11 +472,6 @@ export class NaturalLanguageAssistantService {
     // Pure ordinal/deictic selection — no LLM, no fabricated IDs.
     if (isPureReferentialUtterance(normalizedText) && deterministicRef) {
       const resolution = this.referenceResolver.resolve(deterministicRef, loaded.working);
-      const audit = this.workingContext.buildAuditFromResolution(
-        resolution,
-        loaded.version ?? 0,
-        WORKING_CONTEXT_SCHEMA_VERSION,
-      );
       if (resolution.kind === 'CLARIFY') {
         telem(this.telemetry, {
           event: 'ClarificationShown',
@@ -586,343 +489,18 @@ export class NaturalLanguageAssistantService {
         await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolution.failureType);
         return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
       }
-      if (dto.workspaceId && loaded.version !== null) {
-        try {
-          await this.workingContext.persistSelection(
-            actor.tenantId,
-            actor.userId,
-            dto.workspaceId,
-            loaded.version,
-            { type: resolution.entityType, id: resolution.id, label: resolution.label },
-            audit,
-          );
-        } catch (error) {
-          if (error instanceof ConflictException) {
-            const response = buildReferenceClarificationResponse(
-              'El estado cambió. Necesito que elijas nuevamente.',
-              responseCtx,
-              'STALE_CONTEXT',
-            );
-            await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'STALE_CONTEXT');
-            return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
-          }
-          throw error;
-        }
-      }
-      telem(this.telemetry, {
-        event: 'ClarificationAnswered',
-        tenantId: actor.tenantId,
-        conversationId: dto.conversationId,
-        requestId: request.id,
-        answered: true,
-        ordinalUsed: deterministicRef.kind === 'ORDINAL',
-        deicticUsed: deterministicRef.kind !== 'ORDINAL',
-        uniqueResolution: true,
-        candidateCount: 1,
+      return this.continueFromResolvedReference({
+        actor,
+        dto,
+        request,
+        responseCtx,
+        loaded,
+        resolution,
+        telemetryMeta: {
+          ordinalUsed: deterministicRef.kind === 'ORDINAL',
+          deicticUsed: deterministicRef.kind !== 'ORDINAL',
+        },
       });
-
-      // Field-lock WATCH picker continuation for sale/purchase drafts.
-      if (
-        (loaded.working?.lastIntent === 'REGISTER_SALE' ||
-          loaded.working?.lastIntent === 'REGISTER_PURCHASE') &&
-        resolution.entityType === 'WATCH'
-      ) {
-        const writeIntent = loaded.working.lastIntent;
-        const priorEntities = await this.loadPriorWriteEntities(
-          actor.tenantId,
-          dto.conversationId,
-          request.id,
-          writeIntent,
-        );
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-        const writeEntities: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-          watchId: resolution.id,
-          watchLabel: resolution.label,
-        };
-        delete (writeEntities as Record<string, unknown>).customerQuery;
-        delete (writeEntities as Record<string, unknown>).clientQuery;
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: writeIntent,
-          entities: writeEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: writeIntent,
-            entities: writeEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: writeIntent,
-          response: continued,
-          resolvedEntities: writeEntities,
-        };
-      }
-
-      // Field-lock CLIENT picker continuation for sale drafts (not composition CTAs).
-      if (
-        loaded.working?.lastIntent === 'REGISTER_SALE' &&
-        resolution.entityType === 'CLIENT' &&
-        !resolution.id.startsWith('__')
-      ) {
-        const priorEntities = await this.loadPriorWriteEntities(
-          actor.tenantId,
-          dto.conversationId,
-          request.id,
-          'REGISTER_SALE',
-        );
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-        const saleEntities: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-          customerId: resolution.id,
-          clientId: resolution.id,
-          customerName: resolution.label,
-        };
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'REGISTER_SALE',
-          entities: saleEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: 'REGISTER_SALE',
-            entities: saleEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: 'REGISTER_SALE',
-          response: continued,
-          resolvedEntities: saleEntities,
-        };
-      }
-
-      // UPDATE_CLIENT client picker: continue with trusted id + prior mutation entities.
-      if (
-        loaded.working?.lastIntent === 'UPDATE_CLIENT' &&
-        resolution.entityType === 'CLIENT'
-      ) {
-        const prior = dto.conversationId
-          ? await this.prisma.aIRequest.findFirst({
-              where: {
-                tenantId: actor.tenantId,
-                conversationId: dto.conversationId,
-                id: { not: request.id },
-                requestPayload: {
-                  path: ['resolvedIntent'],
-                  equals: 'UPDATE_CLIENT',
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-              select: { requestPayload: true },
-            })
-          : null;
-        const priorPayload =
-          prior?.requestPayload && typeof prior.requestPayload === 'object'
-            ? (prior.requestPayload as Record<string, unknown>)
-            : null;
-        const priorEntities =
-          priorPayload?.resolvedEntities &&
-          typeof priorPayload.resolvedEntities === 'object' &&
-          !Array.isArray(priorPayload.resolvedEntities)
-            ? Object.fromEntries(
-                Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
-                  ([, v]) =>
-                    typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
-                ),
-              )
-            : {};
-        const updateEntities: Record<string, string | number | boolean> = {
-          ...priorEntities,
-          selectedClientId: resolution.id,
-          clientId: resolution.id,
-          clientLabel: resolution.label,
-        };
-        delete (updateEntities as Record<string, unknown>).clientQuery;
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'UPDATE_CLIENT',
-          entities: updateEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: 'UPDATE_CLIENT',
-            entities: updateEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: 'UPDATE_CLIENT',
-          response: continued,
-          resolvedEntities: updateEntities,
-        };
-      }
-
-      // Capital contribution/distribution investor picker: continue with trusted id + prior entities.
-      if (
-        (loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
-          loaded.working?.lastIntent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
-        resolution.entityType === 'INVESTOR'
-      ) {
-        const capitalIntent = loaded.working.lastIntent;
-        const prior = dto.conversationId
-          ? await this.prisma.aIRequest.findFirst({
-              where: {
-                tenantId: actor.tenantId,
-                conversationId: dto.conversationId,
-                id: { not: request.id },
-                requestPayload: {
-                  path: ['resolvedIntent'],
-                  equals: capitalIntent,
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-              select: { requestPayload: true },
-            })
-          : null;
-        const priorPayload =
-          prior?.requestPayload && typeof prior.requestPayload === 'object'
-            ? (prior.requestPayload as Record<string, unknown>)
-            : null;
-        const priorEntities =
-          priorPayload?.resolvedEntities &&
-          typeof priorPayload.resolvedEntities === 'object' &&
-          !Array.isArray(priorPayload.resolvedEntities)
-            ? Object.fromEntries(
-                Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
-                  ([, v]) =>
-                    typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
-                ),
-              )
-            : {};
-        const capitalEntities: Record<string, string | number | boolean> = {
-          ...priorEntities,
-          selectedInvestorId: resolution.id,
-          investorId: resolution.id,
-          investorLabel: resolution.label,
-        };
-        delete (capitalEntities as Record<string, unknown>).investorQuery;
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: capitalIntent,
-          entities: capitalEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: capitalIntent,
-            entities: capitalEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: capitalIntent,
-          response: continued,
-          resolvedEntities: capitalEntities,
-        };
-      }
-
-      // Controlled composition V1: dependency CTAs (create / search / cancel) or reuse existing Client.
-      if (dto.workspaceId && resolution.entityType === 'CLIENT') {
-        const compositionHandled = await this.handleCompositionPickerSelection({
-          actor,
-          dto,
-          request,
-          responseCtx,
-          resolutionId: resolution.id,
-          resolutionLabel: resolution.label,
-          workspaceVersion: loaded.version,
-        });
-        if (compositionHandled) return compositionHandled;
-      }
-
-      // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
-      if (
-        loaded.working?.lastIntent === 'CREATE_CLIENT' &&
-        resolution.entityType === 'CLIENT'
-      ) {
-        const createNew =
-          resolution.id === '__CREATE_NEW_CLIENT__' ||
-          resolution.id.startsWith('__CREATE_NEW_CLIENT__|');
-        const pendingName = createNew
-          ? resolution.id.includes('|')
-            ? resolution.id.slice('__CREATE_NEW_CLIENT__|'.length)
-            : undefined
-          : undefined;
-        const createEntities: Record<string, string | boolean> = createNew
-          ? {
-              allowProbableDuplicate: true,
-              ...(pendingName ? { name: pendingName } : {}),
-            }
-          : {
-              clientId: resolution.id,
-              useExistingClientId: resolution.id,
-              name: resolution.label,
-            };
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'CREATE_CLIENT',
-          entities: createEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: 'CREATE_CLIENT',
-            entities: createEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: 'CREATE_CLIENT',
-          response: continued,
-          resolvedEntities: createEntities,
-        };
-      }
-
-      const response = buildEntitySelectedResponse(resolution.label, responseCtx);
-      await this.aiRequests.recordInterpretation(request.id, {
-        intent: 'UNKNOWN',
-        entities: trustedIdsFromResolution(resolution),
-        candidateHash: resolution.resolvedEntityHash,
-      });
-      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'ENTITY_SELECTED');
-      return {
-        resolvedIntent: 'UNKNOWN',
-        response,
-        resolvedEntities: trustedIdsFromResolution(resolution),
-      };
     }
 
     // Deterministic accounts continuation: "Ahora sus cuentas."
@@ -1280,40 +858,8 @@ export class NaturalLanguageAssistantService {
       WRITE_CLARIFICATION_INTENTS.has(pendingIntent) &&
       intent === pendingIntent
     ) {
-      const prior = dto.conversationId
-        ? await this.prisma.aIRequest.findFirst({
-            where: {
-              tenantId: actor.tenantId,
-              conversationId: dto.conversationId,
-              id: { not: request.id },
-              requestPayload: {
-                path: ['resolvedIntent'],
-                equals: pendingIntent,
-              },
-            },
-            orderBy: { createdAt: 'desc' },
-            select: { requestPayload: true },
-          })
-        : null;
-      const priorPayload =
-        prior?.requestPayload && typeof prior.requestPayload === 'object'
-          ? (prior.requestPayload as Record<string, unknown>)
-          : null;
-      const priorEntities = Object.fromEntries(
-        (
-          priorPayload?.resolvedEntities &&
-          typeof priorPayload.resolvedEntities === 'object' &&
-          !Array.isArray(priorPayload.resolvedEntities)
-            ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
-            : []
-        ).filter(
-          (entry): entry is [string, string | number | boolean] =>
-            typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
-        ),
-      );
       entities = {
-        ...this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw),
-        ...priorEntities,
+        ...this.currentDraftEntities(loaded, pendingIntent),
         ...entities,
       };
       telem(this.telemetry, {
@@ -1341,42 +887,760 @@ export class NaturalLanguageAssistantService {
     return { resolvedIntent: intent, response, resolvedEntities: entities };
   }
 
-  private async loadPriorWriteEntities(
-    tenantId: string,
-    conversationId: string | undefined,
-    requestId: string,
+  /**
+   * The ConversationDraft, flattened to the entities shape the planner/
+   * entity resolvers/bindings have always consumed. The ONE place any
+   * continuation/correction handler reads "what's already known" — no more
+   * dual-mechanism reconstruction (this used to also re-scan AIRequest
+   * history via loadPriorWriteEntities as a backstop, from before the Draft
+   * was reliably persisted through every response type; that backstop is
+   * gone now that StructuredAssistantPersistence.complete() persists the
+   * Draft on every ENTITY_PICKER/MISSING_FIELDS_CARD/ACTION_PREVIEW_CARD).
+   */
+  private currentDraftEntities(
+    loaded: { resolvedContextRaw: unknown },
     intent: string,
-  ): Promise<Record<string, string | number | boolean>> {
-    if (!conversationId) return {};
-    const prior = await this.prisma.aIRequest.findFirst({
-      where: {
-        tenantId,
-        conversationId,
-        id: { not: requestId },
-        requestPayload: {
-          path: ['resolvedIntent'],
-          equals: intent,
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { requestPayload: true },
+  ): Record<string, string | number | boolean> {
+    return draftToEntities(this.workingContext.readConversationDraft(loaded.resolvedContextRaw) ?? emptyDraft(intent));
+  }
+
+  /**
+   * A picker click is an EVENT, not a chat message: the frontend already
+   * knows the selected candidate's trusted id (it came straight from the
+   * server's own last ENTITY_PICKER response) and posts it directly here
+   * instead of re-encoding the candidate's label as free text through
+   * handleMessage(). This method never calls intentAdapter.interpret() (no
+   * Claude, no OperationalIntentRouter) — it only resolves the id against
+   * the durably-stored candidate list and hands off to the exact same
+   * continuation logic ordinal/deictic replies ("el primero") already use,
+   * which itself only merges the one resolved slot into the surviving
+   * Draft and resumes the planner.
+   */
+  async handlePickerSelection(
+    actor: AssistantActorContext,
+    dto: PickerSelectionDto,
+  ): Promise<NaturalLanguageAssistantResult> {
+    const claim = await this.aiRequests.claimText(actor, {
+      clientRequestId: dto.clientRequestId,
+      text: dto.selectedLabel,
+      surface: dto.surface,
+      locale: dto.locale,
+      timezone: dto.timezone,
+      conversationId: dto.conversationId,
+      workspaceId: dto.workspaceId,
     });
-    const priorPayload =
-      prior?.requestPayload && typeof prior.requestPayload === 'object'
-        ? (prior.requestPayload as Record<string, unknown>)
+    if (claim.kind === 'REPLAY') {
+      await this.aiRequests.auditReplay(actor, claim.request);
+      const { intent } = this.aiRequests.readInterpretation(claim.request);
+      return {
+        resolvedIntent: (intent as IntentCandidateIntent | null) ?? 'UNKNOWN',
+        response: claim.response,
+        resolvedEntities: {},
+      };
+    }
+    if (claim.kind === 'IN_PROGRESS') {
+      return { resolvedIntent: 'UNKNOWN', response: claim.response, resolvedEntities: {} };
+    }
+
+    const request = claim.request;
+    const responseCtx = { conversationId: dto.conversationId, workspaceId: dto.workspaceId, traceId: request.traceId };
+    const loaded = await this.workingContext.load(actor.tenantId, actor.userId, dto.workspaceId);
+
+    const resolution = this.referenceResolver.resolveByCandidateId(dto.selectedId, loaded.working);
+    if (resolution.kind === 'CLARIFY') {
+      telem(this.telemetry, {
+        event: 'ClarificationShown',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        clarificationType: mapClarificationType(resolution.failureType),
+        clarificationReason: resolution.failureType,
+        entityPickerUsed: true,
+        zeroCandidates: true,
+      });
+      const response = buildReferenceClarificationResponse(resolution.message, responseCtx, resolution.failureType);
+      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolution.failureType);
+      return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+    }
+    if (resolution.entityType !== dto.entityType) {
+      const response = buildReferenceClarificationResponse(
+        'Necesito que elijas nuevamente. El tipo de opción no coincide.',
+        responseCtx,
+        'TYPE_MISMATCH',
+      );
+      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'TYPE_MISMATCH');
+      return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+    }
+
+    return this.continueFromResolvedReference({
+      actor,
+      dto,
+      request,
+      responseCtx,
+      loaded,
+      resolution,
+      telemetryMeta: { ordinalUsed: false, deicticUsed: false },
+    });
+  }
+
+  /**
+   * Resumes a pending write from an already-RESOLVED entity reference —
+   * shared by ordinal/deictic continuation ("el primero") and the
+   * structured picker-selection EVENT (handlePickerSelection()). Never
+   * re-runs NLP: it's a PATCH — this is the picker equivalent of
+   * applyDraftCorrection() — reading the current ConversationDraft, patching
+   * in exactly the one resolved field, and handing the flattened result to
+   * the SAME planner/resolver pipeline any fresh write request goes
+   * through. Every other field survives untouched.
+   */
+  private async continueFromResolvedReference(args: {
+    actor: AssistantActorContext;
+    dto: AssistantMessageDto | PickerSelectionDto;
+    request: AIRequest;
+    responseCtx: { conversationId?: string; workspaceId?: string; traceId: string };
+    loaded: { working: AssistantWorkingContext | null; version: number | null; resolvedContextRaw: unknown };
+    resolution: Extract<ReferenceResolutionResult, { kind: 'RESOLVED' }>;
+    telemetryMeta: { ordinalUsed: boolean; deicticUsed: boolean };
+  }): Promise<NaturalLanguageAssistantResult> {
+    const { actor, dto, request, responseCtx, loaded, resolution, telemetryMeta } = args;
+    const userDisplayText = 'text' in dto ? dto.text : dto.selectedLabel;
+    const audit = this.workingContext.buildAuditFromResolution(resolution, loaded.version ?? 0, WORKING_CONTEXT_SCHEMA_VERSION);
+    if (dto.workspaceId && loaded.version !== null) {
+      try {
+        await this.workingContext.persistSelection(
+          actor.tenantId,
+          actor.userId,
+          dto.workspaceId,
+          loaded.version,
+          { type: resolution.entityType, id: resolution.id, label: resolution.label },
+          audit,
+        );
+      } catch (error) {
+        if (error instanceof ConflictException) {
+          const response = buildReferenceClarificationResponse(
+            'El estado cambió. Necesito que elijas nuevamente.',
+            responseCtx,
+            'STALE_CONTEXT',
+          );
+          await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'STALE_CONTEXT');
+          return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+        }
+        throw error;
+      }
+    }
+    telem(this.telemetry, {
+      event: 'ClarificationAnswered',
+      tenantId: actor.tenantId,
+      conversationId: dto.conversationId,
+      requestId: request.id,
+      answered: true,
+      ordinalUsed: telemetryMeta.ordinalUsed,
+      deicticUsed: telemetryMeta.deicticUsed,
+      uniqueResolution: true,
+      candidateCount: 1,
+    });
+
+    // Field-lock WATCH picker continuation for sale/purchase drafts.
+    if (
+      (loaded.working?.lastIntent === 'REGISTER_SALE' ||
+        loaded.working?.lastIntent === 'REGISTER_PURCHASE') &&
+      resolution.entityType === 'WATCH'
+    ) {
+      const writeIntent = loaded.working.lastIntent;
+      const currentDraft = this.workingContext.readConversationDraft(loaded.resolvedContextRaw);
+      // A customer/seller query still unresolved at the time the watch was
+      // ambiguous may have been a mis-parse riding along with it — cleared
+      // exactly like the pre-Draft version of this code did; a trusted,
+      // already-RESOLVED party is never touched.
+      const clearUnresolvedParty =
+        currentDraft?.customer && !currentDraft.customer.resolvedId ? { customer: undefined } : {};
+      const patchedDraft = applyDraftPatch(
+        currentDraft,
+        {
+          watch: { resolvedId: resolution.id, label: resolution.label, confidence: 'RESOLVED' },
+          ...clearUnresolvedParty,
+        },
+        writeIntent,
+      );
+      const writeEntities = draftToEntities(patchedDraft);
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: writeIntent,
+        entities: writeEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: writeIntent,
+          entities: writeEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: writeIntent,
+        response: continued,
+        resolvedEntities: writeEntities,
+      };
+    }
+
+    // Field-lock CLIENT picker continuation for sale drafts (not composition CTAs).
+    if (
+      loaded.working?.lastIntent === 'REGISTER_SALE' &&
+      resolution.entityType === 'CLIENT' &&
+      !resolution.id.startsWith('__')
+    ) {
+      const currentDraft = this.workingContext.readConversationDraft(loaded.resolvedContextRaw);
+      const patchedDraft = applyDraftPatch(
+        currentDraft,
+        { customer: { resolvedId: resolution.id, label: resolution.label, confidence: 'RESOLVED' } },
+        'REGISTER_SALE',
+      );
+      const saleEntities = draftToEntities(patchedDraft);
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'REGISTER_SALE',
+        entities: saleEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: 'REGISTER_SALE',
+          entities: saleEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: 'REGISTER_SALE',
+        response: continued,
+        resolvedEntities: saleEntities,
+      };
+    }
+
+    // UPDATE_CLIENT client picker: continue with trusted id + prior mutation entities.
+    if (
+      loaded.working?.lastIntent === 'UPDATE_CLIENT' &&
+      resolution.entityType === 'CLIENT'
+    ) {
+      const prior = dto.conversationId
+        ? await this.prisma.aIRequest.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              conversationId: dto.conversationId,
+              id: { not: request.id },
+              requestPayload: {
+                path: ['resolvedIntent'],
+                equals: 'UPDATE_CLIENT',
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { requestPayload: true },
+          })
         : null;
-    return Object.fromEntries(
-      (
+      const priorPayload =
+        prior?.requestPayload && typeof prior.requestPayload === 'object'
+          ? (prior.requestPayload as Record<string, unknown>)
+          : null;
+      const priorEntities =
         priorPayload?.resolvedEntities &&
         typeof priorPayload.resolvedEntities === 'object' &&
         !Array.isArray(priorPayload.resolvedEntities)
-          ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
-          : []
-      ).filter(
-        (entry): entry is [string, string | number | boolean] =>
-          typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
-      ),
+          ? Object.fromEntries(
+              Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
+                ([, v]) =>
+                  typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
+              ),
+            )
+          : {};
+      const updateEntities: Record<string, string | number | boolean> = {
+        ...priorEntities,
+        selectedClientId: resolution.id,
+        clientId: resolution.id,
+        clientLabel: resolution.label,
+      };
+      delete (updateEntities as Record<string, unknown>).clientQuery;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'UPDATE_CLIENT',
+        entities: updateEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: 'UPDATE_CLIENT',
+          entities: updateEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: 'UPDATE_CLIENT',
+        response: continued,
+        resolvedEntities: updateEntities,
+      };
+    }
+
+    // Capital contribution/distribution investor picker: continue with trusted id + prior entities.
+    if (
+      (loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+        loaded.working?.lastIntent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
+      resolution.entityType === 'INVESTOR'
+    ) {
+      const capitalIntent = loaded.working.lastIntent;
+      const prior = dto.conversationId
+        ? await this.prisma.aIRequest.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              conversationId: dto.conversationId,
+              id: { not: request.id },
+              requestPayload: {
+                path: ['resolvedIntent'],
+                equals: capitalIntent,
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { requestPayload: true },
+          })
+        : null;
+      const priorPayload =
+        prior?.requestPayload && typeof prior.requestPayload === 'object'
+          ? (prior.requestPayload as Record<string, unknown>)
+          : null;
+      const priorEntities =
+        priorPayload?.resolvedEntities &&
+        typeof priorPayload.resolvedEntities === 'object' &&
+        !Array.isArray(priorPayload.resolvedEntities)
+          ? Object.fromEntries(
+              Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
+                ([, v]) =>
+                  typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
+              ),
+            )
+          : {};
+      const capitalEntities: Record<string, string | number | boolean> = {
+        ...priorEntities,
+        selectedInvestorId: resolution.id,
+        investorId: resolution.id,
+        investorLabel: resolution.label,
+      };
+      delete (capitalEntities as Record<string, unknown>).investorQuery;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: capitalIntent,
+        entities: capitalEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: capitalIntent,
+          entities: capitalEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: capitalIntent,
+        response: continued,
+        resolvedEntities: capitalEntities,
+      };
+    }
+
+    // Controlled composition V1: dependency CTAs (create / search / cancel) or reuse existing Client.
+    if (dto.workspaceId && resolution.entityType === 'CLIENT' && 'text' in dto) {
+      const compositionHandled = await this.handleCompositionPickerSelection({
+        actor,
+        dto,
+        request,
+        responseCtx,
+        resolutionId: resolution.id,
+        resolutionLabel: resolution.label,
+        workspaceVersion: loaded.version,
+      });
+      if (compositionHandled) return compositionHandled;
+    }
+
+    // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
+    if (
+      loaded.working?.lastIntent === 'CREATE_CLIENT' &&
+      resolution.entityType === 'CLIENT'
+    ) {
+      const createNew =
+        resolution.id === '__CREATE_NEW_CLIENT__' ||
+        resolution.id.startsWith('__CREATE_NEW_CLIENT__|');
+      const pendingName = createNew
+        ? resolution.id.includes('|')
+          ? resolution.id.slice('__CREATE_NEW_CLIENT__|'.length)
+          : undefined
+        : undefined;
+      const createEntities: Record<string, string | boolean> = createNew
+        ? {
+            allowProbableDuplicate: true,
+            ...(pendingName ? { name: pendingName } : {}),
+          }
+        : {
+            clientId: resolution.id,
+            useExistingClientId: resolution.id,
+            name: resolution.label,
+          };
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'CREATE_CLIENT',
+        entities: createEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: 'CREATE_CLIENT',
+          entities: createEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: 'CREATE_CLIENT',
+        response: continued,
+        resolvedEntities: createEntities,
+      };
+    }
+
+    const response = buildEntitySelectedResponse(resolution.label, responseCtx);
+    await this.aiRequests.recordInterpretation(request.id, {
+      intent: 'UNKNOWN',
+      entities: trustedIdsFromResolution(resolution),
+      candidateHash: resolution.resolvedEntityHash,
+    });
+    await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'ENTITY_SELECTED');
+    return {
+      resolvedIntent: 'UNKNOWN',
+      response,
+      resolvedEntities: trustedIdsFromResolution(resolution),
+    };
+  }
+
+  /**
+   * Renders a ClarificationFieldLockService result (BOUND / PICKER /
+   * CLARIFY) exactly once — shared by the original "answering the pending
+   * field the planner just asked about" flow and the new draft-correction
+   * flow's own watch/customer resolution attempts (both hand this the SAME
+   * FieldLockResult shape, just reached via a different pendingField
+   * choice: the planner's own missing-field prompt vs. this service's own
+   * classification of a "No. Era X." correction).
+   */
+  private async applyFieldLockResult(args: {
+    actor: AssistantActorContext;
+    dto: AssistantMessageDto;
+    request: AIRequest;
+    intent: string;
+    pendingField: string;
+    lock: FieldLockBound | FieldLockPicker | FieldLockClarify;
+  }): Promise<NaturalLanguageAssistantResult> {
+    const { actor, dto, request, intent, pendingField, lock } = args;
+    const traceId = request.traceId;
+
+    if (lock.kind === 'BOUND') {
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent,
+        entities: lock.entities,
+        candidateHash: `clarification-lock:${pendingField}`,
+      });
+      telem(this.telemetry, {
+        event: 'ClarificationAnswered',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: intent,
+        clarificationReason: pendingField,
+        answered: true,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: intent as BusinessActionId,
+          entities: lock.entities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText: dto.text,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: intent as IntentCandidateIntent,
+        response: continued,
+        resolvedEntities: lock.entities,
+      };
+    }
+
+    if (lock.kind === 'PICKER') {
+      let response: StructuredAssistantResponse = {
+        requestId: request.id,
+        conversationId: dto.conversationId ?? '',
+        workspaceId: dto.workspaceId ?? '',
+        interactionState: 'NEEDS_DISAMBIGUATION',
+        responseType: 'ENTITY_PICKER',
+        payload: {
+          message: lock.message,
+          entityType: lock.entityType,
+          clarificationField: pendingField,
+          data: { items: lock.items },
+          unchanged: 'No se ejecutó ninguna acción.',
+          nextAction: 'Elige con “el primero”, “el segundo”, o nómbralo.',
+        },
+        warnings: [],
+        suggestedActions: [],
+        traceId,
+        createdAt: new Date().toISOString(),
+      };
+      try {
+        const persisted = await this.workingContext.persistEntityPickerTurn({
+          tenantId: actor.tenantId,
+          userId: actor.userId,
+          surface: dto.surface ?? 'DESKTOP',
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          requestId: request.id,
+          intent,
+          entities: lock.entities,
+          response: {
+            interactionState: response.interactionState,
+            responseType: response.responseType,
+            payload: response.payload as Record<string, unknown>,
+          },
+        });
+        response = {
+          ...response,
+          conversationId: persisted.conversationId,
+          workspaceId: persisted.workspaceId,
+        };
+      } catch {
+        // Picker still returned; ordinal/typed follow-up may need a fresh ask if persist races.
+      }
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent,
+        entities: lock.entities,
+        candidateHash: `clarification-picker:${pendingField}`,
+      });
+      await this.aiRequests.failUnattached(request, actor, intent, response, 'FIELD_LOCK_PICKER');
+      telem(this.telemetry, {
+        event: 'ClarificationShown',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        capability: intent,
+        clarificationType: 'ENTITY_AMBIGUITY',
+        clarificationReason: pendingField,
+        entityPickerUsed: true,
+        candidateCount: lock.candidates.length,
+        multipleCandidates: true,
+      });
+      return { resolvedIntent: intent as IntentCandidateIntent, response, resolvedEntities: lock.entities };
+    }
+
+    // lock.kind === 'CLARIFY' — stay on the pending field with contextual copy.
+    const clarifyPayload = {
+      message: lock.message,
+      clarificationField: pendingField,
+      missing: [{ entity: pendingField, question: lock.message }],
+      unchanged: 'No se ejecutó ninguna acción.',
+      nextAction: 'Responde con el reloj o una referencia más precisa.',
+    };
+    let response: StructuredAssistantResponse = {
+      requestId: request.id,
+      conversationId: dto.conversationId ?? '',
+      workspaceId: dto.workspaceId ?? '',
+      interactionState: 'NEEDS_INPUT',
+      responseType: 'MISSING_FIELDS_CARD',
+      payload: clarifyPayload,
+      warnings: [],
+      suggestedActions: [],
+      traceId,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      const persisted = await this.workingContext.persistClarificationTurn({
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        surface: dto.surface ?? 'DESKTOP',
+        conversationId: dto.conversationId,
+        workspaceId: dto.workspaceId,
+        requestId: request.id,
+        intent,
+        entities: lock.entities,
+        mode: 'MISSING_FIELDS',
+        response: {
+          interactionState: response.interactionState,
+          responseType: response.responseType,
+          payload: response.payload as Record<string, unknown>,
+        },
+      });
+      response = {
+        ...response,
+        conversationId: persisted.conversationId,
+        workspaceId: persisted.workspaceId,
+      };
+    } catch {
+      // Clarification still returned.
+    }
+    await this.aiRequests.recordInterpretation(request.id, {
+      intent,
+      entities: lock.entities,
+      candidateHash: `clarification-clarify:${pendingField}`,
+    });
+    await this.aiRequests.failUnattached(request, actor, intent, response, 'FIELD_LOCK_CLARIFY');
+    telem(this.telemetry, {
+      event: 'ClarificationShown',
+      tenantId: actor.tenantId,
+      conversationId: dto.conversationId,
+      requestId: request.id,
+      capability: intent,
+      clarificationType: 'MISSING_FIELD',
+      clarificationReason: pendingField,
+      zeroCandidates: true,
+    });
+    return { resolvedIntent: intent as IntentCandidateIntent, response, resolvedEntities: lock.entities };
+  }
+
+  /**
+   * Applies a deterministically-classified draft correction. Returns null
+   * when the correction couldn't be safely resolved (caller falls back to
+   * unrestricted NLP) — this method NEVER invents a value, it only ever
+   * commits one it could actually verify (money-shape, closed account/
+   * currency vocabulary, or a real watch/client match via the same
+   * resolvers original extraction uses).
+   */
+  private async applyDraftCorrection(args: {
+    actor: AssistantActorContext;
+    dto: AssistantMessageDto;
+    request: AIRequest;
+    responseCtx: { conversationId?: string; workspaceId?: string; traceId: string };
+    loaded: { working: AssistantWorkingContext | null; version: number | null; resolvedContextRaw: unknown };
+    intent: string;
+    match: { field: 'amount' | 'currency' | 'payment' | 'watch-or-customer'; rawValue: string };
+  }): Promise<NaturalLanguageAssistantResult | null> {
+    const { actor, dto, request, loaded, intent, match } = args;
+    const currentDraft = this.workingContext.readConversationDraft(loaded.resolvedContextRaw);
+
+    // Every branch below spreads the Draft's CURRENT sub-object and
+    // overrides only the one leaf that changed — "No. Fueron 480." must
+    // never wipe a currency the user already stated, "No. Fue por Bancos."
+    // must never wipe the payment mode, and so on.
+    if (match.field === 'amount') {
+      const parsed = parseCorrectedAmount(match.rawValue);
+      if (parsed === null) return null;
+      const patchedDraft = applyDraftPatch(currentDraft, { amount: { ...currentDraft?.amount, value: parsed } }, intent);
+      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, draft: patchedDraft, correctionField: 'amount' });
+    }
+
+    if (match.field === 'currency') {
+      const currency = detectCorrectedCurrency(match.rawValue);
+      if (!currency) return null;
+      const patchedDraft = applyDraftPatch(currentDraft, { amount: { ...currentDraft?.amount, currency } }, intent);
+      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, draft: patchedDraft, correctionField: 'currency' });
+    }
+
+    if (match.field === 'payment') {
+      const account = detectCorrectedAccount(match.rawValue, intent);
+      if (!account) return null;
+      const patchedDraft = applyDraftPatch(currentDraft, { payment: { ...currentDraft?.payment, account } }, intent);
+      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, draft: patchedDraft, correctionField: 'payment' });
+    }
+
+    // 'watch-or-customer' — genuinely ambiguous from text alone ("Batman"
+    // and "Abraham Bosquez" share the identical "Era <X>." template). Try
+    // the SAME watch resolver the original extraction uses first (universal
+    // 'watchId' pendingField name); only if it finds nothing at all does
+    // this attempt the customer/seller resolver — never both, never a guess
+    // presented to the user without verification. ClarificationFieldLockService
+    // still speaks the flat entities dialect (unchanged, out of this
+    // refactor's scope), so the Draft is flattened once, right at this call.
+    const current = draftToEntities(currentDraft ?? emptyDraft(intent));
+    const watchAttempt = await this.clarificationFieldLock.resolve({
+      tenantId: actor.tenantId,
+      intent,
+      pendingField: 'watchId',
+      answer: match.rawValue,
+      draftEntities: current,
+    });
+    if (watchAttempt.kind === 'BOUND' || watchAttempt.kind === 'PICKER') {
+      return this.applyFieldLockResult({ actor, dto, request, intent, pendingField: 'watchId', lock: watchAttempt });
+    }
+
+    const customerField = intent === 'REGISTER_PURCHASE' ? 'seller' : 'customerId';
+    const customerAttempt = await this.clarificationFieldLock.resolve({
+      tenantId: actor.tenantId,
+      intent,
+      pendingField: customerField,
+      answer: match.rawValue,
+      draftEntities: current,
+    });
+    if (customerAttempt.kind === 'BOUND' || customerAttempt.kind === 'PICKER') {
+      return this.applyFieldLockResult({ actor, dto, request, intent, pendingField: customerField, lock: customerAttempt });
+    }
+
+    // Neither a known watch nor a known client/seller — cannot safely commit either interpretation.
+    return null;
+  }
+
+  private async resumeWithCorrectedDraft(args: {
+    actor: AssistantActorContext;
+    dto: AssistantMessageDto;
+    request: AIRequest;
+    intent: string;
+    draft: ConversationDraft;
+    correctionField: string;
+  }): Promise<NaturalLanguageAssistantResult> {
+    const { actor, dto, request, intent, draft, correctionField } = args;
+    const entities = draftToEntities(draft);
+    await this.aiRequests.recordInterpretation(request.id, {
+      intent,
+      entities,
+      candidateHash: `draft-correction:${correctionField}`,
+    });
+    telem(this.telemetry, {
+      event: 'ClarificationAnswered',
+      tenantId: actor.tenantId,
+      conversationId: dto.conversationId,
+      requestId: request.id,
+      capability: intent,
+      clarificationReason: `correction:${correctionField}`,
+      answered: true,
+    });
+    const continued = await this.assistant.executeClaimed(
+      actor,
+      {
+        intent: intent as BusinessActionId,
+        entities,
+        surface: dto.surface ?? 'DESKTOP',
+        clientRequestId: dto.clientRequestId,
+        conversationId: dto.conversationId,
+        workspaceId: dto.workspaceId,
+        userDisplayText: dto.text,
+      },
+      request,
     );
+    return { resolvedIntent: intent as IntentCandidateIntent, response: continued, resolvedEntities: entities };
   }
 
   private async handleCompositionPickerSelection(args: {

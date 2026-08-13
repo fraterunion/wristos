@@ -849,7 +849,7 @@ export class WritePlanRunner {
             resolvedContext: {
               ...shell,
               lastReversibleAction,
-            } as Prisma.InputJsonObject,
+            } as unknown as Prisma.InputJsonObject,
             version: { increment: 1 },
             lastActivityAt: new Date(),
           },
@@ -891,7 +891,7 @@ export class WritePlanRunner {
             resolvedContext: {
               ...shell,
               lastReversibleAction,
-            } as Prisma.InputJsonObject,
+            } as unknown as Prisma.InputJsonObject,
             version: { increment: 1 },
             lastActivityAt: new Date(),
           },
