@@ -91,7 +91,7 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
     expect(updateData.resolvedContext.workingContext.lastIntent).toBe('REGISTER_SALE');
   });
 
-  it('a later picker turn in the same draft merges new keys without dropping earlier ones', async () => {
+  it('a later picker turn in the same draft reflects whatever the caller supplied as the complete current snapshot', async () => {
     const { persistence, tx } = buildService({
       pendingClarificationEntities: { watchId: 'watch-bruce-wayne', price: '500000.00', currency: 'MXN' },
     });
@@ -118,7 +118,7 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
     });
   });
 
-  it('clears the draft once the intent reaches a terminal ACTION_PREVIEW_CARD response', async () => {
+  it('a shown ACTION_PREVIEW_CARD keeps the draft alive (not confirmed yet — corrections must still be able to target it)', async () => {
     const { persistence, tx } = buildService({
       pendingClarificationEntities: { watchId: 'watch-bruce-wayne', price: '500000.00', currency: 'MXN' },
     });
@@ -149,7 +149,12 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
     );
 
     const updateData = tx.aIWorkspace.updateMany.mock.calls[0][0].data;
-    expect(updateData.resolvedContext.pendingClarificationEntities).toBeUndefined();
+    expect(updateData.resolvedContext.pendingClarificationEntities).toEqual({
+      watchId: 'watch-bruce-wayne',
+      price: '500000.00',
+      currency: 'MXN',
+      customerId: 'client-abraham-valdez',
+    });
   });
 
   it('clears the draft on a hard ERROR_RECOVERY_CARD failure', async () => {

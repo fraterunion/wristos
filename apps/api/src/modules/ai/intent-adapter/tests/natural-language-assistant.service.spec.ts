@@ -9,6 +9,7 @@ function buildService(overrides: {
   workingLoad?: jest.Mock;
   persistSelection?: jest.Mock;
   findFirstAIRequest?: jest.Mock;
+  clarificationFieldLockResolve?: jest.Mock;
 } = {}) {
   const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date('2026-08-07T00:00:00Z') };
   const aiRequests = {
@@ -43,7 +44,7 @@ function buildService(overrides: {
     resumeParentAfterClient: jest.fn(),
   };
   const clarificationFieldLock = {
-    resolve: jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }),
+    resolve: overrides.clarificationFieldLockResolve ?? jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }),
   };
   const service = new NaturalLanguageAssistantService(
     aiRequests as never,
@@ -573,5 +574,451 @@ describe('NaturalLanguageAssistantService.handlePickerSelection: structured pick
     expect(executeClaimed).not.toHaveBeenCalled();
     expect(result.resolvedIntent).toBe('UNKNOWN');
     expect(String(result.response.payload.message)).toMatch(/elijas nuevamente/i);
+  });
+});
+
+describe('NaturalLanguageAssistantService: conversational Draft hardening — typed continuation parity + corrections', () => {
+  const abrahamCandidates = {
+    type: 'CLIENT' as const,
+    presentedAt: new Date().toISOString(),
+    candidates: [
+      { id: 'client-abraham-diaz', label: 'Abraham Díaz', ordinal: 1 },
+      { id: 'client-abraham-valdez', label: 'Abraham Valdez', ordinal: 2 },
+      { id: 'client-abraham-bosquez', label: 'Abraham Bosquez', ordinal: 3 },
+    ],
+  };
+  const priorDraft = {
+    watchQuery: 'Bruce Wayne',
+    price: '500000.00',
+    currency: 'MXN',
+    customerQuery: 'Abraham',
+    paymentMode: 'PAID',
+  };
+  const previewResponse = {
+    requestId: 'ar-1',
+    conversationId: 'c1',
+    workspaceId: 'w1',
+    interactionState: 'READY_FOR_CONFIRMATION' as const,
+    responseType: 'ACTION_PREVIEW_CARD' as const,
+    payload: {},
+    warnings: [],
+    suggestedActions: [],
+    traceId: 'trace-1',
+    createdAt: '2026-08-13T00:00:00.000Z',
+  };
+
+  function pickerWorkingLoad(overridesToCandidates?: Partial<typeof abrahamCandidates>) {
+    return jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastIntent: 'REGISTER_SALE',
+        lastPresentedCandidates: { ...abrahamCandidates, ...overridesToCandidates },
+      },
+      version: 4,
+      resolvedContextRaw: {},
+    });
+  }
+
+  function priorDraftFindFirst() {
+    return jest.fn().mockResolvedValue({
+      requestPayload: { resolvedIntent: 'REGISTER_SALE', resolvedEntities: priorDraft },
+    });
+  }
+
+  describe('§1 typed continuation parity — click and typed text produce byte-for-byte identical Drafts', () => {
+    it('typed "Valdez" resolves like a click: never calls the provider, merges into every prior slot', async () => {
+      const provider = jest.fn();
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const { service } = buildService({
+        provider,
+        executeClaimed,
+        workingLoad: pickerWorkingLoad(),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+
+      const result = await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-1' });
+
+      expect(provider).not.toHaveBeenCalled();
+      expect(executeClaimed).toHaveBeenCalledTimes(1);
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.intent).toBe('REGISTER_SALE');
+      expect(structuredRequest.entities).toMatchObject({
+        watchQuery: 'Bruce Wayne',
+        price: '500000.00',
+        currency: 'MXN',
+        paymentMode: 'PAID',
+        customerId: 'client-abraham-valdez',
+        clientId: 'client-abraham-valdez',
+        customerName: 'Abraham Valdez',
+      });
+      expect(result.resolvedIntent).toBe('REGISTER_SALE');
+    });
+
+    it('typed "Abraham Valdez" (full label) resolves identically to typed "Valdez" (partial) and to a click', async () => {
+      const provider = jest.fn();
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const { service } = buildService({
+        provider,
+        executeClaimed,
+        workingLoad: pickerWorkingLoad(),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'Abraham Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-2' });
+
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.entities.customerId).toBe('client-abraham-valdez');
+      expect(structuredRequest.entities.watchQuery).toBe('Bruce Wayne');
+    });
+
+    it('the click path (handlePickerSelection) and the typed path produce the same resulting entities for the same candidate', async () => {
+      const clickExecuteClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const { service: clickService } = buildService({
+        executeClaimed: clickExecuteClaimed,
+        workingLoad: pickerWorkingLoad(),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+      await clickService.handlePickerSelection(actor, {
+        entityType: 'CLIENT',
+        selectedId: 'client-abraham-valdez',
+        selectedLabel: 'Abraham Valdez',
+        surface: 'MOBILE',
+        clientRequestId: 'click-1',
+        workspaceId: 'w1',
+        conversationId: 'c1',
+      });
+
+      const typedExecuteClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const { service: typedService } = buildService({
+        executeClaimed: typedExecuteClaimed,
+        workingLoad: pickerWorkingLoad(),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+      await typedService.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-3' });
+
+      const clickEntities = clickExecuteClaimed.mock.calls[0][1].entities;
+      const typedEntities = typedExecuteClaimed.mock.calls[0][1].entities;
+      expect(typedEntities).toEqual(clickEntities);
+    });
+
+    it('an ambiguous typed match ("Abraham" alone matches all three) clarifies naturally — never guesses, never calls the provider', async () => {
+      const provider = jest.fn();
+      const executeClaimed = jest.fn();
+      const { service, aiRequests } = buildService({
+        provider,
+        executeClaimed,
+        workingLoad: pickerWorkingLoad(),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+
+      const result = await service.handleMessage(actor, { ...baseDto, text: 'Abraham', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-ambiguous' });
+
+      expect(provider).not.toHaveBeenCalled();
+      expect(executeClaimed).not.toHaveBeenCalled();
+      expect(result.resolvedIntent).toBe('UNKNOWN');
+      expect(String(result.response.payload.message)).toMatch(/varias opciones/i);
+      expect(aiRequests.failUnattached).toHaveBeenCalled();
+    });
+  });
+
+  describe('§6 fallback safety', () => {
+    it('typed text matching no candidate falls through to normal NLP (the provider IS called)', async () => {
+      const provider = jest.fn().mockResolvedValue({
+        kind: 'CANDIDATE',
+        candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'h1' },
+        provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
+      });
+      const executeClaimed = jest.fn();
+      const { service } = buildService({
+        provider,
+        executeClaimed,
+        workingLoad: pickerWorkingLoad(),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'Buenos días, ¿cómo vamos?', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-nomatch' });
+
+      expect(provider).toHaveBeenCalledTimes(1);
+    });
+
+    it('an expired candidate list falls through to normal NLP rather than resolving a stale picker click', async () => {
+      const provider = jest.fn().mockResolvedValue({
+        kind: 'CANDIDATE',
+        candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'h2' },
+        provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
+      });
+      const executeClaimed = jest.fn();
+      const staleAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { service } = buildService({
+        provider,
+        executeClaimed,
+        workingLoad: pickerWorkingLoad({ presentedAt: staleAt }),
+        findFirstAIRequest: priorDraftFindFirst(),
+      });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-expired' });
+
+      expect(provider).toHaveBeenCalledTimes(1);
+    });
+
+    it('outside an active picker (no lastPresentedCandidates at all), typed text goes straight to normal NLP — no special handling', async () => {
+      const provider = jest.fn().mockResolvedValue({
+        kind: 'CANDIDATE',
+        candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'h3' },
+        provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
+      });
+      const executeClaimed = jest.fn();
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({ provider, executeClaimed, workingLoad });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-no-picker' });
+
+      expect(provider).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('§2/§7 Draft mutation — corrections replace exactly one slot, everything else survives', () => {
+    function fullDraftFindFirst(overrides: Record<string, string | number | boolean> = {}) {
+      return jest.fn().mockResolvedValue({
+        requestPayload: {
+          resolvedIntent: 'REGISTER_SALE',
+          resolvedEntities: {
+            watchQuery: 'Bruce Wayne',
+            watchId: 'watch-bruce-wayne',
+            price: '500000.00',
+            currency: 'MXN',
+            customerId: 'client-abraham-valdez',
+            customerName: 'Abraham Valdez',
+            paymentMode: 'PAID',
+            ...overrides,
+          },
+        },
+      });
+    }
+
+    it('"No. Era Batman." replaces only watchId — customer, price, currency, payment survive', async () => {
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const clarificationFieldLockResolve = jest.fn().mockImplementation(({ pendingField, draftEntities }) => {
+        if (pendingField === 'watchId') {
+          return Promise.resolve({
+            kind: 'BOUND',
+            entities: { ...draftEntities, watchId: 'watch-batman', watchLabel: 'Batman' },
+          });
+        }
+        return Promise.resolve({ kind: 'NO_MATCH' });
+      });
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({
+        executeClaimed,
+        workingLoad,
+        findFirstAIRequest: fullDraftFindFirst(),
+        clarificationFieldLockResolve,
+      });
+
+      const result = await service.handleMessage(actor, { ...baseDto, text: 'No. Era Batman.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-watch' });
+
+      expect(clarificationFieldLockResolve).toHaveBeenCalledWith(expect.objectContaining({ pendingField: 'watchId', answer: 'Batman' }));
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.entities.watchId).toBe('watch-batman');
+      expect(structuredRequest.entities.customerId).toBe('client-abraham-valdez');
+      expect(structuredRequest.entities.price).toBe('500000.00');
+      expect(structuredRequest.entities.currency).toBe('MXN');
+      expect(structuredRequest.entities.paymentMode).toBe('PAID');
+      expect(result.resolvedIntent).toBe('REGISTER_SALE');
+    });
+
+    it('"No. Fueron 480." replaces only price — everything else survives', async () => {
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({ executeClaimed, workingLoad, findFirstAIRequest: fullDraftFindFirst() });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'No. Fueron 480.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-amount' });
+
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.entities.price).toBe(480);
+      expect(structuredRequest.entities.watchId).toBe('watch-bruce-wayne');
+      expect(structuredRequest.entities.customerId).toBe('client-abraham-valdez');
+      expect(structuredRequest.entities.currency).toBe('MXN');
+      expect(structuredRequest.entities.paymentMode).toBe('PAID');
+    });
+
+    it('"No. Fue por Bancos." replaces only destination (BANCOS for a sale) — everything else survives', async () => {
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({ executeClaimed, workingLoad, findFirstAIRequest: fullDraftFindFirst() });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'No. Fue por Bancos.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-payment' });
+
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.entities.destination).toBe('BANCOS');
+      expect(structuredRequest.entities.watchId).toBe('watch-bruce-wayne');
+      expect(structuredRequest.entities.customerId).toBe('client-abraham-valdez');
+      expect(structuredRequest.entities.price).toBe('500000.00');
+    });
+
+    it('"No. Fue efectivo." replaces destination with CASH', async () => {
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({ executeClaimed, workingLoad, findFirstAIRequest: fullDraftFindFirst() });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'No. Fue efectivo.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-cash' });
+
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.entities.destination).toBe('CASH');
+    });
+
+    it('"No. Era Abraham Bosquez." replaces only customerId (watch resolver tried first, found nothing, customer resolver bound it) — everything else survives', async () => {
+      const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
+      const clarificationFieldLockResolve = jest.fn().mockImplementation(({ pendingField, draftEntities }) => {
+        if (pendingField === 'watchId') {
+          return Promise.resolve({ kind: 'CLARIFY', message: 'No encontré ese reloj.', entities: draftEntities });
+        }
+        if (pendingField === 'customerId') {
+          return Promise.resolve({
+            kind: 'BOUND',
+            entities: { ...draftEntities, customerId: 'client-abraham-bosquez', clientId: 'client-abraham-bosquez', customerName: 'Abraham Bosquez' },
+          });
+        }
+        return Promise.resolve({ kind: 'NO_MATCH' });
+      });
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({
+        executeClaimed,
+        workingLoad,
+        findFirstAIRequest: fullDraftFindFirst(),
+        clarificationFieldLockResolve,
+      });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'No. Era Abraham Bosquez.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-customer' });
+
+      expect(clarificationFieldLockResolve).toHaveBeenCalledWith(expect.objectContaining({ pendingField: 'watchId' }));
+      expect(clarificationFieldLockResolve).toHaveBeenCalledWith(expect.objectContaining({ pendingField: 'customerId', answer: 'Abraham Bosquez' }));
+      const [, structuredRequest] = executeClaimed.mock.calls[0];
+      expect(structuredRequest.entities.customerId).toBe('client-abraham-bosquez');
+      expect(structuredRequest.entities.watchId).toBe('watch-bruce-wayne');
+      expect(structuredRequest.entities.price).toBe('500000.00');
+    });
+
+    it('§3 multiple sequential corrections apply independently without ever rebuilding the whole Draft', async () => {
+      const executeClaimed1 = jest.fn().mockResolvedValue(previewResponse);
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const clarificationFieldLockResolve = jest.fn().mockImplementation(({ pendingField, draftEntities }) => {
+        if (pendingField === 'watchId') return Promise.resolve({ kind: 'BOUND', entities: { ...draftEntities, watchId: 'watch-batman', watchLabel: 'Batman' } });
+        return Promise.resolve({ kind: 'NO_MATCH' });
+      });
+      const { service: service1 } = buildService({
+        executeClaimed: executeClaimed1,
+        workingLoad,
+        findFirstAIRequest: fullDraftFindFirst(),
+        clarificationFieldLockResolve,
+      });
+      await service1.handleMessage(actor, { ...baseDto, text: 'No. Era Batman.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'multi-1' });
+      const afterWatchCorrection = executeClaimed1.mock.calls[0][1].entities;
+      expect(afterWatchCorrection.watchId).toBe('watch-batman');
+
+      // Second correction turn: the "prior write entities" a real conversation
+      // would recover now reflect the FIRST correction's result (recorded by
+      // recordInterpretation on that turn) — simulated here by pointing
+      // findFirstAIRequest at that exact snapshot.
+      const executeClaimed2 = jest.fn().mockResolvedValue(previewResponse);
+      const { service: service2 } = buildService({
+        executeClaimed: executeClaimed2,
+        workingLoad,
+        findFirstAIRequest: jest.fn().mockResolvedValue({ requestPayload: { resolvedIntent: 'REGISTER_SALE', resolvedEntities: afterWatchCorrection } }),
+      });
+      await service2.handleMessage(actor, { ...baseDto, text: 'No. Fueron 480.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'multi-2' });
+      const afterAmountCorrection = executeClaimed2.mock.calls[0][1].entities;
+      expect(afterAmountCorrection.watchId).toBe('watch-batman'); // survives from turn 1
+      expect(afterAmountCorrection.price).toBe(480); // corrected this turn
+
+      const executeClaimed3 = jest.fn().mockResolvedValue(previewResponse);
+      const { service: service3 } = buildService({
+        executeClaimed: executeClaimed3,
+        workingLoad,
+        findFirstAIRequest: jest.fn().mockResolvedValue({ requestPayload: { resolvedIntent: 'REGISTER_SALE', resolvedEntities: afterAmountCorrection } }),
+      });
+      await service3.handleMessage(actor, { ...baseDto, text: 'No. Fue efectivo.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'multi-3' });
+      const afterPaymentCorrection = executeClaimed3.mock.calls[0][1].entities;
+      expect(afterPaymentCorrection.watchId).toBe('watch-batman');
+      expect(afterPaymentCorrection.price).toBe(480);
+      expect(afterPaymentCorrection.destination).toBe('CASH');
+      expect(afterPaymentCorrection.customerId).toBe('client-abraham-valdez'); // never touched, survives all 3 turns
+    });
+
+    it('an unrecognized correction (matches neither watch inventory nor a client) falls back safely to unrestricted NLP', async () => {
+      const provider = jest.fn().mockResolvedValue({
+        kind: 'CANDIDATE',
+        candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'h4' },
+        provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
+      });
+      const executeClaimed = jest.fn();
+      const clarificationFieldLockResolve = jest.fn().mockResolvedValue({ kind: 'NO_MATCH' });
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({
+        provider,
+        executeClaimed,
+        workingLoad,
+        findFirstAIRequest: fullDraftFindFirst(),
+        clarificationFieldLockResolve,
+      });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'No. Era algo que no existe.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-unknown' });
+
+      expect(provider).toHaveBeenCalledTimes(1);
+      expect(executeClaimed).not.toHaveBeenCalled();
+    });
+
+    it('correction language outside a REGISTER_SALE/REGISTER_PURCHASE draft is not treated as a correction at all', async () => {
+      const provider = jest.fn().mockResolvedValue({
+        kind: 'CANDIDATE',
+        candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'h5' },
+        provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
+      });
+      const executeClaimed = jest.fn();
+      const workingLoad = jest.fn().mockResolvedValue({
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_RECEIVABLE_PAYMENT' },
+        version: 1,
+        resolvedContextRaw: {},
+      });
+      const { service } = buildService({ provider, executeClaimed, workingLoad });
+
+      await service.handleMessage(actor, { ...baseDto, text: 'No. Fueron 480.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-scope' });
+
+      expect(provider).toHaveBeenCalledTimes(1);
+      expect(executeClaimed).not.toHaveBeenCalled();
+    });
   });
 });

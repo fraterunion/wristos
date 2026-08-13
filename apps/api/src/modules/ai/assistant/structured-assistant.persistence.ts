@@ -4,9 +4,9 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { deriveWorkingContextAfterResponse } from '../context/working-context.service';
 import {
   clearDraftEntitiesFromResolvedContext,
-  mergeDraftEntitiesIntoResolvedContext,
   mergePlanCheckpointIntoResolvedContext,
   readWorkingContext,
+  setDraftEntitiesInResolvedContext,
   writeWorkingContext,
 } from '../context/working-context';
 import { JsonValue, sha256Canonical } from '../domain/canonical-json';
@@ -363,15 +363,19 @@ export class StructuredAssistantPersistence {
         if (nextWorking) {
           let shell = writeWorkingContext(currentWorkspace.resolvedContext, nextWorking);
           // The Draft: every entity resolved so far for the in-progress write
-          // intent. Kept alive across ENTITY_PICKER/MISSING_FIELDS_CARD turns
-          // (mirrors deriveWorkingContextAfterResponse's own
-          // pendingMissingFields lifecycle above) so a picker resume or a
-          // field-lock answer never has to re-derive what's already known;
-          // cleared once the intent reaches a terminal response.
-          if (response.responseType === 'ENTITY_PICKER' || response.responseType === 'MISSING_FIELDS_CARD') {
-            shell = mergeDraftEntitiesIntoResolvedContext(shell, contextInput.entities);
+          // intent. Kept alive across ENTITY_PICKER/MISSING_FIELDS_CARD *and*
+          // a shown ACTION_PREVIEW_CARD — a preview is not yet confirmed, so
+          // "No. Era Batman." must still be able to correct it — so a picker
+          // resume or a draft correction never has to re-derive what's
+          // already known. Only cleared on a truly terminal outcome
+          // (executed, or a hard error).
+          if (
+            response.responseType === 'ENTITY_PICKER' ||
+            response.responseType === 'MISSING_FIELDS_CARD' ||
+            response.responseType === 'ACTION_PREVIEW_CARD'
+          ) {
+            shell = setDraftEntitiesInResolvedContext(shell, contextInput.entities);
           } else if (
-            response.responseType === 'ACTION_PREVIEW_CARD' ||
             response.responseType === 'SUCCESS_RECEIPT' ||
             response.responseType === 'ERROR_RECOVERY_CARD'
           ) {

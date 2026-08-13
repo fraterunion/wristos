@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { IntentReference } from './reference-schema';
+import { normalizeWatchText } from '../watch-intelligence/normalize';
 import {
   AssistantWorkingContext,
   ContextEntityType,
@@ -112,6 +113,78 @@ export class ReferenceResolverService {
         message: 'Esa opción ya no está disponible. Necesito que elijas nuevamente.',
       };
     }
+    return {
+      kind: 'RESOLVED',
+      entityType: context.lastPresentedCandidates.type,
+      id: selected.id,
+      label: selected.label,
+      referenceKind: 'SINGLE_PRESENTED',
+      ordinal: selected.ordinal,
+      resolvedEntityHash: hashEntityId(selected.id),
+      contextAgeMs: ageMs,
+    };
+  }
+
+  /**
+   * Typed conversational continuation while an ENTITY_PICKER is active:
+   * "Valdez" or "Abraham Valdez" must resolve exactly like clicking the
+   * matching picker button — no NLP/router/Claude involved. Matches the
+   * typed text (accent/case-folded) against each presented candidate's
+   * label as either an exact match or a substring of the label (never the
+   * reverse — a long unrelated sentence must not false-positive just
+   * because it happens to contain a candidate's name). Ambiguous when more
+   * than one candidate matches; the caller decides how to fall back when
+   * nothing matches (see NaturalLanguageAssistantService — outside an
+   * active, fresh picker this method is never even called).
+   */
+  resolveByTypedLabel(
+    rawText: string,
+    context: AssistantWorkingContext | null,
+    now = new Date(),
+  ): ReferenceResolutionResult {
+    if (!context) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'NO_CONTEXT',
+        message: 'Necesito que elijas nuevamente. No tengo una selección previa en esta conversación.',
+      };
+    }
+    if (!context.lastPresentedCandidates) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'NO_CONTEXT',
+        message: 'Necesito que elijas nuevamente. No hay una lista reciente de opciones.',
+      };
+    }
+    const ageMs = context.lastPresentedCandidates.presentedAt
+      ? Math.max(0, now.getTime() - Date.parse(context.lastPresentedCandidates.presentedAt))
+      : null;
+    if (!isCandidateContextFresh(context, now)) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'EXPIRED',
+        message: 'Necesito que elijas nuevamente. La lista anterior ya no es válida.',
+      };
+    }
+    const normalizedTyped = normalizeWatchText(rawText);
+    if (!normalizedTyped) {
+      return { kind: 'CLARIFY', failureType: 'NOT_FOUND', message: 'No identifiqué esa opción.' };
+    }
+    const candidates = context.lastPresentedCandidates.candidates;
+    const matches = candidates.filter((c) => normalizeWatchText(c.label).includes(normalizedTyped));
+    const exact = matches.filter((c) => normalizeWatchText(c.label) === normalizedTyped);
+    const finalMatches = exact.length ? exact : matches;
+    if (finalMatches.length === 0) {
+      return { kind: 'CLARIFY', failureType: 'NOT_FOUND', message: 'No identifiqué esa opción entre las presentadas.' };
+    }
+    if (finalMatches.length > 1) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'AMBIGUOUS',
+        message: 'Hay varias opciones que coinciden. ¿Cuál exactamente? Di “el primero”, “el segundo”, o el nombre completo.',
+      };
+    }
+    const selected = finalMatches[0]!;
     return {
       kind: 'RESOLVED',
       entityType: context.lastPresentedCandidates.type,

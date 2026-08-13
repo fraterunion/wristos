@@ -11,9 +11,9 @@ import {
   emptyWorkingContext,
   extractPresentedCandidatesFromEntityList,
   isCandidateContextFresh,
-  mergeDraftEntitiesIntoResolvedContext,
   mergePlanCheckpointIntoResolvedContext,
   readWorkingContext,
+  setDraftEntitiesInResolvedContext,
   writeWorkingContext,
 } from '../working-context';
 import { buildUserPrompt } from '../../intent-adapter/prompt-policy';
@@ -211,18 +211,81 @@ describe('V1.1 multi-turn working context', () => {
     });
   });
 
-  describe('Draft entities (pendingClarificationEntities) — merge is additive, never destructive', () => {
-    it('merges new slots into an empty shell', () => {
-      const shell = mergeDraftEntitiesIntoResolvedContext({}, { watchQuery: 'Bruce Wayne', price: '500000.00' });
+  describe('resolveByTypedLabel — typed conversational continuation while an ENTITY_PICKER is active', () => {
+    function namedClientsContext(labels: string[], presentedAt = new Date().toISOString()): AssistantWorkingContext {
+      const base = emptyWorkingContext();
+      return applyPresentedCandidates(
+        base,
+        {
+          type: 'CLIENT',
+          candidates: labels.map((label, i) => ({ id: `client-${i + 1}`, label, ordinal: i + 1 })),
+        },
+        { lastIntent: 'REGISTER_SALE', lastResponseType: 'ENTITY_PICKER', now: new Date(presentedAt) },
+      );
+    }
+    const abrahams = () => namedClientsContext(['Abraham Díaz', 'Abraham Valdez', 'Abraham Bosquez']);
+
+    it('a partial typed match ("Valdez") uniquely resolves to the one candidate it substring-matches', () => {
+      const resolved = resolver.resolveByTypedLabel('Valdez', abrahams());
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2', label: 'Abraham Valdez', entityType: 'CLIENT' });
+    });
+
+    it('the exact full label matches identically', () => {
+      const resolved = resolver.resolveByTypedLabel('Abraham Valdez', abrahams());
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2', label: 'Abraham Valdez' });
+    });
+
+    it('is accent/case-insensitive', () => {
+      const resolved = resolver.resolveByTypedLabel('VALDEZ', abrahams());
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2' });
+    });
+
+    it('a shared substring across multiple candidates ("Abraham") is ambiguous, never a guess', () => {
+      const resolved = resolver.resolveByTypedLabel('Abraham', abrahams());
+      expect(resolved).toMatchObject({ kind: 'CLARIFY', failureType: 'AMBIGUOUS' });
+    });
+
+    it('an exact match is preferred over a broader substring match when both exist', () => {
+      const ctx = namedClientsContext(['Valdez', 'Abraham Valdez']);
+      const resolved = resolver.resolveByTypedLabel('Valdez', ctx);
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-1', label: 'Valdez' });
+    });
+
+    it('text matching no candidate returns NOT_FOUND — caller falls through to normal NLP, no error shown', () => {
+      const resolved = resolver.resolveByTypedLabel('Roberto', abrahams());
+      expect(resolved).toMatchObject({ kind: 'CLARIFY', failureType: 'NOT_FOUND' });
+    });
+
+    it('no context / expired context fail exactly like the ordinal and candidateId paths', () => {
+      expect(resolver.resolveByTypedLabel('Valdez', null)).toMatchObject({ kind: 'CLARIFY', failureType: 'NO_CONTEXT' });
+      const staleAt = new Date(Date.now() - CANDIDATE_CONTEXT_TTL_MS - 1000).toISOString();
+      const stale = namedClientsContext(['Abraham Valdez'], staleAt);
+      expect(resolver.resolveByTypedLabel('Valdez', stale)).toMatchObject({ kind: 'CLARIFY', failureType: 'EXPIRED' });
+    });
+  });
+
+  describe('Draft entities (pendingClarificationEntities) — the caller always supplies the complete snapshot; the shell write is a plain replace', () => {
+    it('sets the draft in an empty shell', () => {
+      const shell = setDraftEntitiesInResolvedContext({}, { watchQuery: 'Bruce Wayne', price: '500000.00' });
       expect(shell.pendingClarificationEntities).toEqual({ watchQuery: 'Bruce Wayne', price: '500000.00' });
     });
 
-    it('a later merge overwrites only the keys it mentions — every other slot survives', () => {
-      const first = mergeDraftEntitiesIntoResolvedContext(
+    it('replaces the whole draft — the caller is responsible for spreading prior slots first', () => {
+      const first = setDraftEntitiesInResolvedContext(
         {},
         { watchQuery: 'Bruce Wayne', price: '500000.00', currency: 'MXN', customerQuery: 'Abraham' },
       );
-      const second = mergeDraftEntitiesIntoResolvedContext(first, { customerId: 'client-abraham-valdez' });
+      // A caller that wants "customerId added, everything else kept" must
+      // spread the prior draft itself before calling — mirroring exactly how
+      // every NaturalLanguageAssistantService continuation/correction
+      // handler already builds its `entities` object.
+      const second = setDraftEntitiesInResolvedContext(first, {
+        watchQuery: 'Bruce Wayne',
+        price: '500000.00',
+        currency: 'MXN',
+        customerQuery: 'Abraham',
+        customerId: 'client-abraham-valdez',
+      });
       expect(second.pendingClarificationEntities).toEqual({
         watchQuery: 'Bruce Wayne',
         price: '500000.00',
@@ -232,14 +295,14 @@ describe('V1.1 multi-turn working context', () => {
       });
     });
 
-    it('an explicit correction overwrites the one key it targets, not the whole draft', () => {
-      const first = mergeDraftEntitiesIntoResolvedContext({}, { watchQuery: 'Batman', price: '300000.00' });
-      const corrected = mergeDraftEntitiesIntoResolvedContext(first, { watchQuery: 'Robin' });
-      expect(corrected.pendingClarificationEntities).toEqual({ watchQuery: 'Robin', price: '300000.00' });
+    it('a bare replace with only the corrected key does NOT preserve unrelated old keys — proving why callers must merge first, not this function', () => {
+      const first = setDraftEntitiesInResolvedContext({}, { watchQuery: 'Batman', price: '300000.00' });
+      const replaced = setDraftEntitiesInResolvedContext(first, { watchQuery: 'Robin' });
+      expect(replaced.pendingClarificationEntities).toEqual({ watchQuery: 'Robin' });
     });
 
     it('preserves other resolvedContext shell keys (entityVersions/planFingerprint) untouched', () => {
-      const shell = mergeDraftEntitiesIntoResolvedContext(
+      const shell = setDraftEntitiesInResolvedContext(
         { entityVersions: { client: 1 }, planFingerprint: 'fp-1' },
         { watchQuery: 'Batman' },
       );
@@ -248,7 +311,7 @@ describe('V1.1 multi-turn working context', () => {
     });
 
     it('clearing removes the draft but nothing else', () => {
-      const withDraft = mergeDraftEntitiesIntoResolvedContext(
+      const withDraft = setDraftEntitiesInResolvedContext(
         { entityVersions: { client: 1 } },
         { watchQuery: 'Batman' },
       );

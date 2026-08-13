@@ -124,24 +124,33 @@ export function mergePlanCheckpointIntoResolvedContext(
 }
 
 /**
- * Merges newly-known slots into the Draft, never dropping a slot the caller
- * didn't mention. New values win on key conflicts (an explicit correction
- * overwrites what was there); everything else survives untouched — this is
- * the "once known, immutable until changed" rule.
+ * Sets the Draft to `entities` — a REPLACE, not a merge. Every caller that
+ * reaches this (entity-resolver ENTITY_PICKER, planner MISSING_FIELDS_CARD,
+ * a shown ACTION_PREVIEW_CARD, and NaturalLanguageAssistantService's own
+ * picker-continuation / draft-correction handlers) always constructs
+ * `entities` as the CURRENT, COMPLETE snapshot first — spreading whatever
+ * was already known before adding/overwriting the one new or corrected slot
+ * — so replacing is both correct and, critically, safer than merging with
+ * whatever stale shell state happens to be sitting in resolvedContext: an
+ * unrelated, abandoned draft's leftover keys can never leak into a new one.
  */
-export function mergeDraftEntitiesIntoResolvedContext(
+export function setDraftEntitiesInResolvedContext(
   rawResolvedContext: unknown,
   entities: Record<string, unknown>,
 ): ResolvedContextShell {
   const shell = parseResolvedContextShell(rawResolvedContext);
-  const existing = shell.pendingClarificationEntities ?? {};
   return {
     ...shell,
-    pendingClarificationEntities: { ...existing, ...entities },
+    pendingClarificationEntities: { ...entities },
   };
 }
 
-/** Clears the Draft once a write intent reaches a terminal response (preview, receipt, or hard error). */
+/**
+ * Clears the Draft once a write intent reaches a truly terminal outcome —
+ * successful execution or a hard error. Deliberately NOT triggered by
+ * ACTION_PREVIEW_CARD: the Draft must survive a shown preview so "No. Era
+ * Batman." can still correct it before confirmation.
+ */
 export function clearDraftEntitiesFromResolvedContext(rawResolvedContext: unknown): ResolvedContextShell {
   const shell = parseResolvedContextShell(rawResolvedContext);
   const { pendingClarificationEntities: _drop, ...rest } = shell;
