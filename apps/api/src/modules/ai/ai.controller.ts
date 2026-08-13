@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../core/auth/guards/jwt-auth.guard';
 import { ConversationService } from './conversation/conversation.service';
 import { AppendMessageDto } from './dto/append-message.dto';
 import { AssistantMessageDto } from './dto/assistant-message.dto';
+import { PickerSelectionDto } from './dto/picker-selection.dto';
 import { CreateActionRunDto } from './dto/create-action-run.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { ConfirmActionRunDto } from './dto/action-run-command.dto';
@@ -57,6 +58,21 @@ export class AIController {
   @UseGuards(IntentAdapterRateLimitGuard)
   async assistantMessage(@CurrentUser() user: CurrentUserType, @Body() dto: AssistantMessageDto, @Res({ passthrough: true }) response: Response) {
     const result = await this.naturalLanguageAssistant.handleMessage({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
+    const status = structuredAssistantHttpStatus(result.response);
+    if (status !== null) response.status(status);
+    return result;
+  }
+
+  // Structured picker-selection EVENT — never re-enters NLP/Claude/the
+  // OperationalIntentRouter. The frontend already knows the selected
+  // candidate's trusted id from the server's own last ENTITY_PICKER
+  // response; this route resolves it against the durably-stored candidate
+  // list and resumes the SAME planner/resolver pipeline with the surviving
+  // Draft, merging in only the one newly-resolved slot.
+  @Post('assistant/picker-selection')
+  @UseGuards(IntentAdapterRateLimitGuard)
+  async assistantPickerSelection(@CurrentUser() user: CurrentUserType, @Body() dto: PickerSelectionDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.naturalLanguageAssistant.handlePickerSelection({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
     const status = structuredAssistantHttpStatus(result.response);
     if (status !== null) response.status(status);
     return result;

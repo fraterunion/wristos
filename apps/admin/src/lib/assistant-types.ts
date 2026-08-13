@@ -169,3 +169,34 @@ export interface AssistantMessageResult {
   response: StructuredAssistantResponse;
   resolvedEntities: Record<string, JsonValue>;
 }
+
+export const CONTEXT_ENTITY_TYPES = [
+  'WATCH',
+  'CLIENT',
+  'ACCOUNT_ENTRY',
+  'INVESTOR',
+  'OPERATING_EXPENSE',
+  'TREASURY_TRANSFER',
+] as const;
+export type ContextEntityType = (typeof CONTEXT_ENTITY_TYPES)[number];
+
+/**
+ * A picker click is an EVENT, not a chat message — the frontend already has
+ * the selected candidate's trusted id from the server's own last
+ * ENTITY_PICKER response, so it posts that id directly to
+ * /ai/assistant/picker-selection instead of re-encoding the label as free
+ * text through /ai/assistant/message. Same result shape as
+ * AssistantMessageResult (the server resumes the identical
+ * planner/resolver pipeline either way).
+ */
+export interface PickerSelectionRequest {
+  conversationId?: string;
+  workspaceId?: string;
+  entityType: ContextEntityType;
+  selectedId: string;
+  selectedLabel: string;
+  surface: 'MOBILE';
+  locale: string;
+  timezone: string;
+  clientRequestId: string;
+}

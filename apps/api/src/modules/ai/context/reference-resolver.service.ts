@@ -13,7 +13,8 @@ export type ReferenceResolutionFailureType =
   | 'OUT_OF_RANGE'
   | 'AMBIGUOUS'
   | 'TYPE_MISMATCH'
-  | 'UNSUPPORTED';
+  | 'UNSUPPORTED'
+  | 'NOT_FOUND';
 
 export type ReferenceResolutionResult =
   | {
@@ -64,6 +65,62 @@ export class ReferenceResolverService {
       kind: 'CLARIFY',
       failureType: 'UNSUPPORTED',
       message: 'Necesito un poco más de información para continuar.',
+    };
+  }
+
+  /**
+   * Resolves a picker-click EVENT: the frontend already has the candidate's
+   * trusted id (from the server's own last ENTITY_PICKER response) — this
+   * looks it up against the durably-stored `lastPresentedCandidates` instead
+   * of re-deriving it from free text. Never trusts a client-supplied id that
+   * wasn't actually presented in the most recent picker for this workspace.
+   */
+  resolveByCandidateId(
+    id: string,
+    context: AssistantWorkingContext | null,
+    now = new Date(),
+  ): ReferenceResolutionResult {
+    if (!context) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'NO_CONTEXT',
+        message: 'Necesito que elijas nuevamente. No tengo una selección previa en esta conversación.',
+      };
+    }
+    if (!context.lastPresentedCandidates) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'NO_CONTEXT',
+        message: 'Necesito que elijas nuevamente. No hay una lista reciente de opciones.',
+      };
+    }
+    const ageMs = context.lastPresentedCandidates.presentedAt
+      ? Math.max(0, now.getTime() - Date.parse(context.lastPresentedCandidates.presentedAt))
+      : null;
+    if (!isCandidateContextFresh(context, now)) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'EXPIRED',
+        message: 'Necesito que elijas nuevamente. La lista anterior ya no es válida.',
+      };
+    }
+    const selected = context.lastPresentedCandidates.candidates.find((c) => c.id === id);
+    if (!selected) {
+      return {
+        kind: 'CLARIFY',
+        failureType: 'NOT_FOUND',
+        message: 'Esa opción ya no está disponible. Necesito que elijas nuevamente.',
+      };
+    }
+    return {
+      kind: 'RESOLVED',
+      entityType: context.lastPresentedCandidates.type,
+      id: selected.id,
+      label: selected.label,
+      referenceKind: 'SINGLE_PRESENTED',
+      ordinal: selected.ordinal,
+      resolvedEntityHash: hashEntityId(selected.id),
+      contextAgeMs: ageMs,
     };
   }
 

@@ -1,16 +1,22 @@
 import { ConflictException, Injectable, Optional } from '@nestjs/common';
+import { AIRequest } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AIRequestService } from '../assistant/ai-request.service';
 import { StructuredAssistantService } from '../assistant/structured-assistant.service';
 import { AssistantActorContext, StructuredAssistantRequest, StructuredAssistantResponse } from '../assistant/structured-assistant.types';
 import { toProviderConversationContext } from '../context/provider-context';
 import { detectDeterministicReference, isPureReferentialUtterance, looksLikeAccountsContinuation } from '../context/ordinal-reference';
-import { ReferenceResolverService, trustedIdsFromResolution } from '../context/reference-resolver.service';
+import {
+  ReferenceResolutionResult,
+  ReferenceResolverService,
+  trustedIdsFromResolution,
+} from '../context/reference-resolver.service';
 import { IntentReference } from '../context/reference-schema';
 import { mergeTrustedIds, stripUntrustedEntityIds } from '../context/trusted-entities';
-import { WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
+import { AssistantWorkingContext, WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
 import { WorkingContextService } from '../context/working-context.service';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
+import { PickerSelectionDto } from '../dto/picker-selection.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
@@ -564,11 +570,6 @@ export class NaturalLanguageAssistantService {
     // Pure ordinal/deictic selection — no LLM, no fabricated IDs.
     if (isPureReferentialUtterance(normalizedText) && deterministicRef) {
       const resolution = this.referenceResolver.resolve(deterministicRef, loaded.working);
-      const audit = this.workingContext.buildAuditFromResolution(
-        resolution,
-        loaded.version ?? 0,
-        WORKING_CONTEXT_SCHEMA_VERSION,
-      );
       if (resolution.kind === 'CLARIFY') {
         telem(this.telemetry, {
           event: 'ClarificationShown',
@@ -586,343 +587,18 @@ export class NaturalLanguageAssistantService {
         await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolution.failureType);
         return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
       }
-      if (dto.workspaceId && loaded.version !== null) {
-        try {
-          await this.workingContext.persistSelection(
-            actor.tenantId,
-            actor.userId,
-            dto.workspaceId,
-            loaded.version,
-            { type: resolution.entityType, id: resolution.id, label: resolution.label },
-            audit,
-          );
-        } catch (error) {
-          if (error instanceof ConflictException) {
-            const response = buildReferenceClarificationResponse(
-              'El estado cambió. Necesito que elijas nuevamente.',
-              responseCtx,
-              'STALE_CONTEXT',
-            );
-            await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'STALE_CONTEXT');
-            return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
-          }
-          throw error;
-        }
-      }
-      telem(this.telemetry, {
-        event: 'ClarificationAnswered',
-        tenantId: actor.tenantId,
-        conversationId: dto.conversationId,
-        requestId: request.id,
-        answered: true,
-        ordinalUsed: deterministicRef.kind === 'ORDINAL',
-        deicticUsed: deterministicRef.kind !== 'ORDINAL',
-        uniqueResolution: true,
-        candidateCount: 1,
+      return this.continueFromResolvedReference({
+        actor,
+        dto,
+        request,
+        responseCtx,
+        loaded,
+        resolution,
+        telemetryMeta: {
+          ordinalUsed: deterministicRef.kind === 'ORDINAL',
+          deicticUsed: deterministicRef.kind !== 'ORDINAL',
+        },
       });
-
-      // Field-lock WATCH picker continuation for sale/purchase drafts.
-      if (
-        (loaded.working?.lastIntent === 'REGISTER_SALE' ||
-          loaded.working?.lastIntent === 'REGISTER_PURCHASE') &&
-        resolution.entityType === 'WATCH'
-      ) {
-        const writeIntent = loaded.working.lastIntent;
-        const priorEntities = await this.loadPriorWriteEntities(
-          actor.tenantId,
-          dto.conversationId,
-          request.id,
-          writeIntent,
-        );
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-        const writeEntities: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-          watchId: resolution.id,
-          watchLabel: resolution.label,
-        };
-        delete (writeEntities as Record<string, unknown>).customerQuery;
-        delete (writeEntities as Record<string, unknown>).clientQuery;
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: writeIntent,
-          entities: writeEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: writeIntent,
-            entities: writeEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: writeIntent,
-          response: continued,
-          resolvedEntities: writeEntities,
-        };
-      }
-
-      // Field-lock CLIENT picker continuation for sale drafts (not composition CTAs).
-      if (
-        loaded.working?.lastIntent === 'REGISTER_SALE' &&
-        resolution.entityType === 'CLIENT' &&
-        !resolution.id.startsWith('__')
-      ) {
-        const priorEntities = await this.loadPriorWriteEntities(
-          actor.tenantId,
-          dto.conversationId,
-          request.id,
-          'REGISTER_SALE',
-        );
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-        const saleEntities: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-          customerId: resolution.id,
-          clientId: resolution.id,
-          customerName: resolution.label,
-        };
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'REGISTER_SALE',
-          entities: saleEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: 'REGISTER_SALE',
-            entities: saleEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: 'REGISTER_SALE',
-          response: continued,
-          resolvedEntities: saleEntities,
-        };
-      }
-
-      // UPDATE_CLIENT client picker: continue with trusted id + prior mutation entities.
-      if (
-        loaded.working?.lastIntent === 'UPDATE_CLIENT' &&
-        resolution.entityType === 'CLIENT'
-      ) {
-        const prior = dto.conversationId
-          ? await this.prisma.aIRequest.findFirst({
-              where: {
-                tenantId: actor.tenantId,
-                conversationId: dto.conversationId,
-                id: { not: request.id },
-                requestPayload: {
-                  path: ['resolvedIntent'],
-                  equals: 'UPDATE_CLIENT',
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-              select: { requestPayload: true },
-            })
-          : null;
-        const priorPayload =
-          prior?.requestPayload && typeof prior.requestPayload === 'object'
-            ? (prior.requestPayload as Record<string, unknown>)
-            : null;
-        const priorEntities =
-          priorPayload?.resolvedEntities &&
-          typeof priorPayload.resolvedEntities === 'object' &&
-          !Array.isArray(priorPayload.resolvedEntities)
-            ? Object.fromEntries(
-                Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
-                  ([, v]) =>
-                    typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
-                ),
-              )
-            : {};
-        const updateEntities: Record<string, string | number | boolean> = {
-          ...priorEntities,
-          selectedClientId: resolution.id,
-          clientId: resolution.id,
-          clientLabel: resolution.label,
-        };
-        delete (updateEntities as Record<string, unknown>).clientQuery;
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'UPDATE_CLIENT',
-          entities: updateEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: 'UPDATE_CLIENT',
-            entities: updateEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: 'UPDATE_CLIENT',
-          response: continued,
-          resolvedEntities: updateEntities,
-        };
-      }
-
-      // Capital contribution/distribution investor picker: continue with trusted id + prior entities.
-      if (
-        (loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
-          loaded.working?.lastIntent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
-        resolution.entityType === 'INVESTOR'
-      ) {
-        const capitalIntent = loaded.working.lastIntent;
-        const prior = dto.conversationId
-          ? await this.prisma.aIRequest.findFirst({
-              where: {
-                tenantId: actor.tenantId,
-                conversationId: dto.conversationId,
-                id: { not: request.id },
-                requestPayload: {
-                  path: ['resolvedIntent'],
-                  equals: capitalIntent,
-                },
-              },
-              orderBy: { createdAt: 'desc' },
-              select: { requestPayload: true },
-            })
-          : null;
-        const priorPayload =
-          prior?.requestPayload && typeof prior.requestPayload === 'object'
-            ? (prior.requestPayload as Record<string, unknown>)
-            : null;
-        const priorEntities =
-          priorPayload?.resolvedEntities &&
-          typeof priorPayload.resolvedEntities === 'object' &&
-          !Array.isArray(priorPayload.resolvedEntities)
-            ? Object.fromEntries(
-                Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
-                  ([, v]) =>
-                    typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
-                ),
-              )
-            : {};
-        const capitalEntities: Record<string, string | number | boolean> = {
-          ...priorEntities,
-          selectedInvestorId: resolution.id,
-          investorId: resolution.id,
-          investorLabel: resolution.label,
-        };
-        delete (capitalEntities as Record<string, unknown>).investorQuery;
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: capitalIntent,
-          entities: capitalEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: capitalIntent,
-            entities: capitalEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: capitalIntent,
-          response: continued,
-          resolvedEntities: capitalEntities,
-        };
-      }
-
-      // Controlled composition V1: dependency CTAs (create / search / cancel) or reuse existing Client.
-      if (dto.workspaceId && resolution.entityType === 'CLIENT') {
-        const compositionHandled = await this.handleCompositionPickerSelection({
-          actor,
-          dto,
-          request,
-          responseCtx,
-          resolutionId: resolution.id,
-          resolutionLabel: resolution.label,
-          workspaceVersion: loaded.version,
-        });
-        if (compositionHandled) return compositionHandled;
-      }
-
-      // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
-      if (
-        loaded.working?.lastIntent === 'CREATE_CLIENT' &&
-        resolution.entityType === 'CLIENT'
-      ) {
-        const createNew =
-          resolution.id === '__CREATE_NEW_CLIENT__' ||
-          resolution.id.startsWith('__CREATE_NEW_CLIENT__|');
-        const pendingName = createNew
-          ? resolution.id.includes('|')
-            ? resolution.id.slice('__CREATE_NEW_CLIENT__|'.length)
-            : undefined
-          : undefined;
-        const createEntities: Record<string, string | boolean> = createNew
-          ? {
-              allowProbableDuplicate: true,
-              ...(pendingName ? { name: pendingName } : {}),
-            }
-          : {
-              clientId: resolution.id,
-              useExistingClientId: resolution.id,
-              name: resolution.label,
-            };
-        await this.aiRequests.recordInterpretation(request.id, {
-          intent: 'CREATE_CLIENT',
-          entities: createEntities,
-          candidateHash: resolution.resolvedEntityHash,
-        });
-        const continued = await this.assistant.executeClaimed(
-          actor,
-          {
-            intent: 'CREATE_CLIENT',
-            entities: createEntities,
-            surface: dto.surface ?? 'DESKTOP',
-            clientRequestId: dto.clientRequestId,
-            conversationId: dto.conversationId,
-            workspaceId: dto.workspaceId,
-            userDisplayText: dto.text,
-          },
-          request,
-        );
-        return {
-          resolvedIntent: 'CREATE_CLIENT',
-          response: continued,
-          resolvedEntities: createEntities,
-        };
-      }
-
-      const response = buildEntitySelectedResponse(resolution.label, responseCtx);
-      await this.aiRequests.recordInterpretation(request.id, {
-        intent: 'UNKNOWN',
-        entities: trustedIdsFromResolution(resolution),
-        candidateHash: resolution.resolvedEntityHash,
-      });
-      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'ENTITY_SELECTED');
-      return {
-        resolvedIntent: 'UNKNOWN',
-        response,
-        resolvedEntities: trustedIdsFromResolution(resolution),
-      };
     }
 
     // Deterministic accounts continuation: "Ahora sus cuentas."
@@ -1339,6 +1015,446 @@ export class NaturalLanguageAssistantService {
     };
     const response = await this.assistant.executeClaimed(actor, structuredRequest, request);
     return { resolvedIntent: intent, response, resolvedEntities: entities };
+  }
+
+  /**
+   * A picker click is an EVENT, not a chat message: the frontend already
+   * knows the selected candidate's trusted id (it came straight from the
+   * server's own last ENTITY_PICKER response) and posts it directly here
+   * instead of re-encoding the candidate's label as free text through
+   * handleMessage(). This method never calls intentAdapter.interpret() (no
+   * Claude, no OperationalIntentRouter) — it only resolves the id against
+   * the durably-stored candidate list and hands off to the exact same
+   * continuation logic ordinal/deictic replies ("el primero") already use,
+   * which itself only merges the one resolved slot into the surviving
+   * Draft and resumes the planner.
+   */
+  async handlePickerSelection(
+    actor: AssistantActorContext,
+    dto: PickerSelectionDto,
+  ): Promise<NaturalLanguageAssistantResult> {
+    const claim = await this.aiRequests.claimText(actor, {
+      clientRequestId: dto.clientRequestId,
+      text: dto.selectedLabel,
+      surface: dto.surface,
+      locale: dto.locale,
+      timezone: dto.timezone,
+      conversationId: dto.conversationId,
+      workspaceId: dto.workspaceId,
+    });
+    if (claim.kind === 'REPLAY') {
+      await this.aiRequests.auditReplay(actor, claim.request);
+      const { intent } = this.aiRequests.readInterpretation(claim.request);
+      return {
+        resolvedIntent: (intent as IntentCandidateIntent | null) ?? 'UNKNOWN',
+        response: claim.response,
+        resolvedEntities: {},
+      };
+    }
+    if (claim.kind === 'IN_PROGRESS') {
+      return { resolvedIntent: 'UNKNOWN', response: claim.response, resolvedEntities: {} };
+    }
+
+    const request = claim.request;
+    const responseCtx = { conversationId: dto.conversationId, workspaceId: dto.workspaceId, traceId: request.traceId };
+    const loaded = await this.workingContext.load(actor.tenantId, actor.userId, dto.workspaceId);
+
+    const resolution = this.referenceResolver.resolveByCandidateId(dto.selectedId, loaded.working);
+    if (resolution.kind === 'CLARIFY') {
+      telem(this.telemetry, {
+        event: 'ClarificationShown',
+        tenantId: actor.tenantId,
+        conversationId: dto.conversationId,
+        requestId: request.id,
+        clarificationType: mapClarificationType(resolution.failureType),
+        clarificationReason: resolution.failureType,
+        entityPickerUsed: true,
+        zeroCandidates: true,
+      });
+      const response = buildReferenceClarificationResponse(resolution.message, responseCtx, resolution.failureType);
+      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolution.failureType);
+      return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+    }
+    if (resolution.entityType !== dto.entityType) {
+      const response = buildReferenceClarificationResponse(
+        'Necesito que elijas nuevamente. El tipo de opción no coincide.',
+        responseCtx,
+        'TYPE_MISMATCH',
+      );
+      await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'TYPE_MISMATCH');
+      return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+    }
+
+    return this.continueFromResolvedReference({
+      actor,
+      dto,
+      request,
+      responseCtx,
+      loaded,
+      resolution,
+      telemetryMeta: { ordinalUsed: false, deicticUsed: false },
+    });
+  }
+
+  /**
+   * Resumes a pending write from an already-RESOLVED entity reference —
+   * shared by ordinal/deictic continuation ("el primero") and the
+   * structured picker-selection EVENT (handlePickerSelection()). Never
+   * re-runs NLP: it merges the one resolved slot into whatever the Draft
+   * already knows (readPendingClarificationEntities + the last recorded
+   * AIRequest for this write intent — see loadPriorWriteEntities) and hands
+   * the merged entities straight to the SAME planner/resolver pipeline any
+   * fresh write request goes through. Every other slot survives untouched.
+   */
+  private async continueFromResolvedReference(args: {
+    actor: AssistantActorContext;
+    dto: AssistantMessageDto | PickerSelectionDto;
+    request: AIRequest;
+    responseCtx: { conversationId?: string; workspaceId?: string; traceId: string };
+    loaded: { working: AssistantWorkingContext | null; version: number | null; resolvedContextRaw: unknown };
+    resolution: Extract<ReferenceResolutionResult, { kind: 'RESOLVED' }>;
+    telemetryMeta: { ordinalUsed: boolean; deicticUsed: boolean };
+  }): Promise<NaturalLanguageAssistantResult> {
+    const { actor, dto, request, responseCtx, loaded, resolution, telemetryMeta } = args;
+    const userDisplayText = 'text' in dto ? dto.text : dto.selectedLabel;
+    const audit = this.workingContext.buildAuditFromResolution(resolution, loaded.version ?? 0, WORKING_CONTEXT_SCHEMA_VERSION);
+    if (dto.workspaceId && loaded.version !== null) {
+      try {
+        await this.workingContext.persistSelection(
+          actor.tenantId,
+          actor.userId,
+          dto.workspaceId,
+          loaded.version,
+          { type: resolution.entityType, id: resolution.id, label: resolution.label },
+          audit,
+        );
+      } catch (error) {
+        if (error instanceof ConflictException) {
+          const response = buildReferenceClarificationResponse(
+            'El estado cambió. Necesito que elijas nuevamente.',
+            responseCtx,
+            'STALE_CONTEXT',
+          );
+          await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'STALE_CONTEXT');
+          return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+        }
+        throw error;
+      }
+    }
+    telem(this.telemetry, {
+      event: 'ClarificationAnswered',
+      tenantId: actor.tenantId,
+      conversationId: dto.conversationId,
+      requestId: request.id,
+      answered: true,
+      ordinalUsed: telemetryMeta.ordinalUsed,
+      deicticUsed: telemetryMeta.deicticUsed,
+      uniqueResolution: true,
+      candidateCount: 1,
+    });
+
+    // Field-lock WATCH picker continuation for sale/purchase drafts.
+    if (
+      (loaded.working?.lastIntent === 'REGISTER_SALE' ||
+        loaded.working?.lastIntent === 'REGISTER_PURCHASE') &&
+      resolution.entityType === 'WATCH'
+    ) {
+      const writeIntent = loaded.working.lastIntent;
+      const priorEntities = await this.loadPriorWriteEntities(
+        actor.tenantId,
+        dto.conversationId,
+        request.id,
+        writeIntent,
+      );
+      const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
+      const writeEntities: Record<string, string | number | boolean> = {
+        ...draftEntities,
+        ...priorEntities,
+        watchId: resolution.id,
+        watchLabel: resolution.label,
+      };
+      delete (writeEntities as Record<string, unknown>).customerQuery;
+      delete (writeEntities as Record<string, unknown>).clientQuery;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: writeIntent,
+        entities: writeEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: writeIntent,
+          entities: writeEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: writeIntent,
+        response: continued,
+        resolvedEntities: writeEntities,
+      };
+    }
+
+    // Field-lock CLIENT picker continuation for sale drafts (not composition CTAs).
+    if (
+      loaded.working?.lastIntent === 'REGISTER_SALE' &&
+      resolution.entityType === 'CLIENT' &&
+      !resolution.id.startsWith('__')
+    ) {
+      const priorEntities = await this.loadPriorWriteEntities(
+        actor.tenantId,
+        dto.conversationId,
+        request.id,
+        'REGISTER_SALE',
+      );
+      const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
+      const saleEntities: Record<string, string | number | boolean> = {
+        ...draftEntities,
+        ...priorEntities,
+        customerId: resolution.id,
+        clientId: resolution.id,
+        customerName: resolution.label,
+      };
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'REGISTER_SALE',
+        entities: saleEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: 'REGISTER_SALE',
+          entities: saleEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: 'REGISTER_SALE',
+        response: continued,
+        resolvedEntities: saleEntities,
+      };
+    }
+
+    // UPDATE_CLIENT client picker: continue with trusted id + prior mutation entities.
+    if (
+      loaded.working?.lastIntent === 'UPDATE_CLIENT' &&
+      resolution.entityType === 'CLIENT'
+    ) {
+      const prior = dto.conversationId
+        ? await this.prisma.aIRequest.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              conversationId: dto.conversationId,
+              id: { not: request.id },
+              requestPayload: {
+                path: ['resolvedIntent'],
+                equals: 'UPDATE_CLIENT',
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { requestPayload: true },
+          })
+        : null;
+      const priorPayload =
+        prior?.requestPayload && typeof prior.requestPayload === 'object'
+          ? (prior.requestPayload as Record<string, unknown>)
+          : null;
+      const priorEntities =
+        priorPayload?.resolvedEntities &&
+        typeof priorPayload.resolvedEntities === 'object' &&
+        !Array.isArray(priorPayload.resolvedEntities)
+          ? Object.fromEntries(
+              Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
+                ([, v]) =>
+                  typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
+              ),
+            )
+          : {};
+      const updateEntities: Record<string, string | number | boolean> = {
+        ...priorEntities,
+        selectedClientId: resolution.id,
+        clientId: resolution.id,
+        clientLabel: resolution.label,
+      };
+      delete (updateEntities as Record<string, unknown>).clientQuery;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'UPDATE_CLIENT',
+        entities: updateEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: 'UPDATE_CLIENT',
+          entities: updateEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: 'UPDATE_CLIENT',
+        response: continued,
+        resolvedEntities: updateEntities,
+      };
+    }
+
+    // Capital contribution/distribution investor picker: continue with trusted id + prior entities.
+    if (
+      (loaded.working?.lastIntent === 'REGISTER_CAPITAL_CONTRIBUTION' ||
+        loaded.working?.lastIntent === 'REGISTER_CAPITAL_DISTRIBUTION') &&
+      resolution.entityType === 'INVESTOR'
+    ) {
+      const capitalIntent = loaded.working.lastIntent;
+      const prior = dto.conversationId
+        ? await this.prisma.aIRequest.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              conversationId: dto.conversationId,
+              id: { not: request.id },
+              requestPayload: {
+                path: ['resolvedIntent'],
+                equals: capitalIntent,
+              },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { requestPayload: true },
+          })
+        : null;
+      const priorPayload =
+        prior?.requestPayload && typeof prior.requestPayload === 'object'
+          ? (prior.requestPayload as Record<string, unknown>)
+          : null;
+      const priorEntities =
+        priorPayload?.resolvedEntities &&
+        typeof priorPayload.resolvedEntities === 'object' &&
+        !Array.isArray(priorPayload.resolvedEntities)
+          ? Object.fromEntries(
+              Object.entries(priorPayload.resolvedEntities as Record<string, unknown>).filter(
+                ([, v]) =>
+                  typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number',
+              ),
+            )
+          : {};
+      const capitalEntities: Record<string, string | number | boolean> = {
+        ...priorEntities,
+        selectedInvestorId: resolution.id,
+        investorId: resolution.id,
+        investorLabel: resolution.label,
+      };
+      delete (capitalEntities as Record<string, unknown>).investorQuery;
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: capitalIntent,
+        entities: capitalEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: capitalIntent,
+          entities: capitalEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: capitalIntent,
+        response: continued,
+        resolvedEntities: capitalEntities,
+      };
+    }
+
+    // Controlled composition V1: dependency CTAs (create / search / cancel) or reuse existing Client.
+    if (dto.workspaceId && resolution.entityType === 'CLIENT' && 'text' in dto) {
+      const compositionHandled = await this.handleCompositionPickerSelection({
+        actor,
+        dto,
+        request,
+        responseCtx,
+        resolutionId: resolution.id,
+        resolutionLabel: resolution.label,
+        workspaceVersion: loaded.version,
+      });
+      if (compositionHandled) return compositionHandled;
+    }
+
+    // CREATE_CLIENT probable-duplicate picker: continue the write intent with trusted id.
+    if (
+      loaded.working?.lastIntent === 'CREATE_CLIENT' &&
+      resolution.entityType === 'CLIENT'
+    ) {
+      const createNew =
+        resolution.id === '__CREATE_NEW_CLIENT__' ||
+        resolution.id.startsWith('__CREATE_NEW_CLIENT__|');
+      const pendingName = createNew
+        ? resolution.id.includes('|')
+          ? resolution.id.slice('__CREATE_NEW_CLIENT__|'.length)
+          : undefined
+        : undefined;
+      const createEntities: Record<string, string | boolean> = createNew
+        ? {
+            allowProbableDuplicate: true,
+            ...(pendingName ? { name: pendingName } : {}),
+          }
+        : {
+            clientId: resolution.id,
+            useExistingClientId: resolution.id,
+            name: resolution.label,
+          };
+      await this.aiRequests.recordInterpretation(request.id, {
+        intent: 'CREATE_CLIENT',
+        entities: createEntities,
+        candidateHash: resolution.resolvedEntityHash,
+      });
+      const continued = await this.assistant.executeClaimed(
+        actor,
+        {
+          intent: 'CREATE_CLIENT',
+          entities: createEntities,
+          surface: dto.surface ?? 'DESKTOP',
+          clientRequestId: dto.clientRequestId,
+          conversationId: dto.conversationId,
+          workspaceId: dto.workspaceId,
+          userDisplayText,
+        },
+        request,
+      );
+      return {
+        resolvedIntent: 'CREATE_CLIENT',
+        response: continued,
+        resolvedEntities: createEntities,
+      };
+    }
+
+    const response = buildEntitySelectedResponse(resolution.label, responseCtx);
+    await this.aiRequests.recordInterpretation(request.id, {
+      intent: 'UNKNOWN',
+      entities: trustedIdsFromResolution(resolution),
+      candidateHash: resolution.resolvedEntityHash,
+    });
+    await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'ENTITY_SELECTED');
+    return {
+      resolvedIntent: 'UNKNOWN',
+      response,
+      resolvedEntities: trustedIdsFromResolution(resolution),
+    };
   }
 
   private async loadPriorWriteEntities(

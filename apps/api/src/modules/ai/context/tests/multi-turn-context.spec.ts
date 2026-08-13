@@ -7,9 +7,11 @@ import {
   CANDIDATE_CONTEXT_TTL_MS,
   applyPresentedCandidates,
   applySelectedEntity,
+  clearDraftEntitiesFromResolvedContext,
   emptyWorkingContext,
   extractPresentedCandidatesFromEntityList,
   isCandidateContextFresh,
+  mergeDraftEntitiesIntoResolvedContext,
   mergePlanCheckpointIntoResolvedContext,
   readWorkingContext,
   writeWorkingContext,
@@ -180,5 +182,79 @@ describe('V1.1 multi-turn working context', () => {
     const { intentReferenceSchema } = require('../reference-schema');
     expect(intentReferenceSchema.safeParse({ kind: 'ORDINAL', ordinal: 1, id: 'abc' }).success).toBe(false);
     expect(intentReferenceSchema.safeParse({ kind: 'ORDINAL', ordinal: 1 }).success).toBe(true);
+  });
+
+  describe('resolveByCandidateId — the picker-selection EVENT path', () => {
+    it('resolves a real presented candidate by id, independent of ordinal/deictic text', () => {
+      const ctx = clientsContext(3);
+      const resolved = resolver.resolveByCandidateId('client-2', ctx);
+      expect(resolved).toMatchObject({ kind: 'RESOLVED', id: 'client-2', label: 'José B', entityType: 'CLIENT' });
+    });
+
+    it('an id that was never presented clarifies rather than trusting a client-forged id', () => {
+      const ctx = clientsContext(3);
+      const resolved = resolver.resolveByCandidateId('client-forged', ctx);
+      expect(resolved).toMatchObject({ kind: 'CLARIFY', failureType: 'NOT_FOUND' });
+    });
+
+    it('no context / expired context fail exactly like the ordinal path', () => {
+      expect(resolver.resolveByCandidateId('client-1', null)).toMatchObject({
+        kind: 'CLARIFY',
+        failureType: 'NO_CONTEXT',
+      });
+      const staleAt = new Date(Date.now() - CANDIDATE_CONTEXT_TTL_MS - 1000).toISOString();
+      const stale = clientsContext(2, staleAt);
+      expect(resolver.resolveByCandidateId('client-1', stale)).toMatchObject({
+        kind: 'CLARIFY',
+        failureType: 'EXPIRED',
+      });
+    });
+  });
+
+  describe('Draft entities (pendingClarificationEntities) — merge is additive, never destructive', () => {
+    it('merges new slots into an empty shell', () => {
+      const shell = mergeDraftEntitiesIntoResolvedContext({}, { watchQuery: 'Bruce Wayne', price: '500000.00' });
+      expect(shell.pendingClarificationEntities).toEqual({ watchQuery: 'Bruce Wayne', price: '500000.00' });
+    });
+
+    it('a later merge overwrites only the keys it mentions — every other slot survives', () => {
+      const first = mergeDraftEntitiesIntoResolvedContext(
+        {},
+        { watchQuery: 'Bruce Wayne', price: '500000.00', currency: 'MXN', customerQuery: 'Abraham' },
+      );
+      const second = mergeDraftEntitiesIntoResolvedContext(first, { customerId: 'client-abraham-valdez' });
+      expect(second.pendingClarificationEntities).toEqual({
+        watchQuery: 'Bruce Wayne',
+        price: '500000.00',
+        currency: 'MXN',
+        customerQuery: 'Abraham',
+        customerId: 'client-abraham-valdez',
+      });
+    });
+
+    it('an explicit correction overwrites the one key it targets, not the whole draft', () => {
+      const first = mergeDraftEntitiesIntoResolvedContext({}, { watchQuery: 'Batman', price: '300000.00' });
+      const corrected = mergeDraftEntitiesIntoResolvedContext(first, { watchQuery: 'Robin' });
+      expect(corrected.pendingClarificationEntities).toEqual({ watchQuery: 'Robin', price: '300000.00' });
+    });
+
+    it('preserves other resolvedContext shell keys (entityVersions/planFingerprint) untouched', () => {
+      const shell = mergeDraftEntitiesIntoResolvedContext(
+        { entityVersions: { client: 1 }, planFingerprint: 'fp-1' },
+        { watchQuery: 'Batman' },
+      );
+      expect(shell.entityVersions).toEqual({ client: 1 });
+      expect(shell.planFingerprint).toBe('fp-1');
+    });
+
+    it('clearing removes the draft but nothing else', () => {
+      const withDraft = mergeDraftEntitiesIntoResolvedContext(
+        { entityVersions: { client: 1 } },
+        { watchQuery: 'Batman' },
+      );
+      const cleared = clearDraftEntitiesFromResolvedContext(withDraft);
+      expect(cleared.pendingClarificationEntities).toBeUndefined();
+      expect(cleared.entityVersions).toEqual({ client: 1 });
+    });
   });
 });

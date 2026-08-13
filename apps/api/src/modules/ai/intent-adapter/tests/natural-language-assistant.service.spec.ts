@@ -8,6 +8,7 @@ function buildService(overrides: {
   executeClaimed?: jest.Mock;
   workingLoad?: jest.Mock;
   persistSelection?: jest.Mock;
+  findFirstAIRequest?: jest.Mock;
 } = {}) {
   const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date('2026-08-07T00:00:00Z') };
   const aiRequests = {
@@ -34,7 +35,7 @@ function buildService(overrides: {
     }),
   };
   const prisma = {
-    aIRequest: { findFirst: jest.fn().mockResolvedValue(null) },
+    aIRequest: { findFirst: overrides.findFirstAIRequest ?? jest.fn().mockResolvedValue(null) },
   };
   const compositionOrchestrator = {
     loadActive: jest.fn().mockResolvedValue({ composition: null, version: 1, resolvedContext: {} }),
@@ -377,5 +378,200 @@ describe('NaturalLanguageAssistantService: V1.1 referential turns', () => {
 
     const [, structured] = executeClaimed.mock.calls[0];
     expect(structured.entities).not.toHaveProperty('clientId');
+  });
+});
+
+describe('NaturalLanguageAssistantService.handlePickerSelection: structured picker EVENT, never NLP', () => {
+  const basePickerDto = {
+    entityType: 'CLIENT' as const,
+    selectedId: 'client-abraham-valdez',
+    selectedLabel: 'Abraham Valdez',
+    surface: 'MOBILE' as const,
+    clientRequestId: 'picker-1',
+    workspaceId: 'w1',
+    conversationId: 'c1',
+  };
+
+  /**
+   * The exact reported regression: "Vendí un Bruce Wayne en 500k MXN a
+   * Abraham. Me pagó en efectivo." resolves watch/amount/currency/payment,
+   * but 3 clients match "Abraham" -> ENTITY_PICKER. Selecting "Abraham
+   * Valdez" must resume with every prior slot intact, filling only
+   * customerId — never re-asking for the watch, amount, or currency.
+   */
+  it('resumes a REGISTER_SALE draft by merging the resolved customerId into every slot already known — never calls the provider', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn().mockResolvedValue({
+      requestId: 'ar-1',
+      conversationId: 'c1',
+      workspaceId: 'w1',
+      interactionState: 'READY_FOR_CONFIRMATION',
+      responseType: 'ACTION_PREVIEW_CARD',
+      payload: {},
+      warnings: [],
+      suggestedActions: [],
+      traceId: 'trace-1',
+      createdAt: '2026-08-13T00:00:00.000Z',
+    });
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastIntent: 'REGISTER_SALE',
+        lastPresentedCandidates: {
+          type: 'CLIENT',
+          presentedAt: new Date().toISOString(),
+          candidates: [
+            { id: 'client-abraham-diaz', label: 'Abraham Díaz', ordinal: 1 },
+            { id: 'client-abraham-valdez', label: 'Abraham Valdez', ordinal: 2 },
+            { id: 'client-abraham-bosquez', label: 'Abraham Bosquez', ordinal: 3 },
+          ],
+        },
+      },
+      version: 4,
+      resolvedContextRaw: {},
+    });
+    const findFirstAIRequest = jest.fn().mockResolvedValue({
+      requestPayload: {
+        resolvedIntent: 'REGISTER_SALE',
+        resolvedEntities: {
+          watchQuery: 'Bruce Wayne',
+          price: '500000.00',
+          currency: 'MXN',
+          customerQuery: 'Abraham',
+          paymentMode: 'PAID',
+        },
+      },
+    });
+    const { service } = buildService({ provider, executeClaimed, workingLoad, findFirstAIRequest });
+
+    const result = await service.handlePickerSelection(actor, basePickerDto);
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(executeClaimed).toHaveBeenCalledTimes(1);
+    const [, structuredRequest] = executeClaimed.mock.calls[0];
+    expect(structuredRequest.intent).toBe('REGISTER_SALE');
+    // Every slot the first turn already resolved survives untouched.
+    expect(structuredRequest.entities.watchQuery).toBe('Bruce Wayne');
+    expect(structuredRequest.entities.price).toBe('500000.00');
+    expect(structuredRequest.entities.currency).toBe('MXN');
+    expect(structuredRequest.entities.paymentMode).toBe('PAID');
+    // Only the picker selection itself is newly filled.
+    expect(structuredRequest.entities.customerId).toBe('client-abraham-valdez');
+    expect(structuredRequest.entities.clientId).toBe('client-abraham-valdez');
+    expect(structuredRequest.entities.customerName).toBe('Abraham Valdez');
+    expect(result.resolvedIntent).toBe('REGISTER_SALE');
+  });
+
+  it('never re-derives the selection from free text — resolves purely by the presented candidate id', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn().mockResolvedValue({
+      requestId: 'ar-1', conversationId: 'c1', workspaceId: 'w1',
+      interactionState: 'READY_FOR_CONFIRMATION', responseType: 'ACTION_PREVIEW_CARD',
+      payload: {}, warnings: [], suggestedActions: [], traceId: 'trace-1', createdAt: '2026-08-13T00:00:00.000Z',
+    });
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastIntent: 'REGISTER_SALE',
+        lastPresentedCandidates: {
+          type: 'CLIENT',
+          presentedAt: new Date().toISOString(),
+          candidates: [{ id: 'client-abraham-valdez', label: 'Abraham Valdez', ordinal: 1 }],
+        },
+      },
+      version: 1,
+      resolvedContextRaw: {},
+    });
+    const { service } = buildService({ provider, executeClaimed, workingLoad });
+
+    await service.handlePickerSelection(actor, basePickerDto);
+
+    expect(provider).not.toHaveBeenCalled();
+    // intentAdapter.interpret (the only NLP/router entry point this service
+    // owns) is never called — confirmed via the same `provider` mock used
+    // for intentAdapter.interpret in buildService().
+  });
+
+  it('a picker id not present in the last presented list clarifies instead of guessing (stale or forged selection)', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn();
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastIntent: 'REGISTER_SALE',
+        lastPresentedCandidates: {
+          type: 'CLIENT',
+          presentedAt: new Date().toISOString(),
+          candidates: [{ id: 'client-real', label: 'Real Client', ordinal: 1 }],
+        },
+      },
+      version: 1,
+      resolvedContextRaw: {},
+    });
+    const { service, aiRequests } = buildService({ provider, executeClaimed, workingLoad });
+
+    const result = await service.handlePickerSelection(actor, { ...basePickerDto, selectedId: 'client-not-real' });
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(result.resolvedIntent).toBe('UNKNOWN');
+    expect(result.response.interactionState).toBe('NEEDS_INPUT');
+    expect(String(result.response.payload.message)).toMatch(/elijas nuevamente/i);
+    expect(aiRequests.failUnattached).toHaveBeenCalled();
+  });
+
+  it('an entityType mismatch between the DTO and the stored candidate list clarifies instead of trusting the client-supplied type', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn();
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastIntent: 'REGISTER_SALE',
+        lastPresentedCandidates: {
+          type: 'WATCH',
+          presentedAt: new Date().toISOString(),
+          candidates: [{ id: 'watch-1', label: 'Bruce Wayne', ordinal: 1 }],
+        },
+      },
+      version: 1,
+      resolvedContextRaw: {},
+    });
+    const { service, aiRequests } = buildService({ provider, executeClaimed, workingLoad });
+
+    const result = await service.handlePickerSelection(actor, { ...basePickerDto, selectedId: 'watch-1', entityType: 'CLIENT' });
+
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(result.resolvedIntent).toBe('UNKNOWN');
+    expect(aiRequests.failUnattached).toHaveBeenCalledWith(expect.anything(), actor, 'UNKNOWN', expect.anything(), 'TYPE_MISMATCH');
+  });
+
+  it('an expired candidate list clarifies rather than resolving a stale picker click', async () => {
+    const provider = jest.fn();
+    const executeClaimed = jest.fn();
+    const workingLoad = jest.fn().mockResolvedValue({
+      working: {
+        schemaVersion: '1.1',
+        contextUpdatedAt: new Date().toISOString(),
+        lastIntent: 'REGISTER_SALE',
+        lastPresentedCandidates: {
+          type: 'CLIENT',
+          presentedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          candidates: [{ id: 'client-abraham-valdez', label: 'Abraham Valdez', ordinal: 1 }],
+        },
+      },
+      version: 1,
+      resolvedContextRaw: {},
+    });
+    const { service } = buildService({ provider, executeClaimed, workingLoad });
+
+    const result = await service.handlePickerSelection(actor, basePickerDto);
+
+    expect(executeClaimed).not.toHaveBeenCalled();
+    expect(result.resolvedIntent).toBe('UNKNOWN');
+    expect(String(result.response.payload.message)).toMatch(/elijas nuevamente/i);
   });
 });

@@ -66,6 +66,17 @@ export interface ResolvedContextShell {
   entityVersions?: Record<string, string | number>;
   planFingerprint?: string;
   workingContext?: AssistantWorkingContext;
+  /**
+   * The Draft: every entity value safely extracted so far for the write
+   * intent currently in progress (watchQuery/amount/currency/customerQuery/…
+   * — a permissive bag, unlike `workingContext.lastResolvedEntities` which
+   * only ever holds trusted `*Id` fields). Source of truth across a
+   * clarification/picker loop so an already-known slot is never re-asked.
+   * Written by StructuredAssistantPersistence.complete() and
+   * WorkingContextService.persistClarificationTurn(); read by
+   * readPendingClarificationEntities().
+   */
+  pendingClarificationEntities?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -110,6 +121,31 @@ export function mergePlanCheckpointIntoResolvedContext(
     planFingerprint: planFields.planFingerprint,
     workingContext: shell.workingContext,
   };
+}
+
+/**
+ * Merges newly-known slots into the Draft, never dropping a slot the caller
+ * didn't mention. New values win on key conflicts (an explicit correction
+ * overwrites what was there); everything else survives untouched — this is
+ * the "once known, immutable until changed" rule.
+ */
+export function mergeDraftEntitiesIntoResolvedContext(
+  rawResolvedContext: unknown,
+  entities: Record<string, unknown>,
+): ResolvedContextShell {
+  const shell = parseResolvedContextShell(rawResolvedContext);
+  const existing = shell.pendingClarificationEntities ?? {};
+  return {
+    ...shell,
+    pendingClarificationEntities: { ...existing, ...entities },
+  };
+}
+
+/** Clears the Draft once a write intent reaches a terminal response (preview, receipt, or hard error). */
+export function clearDraftEntitiesFromResolvedContext(rawResolvedContext: unknown): ResolvedContextShell {
+  const shell = parseResolvedContextShell(rawResolvedContext);
+  const { pendingClarificationEntities: _drop, ...rest } = shell;
+  return rest;
 }
 
 export function isCandidateContextFresh(

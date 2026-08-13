@@ -3,6 +3,8 @@ import { AIAuditEventType, AIActionRunStatus, AIInteractionState, AIMessageRole,
 import { PrismaService } from '../../../prisma/prisma.service';
 import { deriveWorkingContextAfterResponse } from '../context/working-context.service';
 import {
+  clearDraftEntitiesFromResolvedContext,
+  mergeDraftEntitiesIntoResolvedContext,
   mergePlanCheckpointIntoResolvedContext,
   readWorkingContext,
   writeWorkingContext,
@@ -359,7 +361,23 @@ export class StructuredAssistantPersistence {
           payload: response.payload as Record<string, unknown>,
         });
         if (nextWorking) {
-          resolvedContextUpdate = writeWorkingContext(currentWorkspace.resolvedContext, nextWorking) as Prisma.InputJsonObject;
+          let shell = writeWorkingContext(currentWorkspace.resolvedContext, nextWorking);
+          // The Draft: every entity resolved so far for the in-progress write
+          // intent. Kept alive across ENTITY_PICKER/MISSING_FIELDS_CARD turns
+          // (mirrors deriveWorkingContextAfterResponse's own
+          // pendingMissingFields lifecycle above) so a picker resume or a
+          // field-lock answer never has to re-derive what's already known;
+          // cleared once the intent reaches a terminal response.
+          if (response.responseType === 'ENTITY_PICKER' || response.responseType === 'MISSING_FIELDS_CARD') {
+            shell = mergeDraftEntitiesIntoResolvedContext(shell, contextInput.entities);
+          } else if (
+            response.responseType === 'ACTION_PREVIEW_CARD' ||
+            response.responseType === 'SUCCESS_RECEIPT' ||
+            response.responseType === 'ERROR_RECOVERY_CARD'
+          ) {
+            shell = clearDraftEntitiesFromResolvedContext(shell);
+          }
+          resolvedContextUpdate = shell as Prisma.InputJsonObject;
         }
       }
 
