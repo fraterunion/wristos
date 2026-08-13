@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { KnownIntent, KNOWN_INTENTS } from '../intent-adapter/intent-schema';
+import { ConversationDraft } from './conversation-draft';
 import { CONTEXT_ENTITY_TYPES, ContextEntityType } from './entity-types';
 
 export { CONTEXT_ENTITY_TYPES, type ContextEntityType } from './entity-types';
@@ -67,16 +68,18 @@ export interface ResolvedContextShell {
   planFingerprint?: string;
   workingContext?: AssistantWorkingContext;
   /**
-   * The Draft: every entity value safely extracted so far for the write
-   * intent currently in progress (watchQuery/amount/currency/customerQuery/…
-   * — a permissive bag, unlike `workingContext.lastResolvedEntities` which
-   * only ever holds trusted `*Id` fields). Source of truth across a
-   * clarification/picker loop so an already-known slot is never re-asked.
+   * The ConversationDraft — the single source of truth for the write intent
+   * currently in progress (see conversation-draft.ts). Every message,
+   * picker, and correction PATCHes this same document; it is never rebuilt.
+   * Distinct from `workingContext.lastResolvedEntities`, which only ever
+   * holds trusted `*Id` fields for ordinal/deictic continuation — this
+   * holds the FULL typed document (raw queries, resolved ids, amount,
+   * currency, payment, …) so an already-known field is never re-asked.
    * Written by StructuredAssistantPersistence.complete() and
    * WorkingContextService.persistClarificationTurn(); read by
-   * readPendingClarificationEntities().
+   * readConversationDraft().
    */
-  pendingClarificationEntities?: Record<string, unknown>;
+  conversationDraft?: ConversationDraft;
   [key: string]: unknown;
 }
 
@@ -97,6 +100,12 @@ export function readWorkingContext(rawResolvedContext: unknown): AssistantWorkin
   if (!shell.workingContext) return null;
   const parsed = assistantWorkingContextSchema.safeParse(shell.workingContext);
   return parsed.success ? parsed.data : null;
+}
+
+/** The ConversationDraft — the single source of truth for the write intent in progress. Null if none is active. */
+export function readConversationDraft(rawResolvedContext: unknown): ConversationDraft | null {
+  const shell = parseResolvedContextShell(rawResolvedContext);
+  return shell.conversationDraft ?? null;
 }
 
 export function writeWorkingContext(
@@ -124,24 +133,21 @@ export function mergePlanCheckpointIntoResolvedContext(
 }
 
 /**
- * Sets the Draft to `entities` — a REPLACE, not a merge. Every caller that
- * reaches this (entity-resolver ENTITY_PICKER, planner MISSING_FIELDS_CARD,
- * a shown ACTION_PREVIEW_CARD, and NaturalLanguageAssistantService's own
- * picker-continuation / draft-correction handlers) always constructs
- * `entities` as the CURRENT, COMPLETE snapshot first — spreading whatever
- * was already known before adding/overwriting the one new or corrected slot
- * — so replacing is both correct and, critically, safer than merging with
- * whatever stale shell state happens to be sitting in resolvedContext: an
- * unrelated, abandoned draft's leftover keys can never leak into a new one.
+ * Persists an already-patched ConversationDraft — the caller (StructuredAssistantPersistence.complete(),
+ * WorkingContextService.persistClarificationTurn()) always builds `draft`
+ * via conversation-draft.ts's applyDraftPatch() first, so this is a plain
+ * write, not a merge: the patch semantics (one field changes, everything
+ * else survives; a capability change starts a fresh Draft) already happened
+ * before this function ever runs.
  */
-export function setDraftEntitiesInResolvedContext(
+export function setConversationDraftInResolvedContext(
   rawResolvedContext: unknown,
-  entities: Record<string, unknown>,
+  draft: ConversationDraft,
 ): ResolvedContextShell {
   const shell = parseResolvedContextShell(rawResolvedContext);
   return {
     ...shell,
-    pendingClarificationEntities: { ...entities },
+    conversationDraft: draft,
   };
 }
 
@@ -151,9 +157,9 @@ export function setDraftEntitiesInResolvedContext(
  * ACTION_PREVIEW_CARD: the Draft must survive a shown preview so "No. Era
  * Batman." can still correct it before confirmation.
  */
-export function clearDraftEntitiesFromResolvedContext(rawResolvedContext: unknown): ResolvedContextShell {
+export function clearConversationDraftFromResolvedContext(rawResolvedContext: unknown): ResolvedContextShell {
   const shell = parseResolvedContextShell(rawResolvedContext);
-  const { pendingClarificationEntities: _drop, ...rest } = shell;
+  const { conversationDraft: _drop, ...rest } = shell;
   return rest;
 }
 

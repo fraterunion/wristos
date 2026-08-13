@@ -1,12 +1,14 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AIAuditEventType, AIActionRunStatus, AIInteractionState, AIMessageRole, AIRequestStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { applyDraftPatch, entitiesToDraftPatch } from '../context/conversation-draft';
 import { deriveWorkingContextAfterResponse } from '../context/working-context.service';
 import {
-  clearDraftEntitiesFromResolvedContext,
+  clearConversationDraftFromResolvedContext,
   mergePlanCheckpointIntoResolvedContext,
+  readConversationDraft,
   readWorkingContext,
-  setDraftEntitiesInResolvedContext,
+  setConversationDraftInResolvedContext,
   writeWorkingContext,
 } from '../context/working-context';
 import { JsonValue, sha256Canonical } from '../domain/canonical-json';
@@ -362,24 +364,32 @@ export class StructuredAssistantPersistence {
         });
         if (nextWorking) {
           let shell = writeWorkingContext(currentWorkspace.resolvedContext, nextWorking);
-          // The Draft: every entity resolved so far for the in-progress write
-          // intent. Kept alive across ENTITY_PICKER/MISSING_FIELDS_CARD *and*
-          // a shown ACTION_PREVIEW_CARD — a preview is not yet confirmed, so
-          // "No. Era Batman." must still be able to correct it — so a picker
-          // resume or a draft correction never has to re-derive what's
-          // already known. Only cleared on a truly terminal outcome
-          // (executed, or a hard error).
+          // The ConversationDraft: the single source of truth for the write
+          // intent in progress. Kept alive across ENTITY_PICKER/
+          // MISSING_FIELDS_CARD *and* a shown ACTION_PREVIEW_CARD — a
+          // preview is not yet confirmed, so "No. Era Batman." must still be
+          // able to correct it — so a picker resume or a draft correction
+          // never has to re-derive what's already known. Only cleared on a
+          // truly terminal outcome (executed, or a hard error). `entities`
+          // here is always the CALLER's complete current snapshot (every
+          // StructuredAssistantService/NaturalLanguageAssistantService call
+          // site builds it that way), so converting it to a patch and
+          // applying it is a full, correct replace of the Draft's fields —
+          // never a partial write that could leave stale siblings behind.
           if (
             response.responseType === 'ENTITY_PICKER' ||
             response.responseType === 'MISSING_FIELDS_CARD' ||
             response.responseType === 'ACTION_PREVIEW_CARD'
           ) {
-            shell = setDraftEntitiesInResolvedContext(shell, contextInput.entities);
+            const currentDraft = readConversationDraft(currentWorkspace.resolvedContext);
+            const patch = entitiesToDraftPatch(contextInput.intent, contextInput.entities);
+            const patchedDraft = applyDraftPatch(currentDraft, patch, contextInput.intent);
+            shell = setConversationDraftInResolvedContext(shell, patchedDraft);
           } else if (
             response.responseType === 'SUCCESS_RECEIPT' ||
             response.responseType === 'ERROR_RECOVERY_CARD'
           ) {
-            shell = clearDraftEntitiesFromResolvedContext(shell);
+            shell = clearConversationDraftFromResolvedContext(shell);
           }
           resolvedContextUpdate = shell as Prisma.InputJsonObject;
         }

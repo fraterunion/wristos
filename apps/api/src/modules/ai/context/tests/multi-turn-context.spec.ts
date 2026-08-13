@@ -2,18 +2,19 @@ import { ReferenceResolverService } from '../reference-resolver.service';
 import { detectDeterministicReference, isPureReferentialUtterance, looksLikeAccountsContinuation } from '../ordinal-reference';
 import { toProviderConversationContext } from '../provider-context';
 import { stripUntrustedEntityIds, mergeTrustedIds } from '../trusted-entities';
+import { applyDraftPatch } from '../conversation-draft';
 import {
   AssistantWorkingContext,
   CANDIDATE_CONTEXT_TTL_MS,
   applyPresentedCandidates,
   applySelectedEntity,
-  clearDraftEntitiesFromResolvedContext,
+  clearConversationDraftFromResolvedContext,
   emptyWorkingContext,
   extractPresentedCandidatesFromEntityList,
   isCandidateContextFresh,
   mergePlanCheckpointIntoResolvedContext,
   readWorkingContext,
-  setDraftEntitiesInResolvedContext,
+  setConversationDraftInResolvedContext,
   writeWorkingContext,
 } from '../working-context';
 import { buildUserPrompt } from '../../intent-adapter/prompt-policy';
@@ -264,59 +265,34 @@ describe('V1.1 multi-turn working context', () => {
     });
   });
 
-  describe('Draft entities (pendingClarificationEntities) — the caller always supplies the complete snapshot; the shell write is a plain replace', () => {
+  describe('ConversationDraft shell persistence — plain set/clear; patch semantics live in conversation-draft.spec.ts', () => {
+    const sampleDraft = applyDraftPatch(null, { watch: { raw: 'Bruce Wayne' } }, 'REGISTER_SALE');
+
     it('sets the draft in an empty shell', () => {
-      const shell = setDraftEntitiesInResolvedContext({}, { watchQuery: 'Bruce Wayne', price: '500000.00' });
-      expect(shell.pendingClarificationEntities).toEqual({ watchQuery: 'Bruce Wayne', price: '500000.00' });
+      const shell = setConversationDraftInResolvedContext({}, sampleDraft);
+      expect(shell.conversationDraft).toEqual(sampleDraft);
     });
 
-    it('replaces the whole draft — the caller is responsible for spreading prior slots first', () => {
-      const first = setDraftEntitiesInResolvedContext(
-        {},
-        { watchQuery: 'Bruce Wayne', price: '500000.00', currency: 'MXN', customerQuery: 'Abraham' },
-      );
-      // A caller that wants "customerId added, everything else kept" must
-      // spread the prior draft itself before calling — mirroring exactly how
-      // every NaturalLanguageAssistantService continuation/correction
-      // handler already builds its `entities` object.
-      const second = setDraftEntitiesInResolvedContext(first, {
-        watchQuery: 'Bruce Wayne',
-        price: '500000.00',
-        currency: 'MXN',
-        customerQuery: 'Abraham',
-        customerId: 'client-abraham-valdez',
-      });
-      expect(second.pendingClarificationEntities).toEqual({
-        watchQuery: 'Bruce Wayne',
-        price: '500000.00',
-        currency: 'MXN',
-        customerQuery: 'Abraham',
-        customerId: 'client-abraham-valdez',
-      });
-    });
-
-    it('a bare replace with only the corrected key does NOT preserve unrelated old keys — proving why callers must merge first, not this function', () => {
-      const first = setDraftEntitiesInResolvedContext({}, { watchQuery: 'Batman', price: '300000.00' });
-      const replaced = setDraftEntitiesInResolvedContext(first, { watchQuery: 'Robin' });
-      expect(replaced.pendingClarificationEntities).toEqual({ watchQuery: 'Robin' });
+    it('overwrites whatever draft was there before — the caller (applyDraftPatch) already produced the complete next draft', () => {
+      const replacement = applyDraftPatch(sampleDraft, { watch: { raw: 'Robin' } }, 'REGISTER_SALE');
+      const first = setConversationDraftInResolvedContext({}, sampleDraft);
+      const second = setConversationDraftInResolvedContext(first, replacement);
+      expect(second.conversationDraft).toEqual(replacement);
     });
 
     it('preserves other resolvedContext shell keys (entityVersions/planFingerprint) untouched', () => {
-      const shell = setDraftEntitiesInResolvedContext(
+      const shell = setConversationDraftInResolvedContext(
         { entityVersions: { client: 1 }, planFingerprint: 'fp-1' },
-        { watchQuery: 'Batman' },
+        sampleDraft,
       );
       expect(shell.entityVersions).toEqual({ client: 1 });
       expect(shell.planFingerprint).toBe('fp-1');
     });
 
     it('clearing removes the draft but nothing else', () => {
-      const withDraft = setDraftEntitiesInResolvedContext(
-        { entityVersions: { client: 1 } },
-        { watchQuery: 'Batman' },
-      );
-      const cleared = clearDraftEntitiesFromResolvedContext(withDraft);
-      expect(cleared.pendingClarificationEntities).toBeUndefined();
+      const withDraft = setConversationDraftInResolvedContext({ entityVersions: { client: 1 } }, sampleDraft);
+      const cleared = clearConversationDraftFromResolvedContext(withDraft);
+      expect(cleared.conversationDraft).toBeUndefined();
       expect(cleared.entityVersions).toEqual({ client: 1 });
     });
   });

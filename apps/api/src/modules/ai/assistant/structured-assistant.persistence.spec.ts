@@ -1,6 +1,11 @@
 import { AIAuditEventType, AIRequestStatus } from '@prisma/client';
+import { draftToEntities, entitiesToDraftPatch, applyDraftPatch } from '../context/conversation-draft';
 import { StructuredAssistantPersistence } from './structured-assistant.persistence';
 import { StructuredAssistantResponse } from './structured-assistant.types';
+
+function draftFromFlatEntities(capability: string, entities: Record<string, string | number | boolean>) {
+  return applyDraftPatch(null, entitiesToDraftPatch(capability, entities), capability);
+}
 
 function buildTx(currentResolvedContext: unknown) {
   return {
@@ -53,8 +58,8 @@ function pickerResponse(): StructuredAssistantResponse {
   };
 }
 
-describe('StructuredAssistantPersistence.complete — the Draft persists across ENTITY_PICKER turns', () => {
-  it('writes the full draft entities into resolvedContext.pendingClarificationEntities for an ENTITY_PICKER response', async () => {
+describe('StructuredAssistantPersistence.complete — the ConversationDraft persists across ENTITY_PICKER turns', () => {
+  it('writes the full draft into resolvedContext.conversationDraft for an ENTITY_PICKER response', async () => {
     const { persistence, tx } = buildService({});
 
     await persistence.complete(
@@ -72,19 +77,19 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
           currency: 'MXN',
           customerQuery: 'Abraham',
           paymentMode: 'PAID',
-          source: 'CASH',
         },
       },
     );
 
     const updateData = tx.aIWorkspace.updateMany.mock.calls[0][0].data;
-    expect(updateData.resolvedContext.pendingClarificationEntities).toEqual({
+    const draft = updateData.resolvedContext.conversationDraft;
+    expect(draft.capability).toBe('REGISTER_SALE');
+    expect(draftToEntities(draft)).toEqual({
       watchId: 'watch-bruce-wayne',
       price: '500000.00',
       currency: 'MXN',
       customerQuery: 'Abraham',
       paymentMode: 'PAID',
-      source: 'CASH',
     });
     // The picker's own candidate list is durably remembered too (pre-existing behavior, unchanged).
     expect(updateData.resolvedContext.workingContext.lastPresentedCandidates.candidates).toHaveLength(3);
@@ -93,7 +98,11 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
 
   it('a later picker turn in the same draft reflects whatever the caller supplied as the complete current snapshot', async () => {
     const { persistence, tx } = buildService({
-      pendingClarificationEntities: { watchId: 'watch-bruce-wayne', price: '500000.00', currency: 'MXN' },
+      conversationDraft: draftFromFlatEntities('REGISTER_SALE', {
+        watchId: 'watch-bruce-wayne',
+        price: '500000.00',
+        currency: 'MXN',
+      }),
     });
 
     await persistence.complete(
@@ -110,7 +119,7 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
     );
 
     const updateData = tx.aIWorkspace.updateMany.mock.calls[0][0].data;
-    expect(updateData.resolvedContext.pendingClarificationEntities).toEqual({
+    expect(draftToEntities(updateData.resolvedContext.conversationDraft)).toEqual({
       watchId: 'watch-bruce-wayne',
       price: '500000.00',
       currency: 'MXN',
@@ -120,7 +129,11 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
 
   it('a shown ACTION_PREVIEW_CARD keeps the draft alive (not confirmed yet — corrections must still be able to target it)', async () => {
     const { persistence, tx } = buildService({
-      pendingClarificationEntities: { watchId: 'watch-bruce-wayne', price: '500000.00', currency: 'MXN' },
+      conversationDraft: draftFromFlatEntities('REGISTER_SALE', {
+        watchId: 'watch-bruce-wayne',
+        price: '500000.00',
+        currency: 'MXN',
+      }),
     });
     const preview: StructuredAssistantResponse = {
       requestId: 'ar-3',
@@ -149,17 +162,18 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
     );
 
     const updateData = tx.aIWorkspace.updateMany.mock.calls[0][0].data;
-    expect(updateData.resolvedContext.pendingClarificationEntities).toEqual({
+    expect(draftToEntities(updateData.resolvedContext.conversationDraft)).toEqual({
       watchId: 'watch-bruce-wayne',
       price: '500000.00',
       currency: 'MXN',
       customerId: 'client-abraham-valdez',
+      clientId: 'client-abraham-valdez',
     });
   });
 
   it('clears the draft on a hard ERROR_RECOVERY_CARD failure', async () => {
     const { persistence, tx } = buildService({
-      pendingClarificationEntities: { watchId: 'watch-bruce-wayne' },
+      conversationDraft: draftFromFlatEntities('REGISTER_SALE', { watchId: 'watch-bruce-wayne' }),
     });
     const failure: StructuredAssistantResponse = {
       requestId: 'ar-4',
@@ -185,6 +199,6 @@ describe('StructuredAssistantPersistence.complete — the Draft persists across 
     );
 
     const updateData = tx.aIWorkspace.updateMany.mock.calls[0][0].data;
-    expect(updateData.resolvedContext.pendingClarificationEntities).toBeUndefined();
+    expect(updateData.resolvedContext.conversationDraft).toBeUndefined();
   });
 });

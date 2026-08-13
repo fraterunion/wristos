@@ -15,6 +15,7 @@ import { IntentReference } from '../context/reference-schema';
 import { mergeTrustedIds, stripUntrustedEntityIds } from '../context/trusted-entities';
 import { AssistantWorkingContext, WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
 import { WorkingContextService } from '../context/working-context.service';
+import { applyDraftPatch, ConversationDraft, draftToEntities, emptyDraft } from '../context/conversation-draft';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { PickerSelectionDto } from '../dto/picker-selection.dto';
 import { BusinessActionId } from '../planner/planner.types';
@@ -248,17 +249,7 @@ export class NaturalLanguageAssistantService {
         // Fall through to full NLP with cleared pending context.
       } else {
         // 3) Field lock — resolve the pending field before unrestricted NLP.
-        const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-        const priorEntities = await this.loadPriorWriteEntities(
-          actor.tenantId,
-          dto.conversationId,
-          request.id,
-          pendingIntent,
-        );
-        const lockedDraft: Record<string, string | number | boolean> = {
-          ...draftEntities,
-          ...priorEntities,
-        };
+        const lockedDraft = this.currentDraftEntities(loaded, pendingIntent);
 
         const lock = await this.clarificationFieldLock.resolve({
           tenantId: actor.tenantId,
@@ -867,40 +858,8 @@ export class NaturalLanguageAssistantService {
       WRITE_CLARIFICATION_INTENTS.has(pendingIntent) &&
       intent === pendingIntent
     ) {
-      const prior = dto.conversationId
-        ? await this.prisma.aIRequest.findFirst({
-            where: {
-              tenantId: actor.tenantId,
-              conversationId: dto.conversationId,
-              id: { not: request.id },
-              requestPayload: {
-                path: ['resolvedIntent'],
-                equals: pendingIntent,
-              },
-            },
-            orderBy: { createdAt: 'desc' },
-            select: { requestPayload: true },
-          })
-        : null;
-      const priorPayload =
-        prior?.requestPayload && typeof prior.requestPayload === 'object'
-          ? (prior.requestPayload as Record<string, unknown>)
-          : null;
-      const priorEntities = Object.fromEntries(
-        (
-          priorPayload?.resolvedEntities &&
-          typeof priorPayload.resolvedEntities === 'object' &&
-          !Array.isArray(priorPayload.resolvedEntities)
-            ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
-            : []
-        ).filter(
-          (entry): entry is [string, string | number | boolean] =>
-            typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
-        ),
-      );
       entities = {
-        ...this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw),
-        ...priorEntities,
+        ...this.currentDraftEntities(loaded, pendingIntent),
         ...entities,
       };
       telem(this.telemetry, {
@@ -926,6 +885,23 @@ export class NaturalLanguageAssistantService {
     };
     const response = await this.assistant.executeClaimed(actor, structuredRequest, request);
     return { resolvedIntent: intent, response, resolvedEntities: entities };
+  }
+
+  /**
+   * The ConversationDraft, flattened to the entities shape the planner/
+   * entity resolvers/bindings have always consumed. The ONE place any
+   * continuation/correction handler reads "what's already known" — no more
+   * dual-mechanism reconstruction (this used to also re-scan AIRequest
+   * history via loadPriorWriteEntities as a backstop, from before the Draft
+   * was reliably persisted through every response type; that backstop is
+   * gone now that StructuredAssistantPersistence.complete() persists the
+   * Draft on every ENTITY_PICKER/MISSING_FIELDS_CARD/ACTION_PREVIEW_CARD).
+   */
+  private currentDraftEntities(
+    loaded: { resolvedContextRaw: unknown },
+    intent: string,
+  ): Record<string, string | number | boolean> {
+    return draftToEntities(this.workingContext.readConversationDraft(loaded.resolvedContextRaw) ?? emptyDraft(intent));
   }
 
   /**
@@ -1011,11 +987,11 @@ export class NaturalLanguageAssistantService {
    * Resumes a pending write from an already-RESOLVED entity reference —
    * shared by ordinal/deictic continuation ("el primero") and the
    * structured picker-selection EVENT (handlePickerSelection()). Never
-   * re-runs NLP: it merges the one resolved slot into whatever the Draft
-   * already knows (readPendingClarificationEntities + the last recorded
-   * AIRequest for this write intent — see loadPriorWriteEntities) and hands
-   * the merged entities straight to the SAME planner/resolver pipeline any
-   * fresh write request goes through. Every other slot survives untouched.
+   * re-runs NLP: it's a PATCH — this is the picker equivalent of
+   * applyDraftCorrection() — reading the current ConversationDraft, patching
+   * in exactly the one resolved field, and handing the flattened result to
+   * the SAME planner/resolver pipeline any fresh write request goes
+   * through. Every other field survives untouched.
    */
   private async continueFromResolvedReference(args: {
     actor: AssistantActorContext;
@@ -1071,21 +1047,22 @@ export class NaturalLanguageAssistantService {
       resolution.entityType === 'WATCH'
     ) {
       const writeIntent = loaded.working.lastIntent;
-      const priorEntities = await this.loadPriorWriteEntities(
-        actor.tenantId,
-        dto.conversationId,
-        request.id,
+      const currentDraft = this.workingContext.readConversationDraft(loaded.resolvedContextRaw);
+      // A customer/seller query still unresolved at the time the watch was
+      // ambiguous may have been a mis-parse riding along with it — cleared
+      // exactly like the pre-Draft version of this code did; a trusted,
+      // already-RESOLVED party is never touched.
+      const clearUnresolvedParty =
+        currentDraft?.customer && !currentDraft.customer.resolvedId ? { customer: undefined } : {};
+      const patchedDraft = applyDraftPatch(
+        currentDraft,
+        {
+          watch: { resolvedId: resolution.id, label: resolution.label, confidence: 'RESOLVED' },
+          ...clearUnresolvedParty,
+        },
         writeIntent,
       );
-      const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-      const writeEntities: Record<string, string | number | boolean> = {
-        ...draftEntities,
-        ...priorEntities,
-        watchId: resolution.id,
-        watchLabel: resolution.label,
-      };
-      delete (writeEntities as Record<string, unknown>).customerQuery;
-      delete (writeEntities as Record<string, unknown>).clientQuery;
+      const writeEntities = draftToEntities(patchedDraft);
       await this.aiRequests.recordInterpretation(request.id, {
         intent: writeIntent,
         entities: writeEntities,
@@ -1117,20 +1094,13 @@ export class NaturalLanguageAssistantService {
       resolution.entityType === 'CLIENT' &&
       !resolution.id.startsWith('__')
     ) {
-      const priorEntities = await this.loadPriorWriteEntities(
-        actor.tenantId,
-        dto.conversationId,
-        request.id,
+      const currentDraft = this.workingContext.readConversationDraft(loaded.resolvedContextRaw);
+      const patchedDraft = applyDraftPatch(
+        currentDraft,
+        { customer: { resolvedId: resolution.id, label: resolution.label, confidence: 'RESOLVED' } },
         'REGISTER_SALE',
       );
-      const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-      const saleEntities: Record<string, string | number | boolean> = {
-        ...draftEntities,
-        ...priorEntities,
-        customerId: resolution.id,
-        clientId: resolution.id,
-        customerName: resolution.label,
-      };
+      const saleEntities = draftToEntities(patchedDraft);
       await this.aiRequests.recordInterpretation(request.id, {
         intent: 'REGISTER_SALE',
         entities: saleEntities,
@@ -1570,28 +1540,31 @@ export class NaturalLanguageAssistantService {
     match: { field: 'amount' | 'currency' | 'payment' | 'watch-or-customer'; rawValue: string };
   }): Promise<NaturalLanguageAssistantResult | null> {
     const { actor, dto, request, loaded, intent, match } = args;
-    const draftEntities = this.workingContext.readPendingClarificationEntities(loaded.resolvedContextRaw);
-    const priorEntities = await this.loadPriorWriteEntities(actor.tenantId, dto.conversationId, request.id, intent);
-    const current: Record<string, string | number | boolean> = { ...draftEntities, ...priorEntities };
+    const currentDraft = this.workingContext.readConversationDraft(loaded.resolvedContextRaw);
 
+    // Every branch below spreads the Draft's CURRENT sub-object and
+    // overrides only the one leaf that changed — "No. Fueron 480." must
+    // never wipe a currency the user already stated, "No. Fue por Bancos."
+    // must never wipe the payment mode, and so on.
     if (match.field === 'amount') {
       const parsed = parseCorrectedAmount(match.rawValue);
       if (parsed === null) return null;
-      const amountKey = intent === 'REGISTER_PURCHASE' ? 'cost' : 'price';
-      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, entities: { ...current, [amountKey]: parsed }, correctionField: 'amount' });
+      const patchedDraft = applyDraftPatch(currentDraft, { amount: { ...currentDraft?.amount, value: parsed } }, intent);
+      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, draft: patchedDraft, correctionField: 'amount' });
     }
 
     if (match.field === 'currency') {
       const currency = detectCorrectedCurrency(match.rawValue);
       if (!currency) return null;
-      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, entities: { ...current, currency }, correctionField: 'currency' });
+      const patchedDraft = applyDraftPatch(currentDraft, { amount: { ...currentDraft?.amount, currency } }, intent);
+      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, draft: patchedDraft, correctionField: 'currency' });
     }
 
     if (match.field === 'payment') {
       const account = detectCorrectedAccount(match.rawValue, intent);
       if (!account) return null;
-      const paymentKey = intent === 'REGISTER_SALE' ? 'destination' : 'sourceAccount';
-      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, entities: { ...current, [paymentKey]: account }, correctionField: 'payment' });
+      const patchedDraft = applyDraftPatch(currentDraft, { payment: { ...currentDraft?.payment, account } }, intent);
+      return this.resumeWithCorrectedDraft({ actor, dto, request, intent, draft: patchedDraft, correctionField: 'payment' });
     }
 
     // 'watch-or-customer' — genuinely ambiguous from text alone ("Batman"
@@ -1599,7 +1572,10 @@ export class NaturalLanguageAssistantService {
     // the SAME watch resolver the original extraction uses first (universal
     // 'watchId' pendingField name); only if it finds nothing at all does
     // this attempt the customer/seller resolver — never both, never a guess
-    // presented to the user without verification.
+    // presented to the user without verification. ClarificationFieldLockService
+    // still speaks the flat entities dialect (unchanged, out of this
+    // refactor's scope), so the Draft is flattened once, right at this call.
+    const current = draftToEntities(currentDraft ?? emptyDraft(intent));
     const watchAttempt = await this.clarificationFieldLock.resolve({
       tenantId: actor.tenantId,
       intent,
@@ -1632,10 +1608,11 @@ export class NaturalLanguageAssistantService {
     dto: AssistantMessageDto;
     request: AIRequest;
     intent: string;
-    entities: Record<string, string | number | boolean>;
+    draft: ConversationDraft;
     correctionField: string;
   }): Promise<NaturalLanguageAssistantResult> {
-    const { actor, dto, request, intent, entities, correctionField } = args;
+    const { actor, dto, request, intent, draft, correctionField } = args;
+    const entities = draftToEntities(draft);
     await this.aiRequests.recordInterpretation(request.id, {
       intent,
       entities,
@@ -1664,44 +1641,6 @@ export class NaturalLanguageAssistantService {
       request,
     );
     return { resolvedIntent: intent as IntentCandidateIntent, response: continued, resolvedEntities: entities };
-  }
-
-  private async loadPriorWriteEntities(
-    tenantId: string,
-    conversationId: string | undefined,
-    requestId: string,
-    intent: string,
-  ): Promise<Record<string, string | number | boolean>> {
-    if (!conversationId) return {};
-    const prior = await this.prisma.aIRequest.findFirst({
-      where: {
-        tenantId,
-        conversationId,
-        id: { not: requestId },
-        requestPayload: {
-          path: ['resolvedIntent'],
-          equals: intent,
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { requestPayload: true },
-    });
-    const priorPayload =
-      prior?.requestPayload && typeof prior.requestPayload === 'object'
-        ? (prior.requestPayload as Record<string, unknown>)
-        : null;
-    return Object.fromEntries(
-      (
-        priorPayload?.resolvedEntities &&
-        typeof priorPayload.resolvedEntities === 'object' &&
-        !Array.isArray(priorPayload.resolvedEntities)
-          ? Object.entries(priorPayload.resolvedEntities as Record<string, unknown>)
-          : []
-      ).filter(
-        (entry): entry is [string, string | number | boolean] =>
-          typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
-      ),
-    );
   }
 
   private async handleCompositionPickerSelection(args: {

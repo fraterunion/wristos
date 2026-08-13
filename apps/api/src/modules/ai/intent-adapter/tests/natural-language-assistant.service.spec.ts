@@ -1,6 +1,12 @@
 import { ConflictException } from '@nestjs/common';
 import { NaturalLanguageAssistantService } from '../natural-language-assistant.service';
 import { ReferenceResolverService } from '../../context/reference-resolver.service';
+import { applyDraftPatch, entitiesToDraftPatch } from '../../context/conversation-draft';
+
+/** Test-only convenience: builds a ConversationDraft from the same flat entities shape the pre-Draft tests already used. */
+function draftFromFlatEntities(capability: string, entities: Record<string, string | number | boolean>) {
+  return applyDraftPatch(null, entitiesToDraftPatch(capability, entities), capability);
+}
 
 function buildService(overrides: {
   claimText?: jest.Mock;
@@ -28,7 +34,12 @@ function buildService(overrides: {
     persistSelection: overrides.persistSelection ?? jest.fn().mockResolvedValue({ version: 2, working: {} }),
     persistClarificationTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
     persistEntityPickerTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
-    readPendingClarificationEntities: jest.fn().mockReturnValue({}),
+    // Mirrors the real WorkingContextService.readConversationDraft(): derives
+    // straight from whatever resolvedContextRaw the workingLoad mock above
+    // returned, so tests only need to set `resolvedContextRaw.conversationDraft`.
+    readConversationDraft: jest.fn(
+      (raw: unknown) => (raw as { conversationDraft?: unknown } | null)?.conversationDraft ?? null,
+    ),
     buildAuditFromResolution: jest.fn().mockReturnValue({
       contextSchemaVersion: '1.1',
       contextVersion: 1,
@@ -430,21 +441,17 @@ describe('NaturalLanguageAssistantService.handlePickerSelection: structured pick
         },
       },
       version: 4,
-      resolvedContextRaw: {},
-    });
-    const findFirstAIRequest = jest.fn().mockResolvedValue({
-      requestPayload: {
-        resolvedIntent: 'REGISTER_SALE',
-        resolvedEntities: {
+      resolvedContextRaw: {
+        conversationDraft: draftFromFlatEntities('REGISTER_SALE', {
           watchQuery: 'Bruce Wayne',
           price: '500000.00',
           currency: 'MXN',
           customerQuery: 'Abraham',
           paymentMode: 'PAID',
-        },
+        }),
       },
     });
-    const { service } = buildService({ provider, executeClaimed, workingLoad, findFirstAIRequest });
+    const { service } = buildService({ provider, executeClaimed, workingLoad });
 
     const result = await service.handlePickerSelection(actor, basePickerDto);
 
@@ -616,13 +623,7 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         lastPresentedCandidates: { ...abrahamCandidates, ...overridesToCandidates },
       },
       version: 4,
-      resolvedContextRaw: {},
-    });
-  }
-
-  function priorDraftFindFirst() {
-    return jest.fn().mockResolvedValue({
-      requestPayload: { resolvedIntent: 'REGISTER_SALE', resolvedEntities: priorDraft },
+      resolvedContextRaw: { conversationDraft: draftFromFlatEntities('REGISTER_SALE', priorDraft) },
     });
   }
 
@@ -634,7 +635,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         provider,
         executeClaimed,
         workingLoad: pickerWorkingLoad(),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
 
       const result = await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-1' });
@@ -662,7 +662,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         provider,
         executeClaimed,
         workingLoad: pickerWorkingLoad(),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
 
       await service.handleMessage(actor, { ...baseDto, text: 'Abraham Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-2' });
@@ -677,7 +676,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
       const { service: clickService } = buildService({
         executeClaimed: clickExecuteClaimed,
         workingLoad: pickerWorkingLoad(),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
       await clickService.handlePickerSelection(actor, {
         entityType: 'CLIENT',
@@ -693,7 +691,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
       const { service: typedService } = buildService({
         executeClaimed: typedExecuteClaimed,
         workingLoad: pickerWorkingLoad(),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
       await typedService.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-3' });
 
@@ -709,7 +706,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         provider,
         executeClaimed,
         workingLoad: pickerWorkingLoad(),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
 
       const result = await service.handleMessage(actor, { ...baseDto, text: 'Abraham', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-ambiguous' });
@@ -734,7 +730,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         provider,
         executeClaimed,
         workingLoad: pickerWorkingLoad(),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
 
       await service.handleMessage(actor, { ...baseDto, text: 'Buenos días, ¿cómo vamos?', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-nomatch' });
@@ -754,7 +749,6 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         provider,
         executeClaimed,
         workingLoad: pickerWorkingLoad({ presentedAt: staleAt }),
-        findFirstAIRequest: priorDraftFindFirst(),
       });
 
       await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-expired' });
@@ -783,21 +777,23 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
   });
 
   describe('§2/§7 Draft mutation — corrections replace exactly one slot, everything else survives', () => {
-    function fullDraftFindFirst(overrides: Record<string, string | number | boolean> = {}) {
+    function fullDraft(overrides: Record<string, string | number | boolean> = {}) {
+      return draftFromFlatEntities('REGISTER_SALE', {
+        watchQuery: 'Bruce Wayne',
+        watchId: 'watch-bruce-wayne',
+        price: '500000.00',
+        currency: 'MXN',
+        customerId: 'client-abraham-valdez',
+        customerName: 'Abraham Valdez',
+        paymentMode: 'PAID',
+        ...overrides,
+      });
+    }
+    function fullDraftWorkingLoad(overrides: Record<string, string | number | boolean> = {}) {
       return jest.fn().mockResolvedValue({
-        requestPayload: {
-          resolvedIntent: 'REGISTER_SALE',
-          resolvedEntities: {
-            watchQuery: 'Bruce Wayne',
-            watchId: 'watch-bruce-wayne',
-            price: '500000.00',
-            currency: 'MXN',
-            customerId: 'client-abraham-valdez',
-            customerName: 'Abraham Valdez',
-            paymentMode: 'PAID',
-            ...overrides,
-          },
-        },
+        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+        version: 1,
+        resolvedContextRaw: { conversationDraft: fullDraft(overrides) },
       });
     }
 
@@ -812,15 +808,9 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         }
         return Promise.resolve({ kind: 'NO_MATCH' });
       });
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
       const { service } = buildService({
         executeClaimed,
-        workingLoad,
-        findFirstAIRequest: fullDraftFindFirst(),
+        workingLoad: fullDraftWorkingLoad(),
         clarificationFieldLockResolve,
       });
 
@@ -838,12 +828,7 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
 
     it('"No. Fueron 480." replaces only price — everything else survives', async () => {
       const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
-      const { service } = buildService({ executeClaimed, workingLoad, findFirstAIRequest: fullDraftFindFirst() });
+      const { service } = buildService({ executeClaimed, workingLoad: fullDraftWorkingLoad() });
 
       await service.handleMessage(actor, { ...baseDto, text: 'No. Fueron 480.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-amount' });
 
@@ -857,12 +842,7 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
 
     it('"No. Fue por Bancos." replaces only destination (BANCOS for a sale) — everything else survives', async () => {
       const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
-      const { service } = buildService({ executeClaimed, workingLoad, findFirstAIRequest: fullDraftFindFirst() });
+      const { service } = buildService({ executeClaimed, workingLoad: fullDraftWorkingLoad() });
 
       await service.handleMessage(actor, { ...baseDto, text: 'No. Fue por Bancos.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-payment' });
 
@@ -875,12 +855,7 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
 
     it('"No. Fue efectivo." replaces destination with CASH', async () => {
       const executeClaimed = jest.fn().mockResolvedValue(previewResponse);
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
-      const { service } = buildService({ executeClaimed, workingLoad, findFirstAIRequest: fullDraftFindFirst() });
+      const { service } = buildService({ executeClaimed, workingLoad: fullDraftWorkingLoad() });
 
       await service.handleMessage(actor, { ...baseDto, text: 'No. Fue efectivo.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'corr-cash' });
 
@@ -902,15 +877,9 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         }
         return Promise.resolve({ kind: 'NO_MATCH' });
       });
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
       const { service } = buildService({
         executeClaimed,
-        workingLoad,
-        findFirstAIRequest: fullDraftFindFirst(),
+        workingLoad: fullDraftWorkingLoad(),
         clarificationFieldLockResolve,
       });
 
@@ -926,34 +895,31 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
 
     it('§3 multiple sequential corrections apply independently without ever rebuilding the whole Draft', async () => {
       const executeClaimed1 = jest.fn().mockResolvedValue(previewResponse);
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
       const clarificationFieldLockResolve = jest.fn().mockImplementation(({ pendingField, draftEntities }) => {
         if (pendingField === 'watchId') return Promise.resolve({ kind: 'BOUND', entities: { ...draftEntities, watchId: 'watch-batman', watchLabel: 'Batman' } });
         return Promise.resolve({ kind: 'NO_MATCH' });
       });
       const { service: service1 } = buildService({
         executeClaimed: executeClaimed1,
-        workingLoad,
-        findFirstAIRequest: fullDraftFindFirst(),
+        workingLoad: fullDraftWorkingLoad(),
         clarificationFieldLockResolve,
       });
       await service1.handleMessage(actor, { ...baseDto, text: 'No. Era Batman.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'multi-1' });
       const afterWatchCorrection = executeClaimed1.mock.calls[0][1].entities;
       expect(afterWatchCorrection.watchId).toBe('watch-batman');
 
-      // Second correction turn: the "prior write entities" a real conversation
-      // would recover now reflect the FIRST correction's result (recorded by
-      // recordInterpretation on that turn) — simulated here by pointing
-      // findFirstAIRequest at that exact snapshot.
+      // Second correction turn: the Draft a real conversation would load now
+      // reflects the FIRST correction's result (persisted by
+      // StructuredAssistantPersistence.complete() on that turn) — simulated
+      // here by pointing the next workingLoad at that exact snapshot.
       const executeClaimed2 = jest.fn().mockResolvedValue(previewResponse);
       const { service: service2 } = buildService({
         executeClaimed: executeClaimed2,
-        workingLoad,
-        findFirstAIRequest: jest.fn().mockResolvedValue({ requestPayload: { resolvedIntent: 'REGISTER_SALE', resolvedEntities: afterWatchCorrection } }),
+        workingLoad: jest.fn().mockResolvedValue({
+          working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+          version: 2,
+          resolvedContextRaw: { conversationDraft: draftFromFlatEntities('REGISTER_SALE', afterWatchCorrection) },
+        }),
       });
       await service2.handleMessage(actor, { ...baseDto, text: 'No. Fueron 480.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'multi-2' });
       const afterAmountCorrection = executeClaimed2.mock.calls[0][1].entities;
@@ -963,8 +929,11 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
       const executeClaimed3 = jest.fn().mockResolvedValue(previewResponse);
       const { service: service3 } = buildService({
         executeClaimed: executeClaimed3,
-        workingLoad,
-        findFirstAIRequest: jest.fn().mockResolvedValue({ requestPayload: { resolvedIntent: 'REGISTER_SALE', resolvedEntities: afterAmountCorrection } }),
+        workingLoad: jest.fn().mockResolvedValue({
+          working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
+          version: 3,
+          resolvedContextRaw: { conversationDraft: draftFromFlatEntities('REGISTER_SALE', afterAmountCorrection) },
+        }),
       });
       await service3.handleMessage(actor, { ...baseDto, text: 'No. Fue efectivo.', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'multi-3' });
       const afterPaymentCorrection = executeClaimed3.mock.calls[0][1].entities;
@@ -982,16 +951,10 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
       });
       const executeClaimed = jest.fn();
       const clarificationFieldLockResolve = jest.fn().mockResolvedValue({ kind: 'NO_MATCH' });
-      const workingLoad = jest.fn().mockResolvedValue({
-        working: { schemaVersion: '1.1', contextUpdatedAt: new Date().toISOString(), lastIntent: 'REGISTER_SALE' },
-        version: 1,
-        resolvedContextRaw: {},
-      });
       const { service } = buildService({
         provider,
         executeClaimed,
-        workingLoad,
-        findFirstAIRequest: fullDraftFindFirst(),
+        workingLoad: fullDraftWorkingLoad(),
         clarificationFieldLockResolve,
       });
 

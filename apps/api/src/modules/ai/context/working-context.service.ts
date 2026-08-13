@@ -1,6 +1,7 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
 import { AIAuditEventType, AIConversationSurface, AIInteractionState, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { applyDraftPatch, ConversationDraft, entitiesToDraftPatch } from './conversation-draft';
 import {
   AssistantWorkingContext,
   applyPresentedCandidates,
@@ -9,6 +10,7 @@ import {
   extractPresentedCandidatesFromEntityList,
   hashEntityId,
   parseResolvedContextShell,
+  readConversationDraft as readConversationDraftFromShell,
   readWorkingContext,
   writeWorkingContext,
   ContextEntityType,
@@ -260,9 +262,11 @@ export class WorkingContextService {
         ...writeWorkingContext(workspace.resolvedContext, nextWorking),
       };
       if (args.mode === 'MISSING_FIELDS') {
-        nextResolved.pendingClarificationEntities = args.entities;
+        const currentDraft = this.readConversationDraft(workspace.resolvedContext);
+        const patch = entitiesToDraftPatch(args.intent, args.entities);
+        nextResolved.conversationDraft = applyDraftPatch(currentDraft, patch, args.intent);
       } else {
-        delete nextResolved.pendingClarificationEntities;
+        delete nextResolved.conversationDraft;
       }
 
       const changed = await tx.aIWorkspace.updateMany({
@@ -327,16 +331,9 @@ export class WorkingContextService {
     });
   }
 
-  readPendingClarificationEntities(resolvedContextRaw: unknown): Record<string, string | number | boolean> {
-    const shell = parseResolvedContextShell(resolvedContextRaw);
-    const raw = (shell as { pendingClarificationEntities?: unknown }).pendingClarificationEntities;
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-    return Object.fromEntries(
-      Object.entries(raw as Record<string, unknown>).filter(
-        (entry): entry is [string, string | number | boolean] =>
-          typeof entry[1] === 'string' || typeof entry[1] === 'boolean' || typeof entry[1] === 'number',
-      ),
-    );
+  /** The ConversationDraft — the single source of truth for the write intent in progress. Null if none is active. */
+  readConversationDraft(resolvedContextRaw: unknown): ConversationDraft | null {
+    return readConversationDraftFromShell(resolvedContextRaw);
   }
 
   /**

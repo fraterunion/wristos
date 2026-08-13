@@ -42,22 +42,26 @@ function buildFieldLockService(overrides: {
       },
       version: 3,
       resolvedContextRaw: {
-        pendingClarificationEntities: {
-          customerId: 'c1',
-          customerName: 'Bruce Wayne',
-          price: 10000,
-          currency: 'USD',
+        conversationDraft: {
+          schemaVersion: '1',
+          capability: 'REGISTER_SALE',
+          status: 'ACTIVE',
+          updatedAt: new Date().toISOString(),
+          customer: { resolvedId: 'c1', label: 'Bruce Wayne', confidence: 'RESOLVED' },
+          amount: { value: 10000, currency: 'USD' },
         },
       },
     }),
     persistSelection: jest.fn(),
     persistClarificationTurn: jest.fn(),
     persistEntityPickerTurn: jest.fn().mockResolvedValue({ conversationId: 'c1', workspaceId: 'w1', version: 4 }),
-    readPendingClarificationEntities: jest.fn().mockReturnValue({
-      customerId: 'c1',
-      customerName: 'Bruce Wayne',
-      price: 10000,
-      currency: 'USD',
+    readConversationDraft: jest.fn().mockReturnValue({
+      schemaVersion: '1',
+      capability: 'REGISTER_SALE',
+      status: 'ACTIVE',
+      updatedAt: new Date().toISOString(),
+      customer: { resolvedId: 'c1', label: 'Bruce Wayne', confidence: 'RESOLVED' },
+      amount: { value: 10000, currency: 'USD' },
     }),
     buildAuditFromResolution: jest.fn(),
   };
@@ -212,9 +216,23 @@ describe('NaturalLanguageAssistantService: clarification field lock', () => {
         contextUpdatedAt: new Date().toISOString(),
       },
       version: 2,
-      resolvedContextRaw: { pendingClarificationEntities: { amount: 500, concept: 'gasolina' } },
+      resolvedContextRaw: {
+        conversationDraft: {
+          schemaVersion: '1',
+          capability: 'REGISTER_EXPENSE',
+          status: 'ACTIVE',
+          updatedAt: new Date().toISOString(),
+          metadata: { amount: 500, concept: 'gasolina' },
+        },
+      },
     });
-    workingContext.readPendingClarificationEntities.mockReturnValue({ amount: 500, concept: 'gasolina' });
+    workingContext.readConversationDraft.mockReturnValue({
+      schemaVersion: '1',
+      capability: 'REGISTER_EXPENSE',
+      status: 'ACTIVE',
+      updatedAt: new Date().toISOString(),
+      metadata: { amount: 500, concept: 'gasolina' },
+    });
 
     await service.handleMessage(actor, {
       text: 'Pesos',
