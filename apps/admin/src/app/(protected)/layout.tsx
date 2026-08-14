@@ -8,7 +8,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   if (isLoading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-muted">
+      <div className="flex min-h-dvh items-center justify-center text-sm text-muted">
         Cargando sesión...
       </div>
     );
