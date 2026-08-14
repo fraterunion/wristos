@@ -43,7 +43,7 @@ import {
   COMPOSITION_SEARCH_ID,
   parseCompositionCreateSentinel,
 } from '../composition/composition.types';
-import { IntentAdapterService } from './intent-adapter.service';
+import { IntentAdapterOutcome, IntentAdapterService } from './intent-adapter.service';
 import { INTENT_CANDIDATE_VALUES, IntentCandidateIntent } from './intent-schema';
 import { assertWithinTextLimit, decideConfidencePolicy } from './safety';
 import {
@@ -56,6 +56,7 @@ import { detectExpenseCorrectionLanguage } from '../reversals/expense-correction
 import { detectTransferCorrectionLanguage } from '../reversals/transfer-correction-language';
 import { reverseIntentFromLastReversibleAction } from '../reversals/last-action-reverse-allowlist';
 import { LastReversibleActionContext } from '../reversals/financial-reversal.types';
+import { OperationalIntentRouterService, toRawCandidateOutput } from '../operational-router/operational-intent-router.service';
 import { parseResolvedContextShell } from '../context/working-context';
 
 const WRITE_CLARIFICATION_INTENTS = new Set<string>([
@@ -112,6 +113,7 @@ export class NaturalLanguageAssistantService {
     private readonly prisma: PrismaService,
     private readonly compositionOrchestrator: CompositionOrchestrator,
     private readonly clarificationFieldLock: ClarificationFieldLockService,
+    private readonly operationalRouter: OperationalIntentRouterService,
     @Optional() private readonly telemetry?: TelemetryEmitter,
   ) {}
 
@@ -632,16 +634,33 @@ export class NaturalLanguageAssistantService {
       return { resolvedIntent: 'GET_CLIENT_ACCOUNTS', response, resolvedEntities: entities };
     }
 
-    const providerContext = toProviderConversationContext(workingForProvider, dto.locale?.startsWith('es') ? 'es' : dto.locale);
-    const outcome = await this.intentAdapter.interpret({
-      userText: normalizedText,
-      locale: dto.locale ?? 'es-MX',
-      timezone: dto.timezone ?? 'UTC',
-      allowedIntents: INTENT_CANDIDATE_VALUES,
-      currentDate: new Date().toISOString().slice(0, 10),
-      requestTraceId: traceId,
-      conversationContext: providerContext,
-    });
+    // Operational Intent Router: deterministic, server-side, pre-provider.
+    // Recognizes high-confidence dealer language ("Vendí Bruce Wayne en
+    // 500k") and constructs the same candidate shape a successful Claude
+    // call would produce — validated through the identical
+    // buildIntentCandidate() gate (intentAdapter.interpretDeterministic()).
+    // Only when the router finds NO_OPERATION_MATCH or AMBIGUOUS_OPERATION
+    // does this fall through to the provider, unchanged from today. See
+    // docs/ai/OPERATIONAL_INTENT_ROUTER.md.
+    const routerVerdict = this.operationalRouter.route(normalizedText);
+    const routerRawOutput = toRawCandidateOutput(routerVerdict);
+    const currentDate = new Date().toISOString().slice(0, 10);
+
+    let outcome: IntentAdapterOutcome;
+    if (routerRawOutput) {
+      outcome = this.intentAdapter.interpretDeterministic(routerRawOutput, currentDate, traceId);
+    } else {
+      const providerContext = toProviderConversationContext(workingForProvider, dto.locale?.startsWith('es') ? 'es' : dto.locale);
+      outcome = await this.intentAdapter.interpret({
+        userText: normalizedText,
+        locale: dto.locale ?? 'es-MX',
+        timezone: dto.timezone ?? 'UTC',
+        allowedIntents: INTENT_CANDIDATE_VALUES,
+        currentDate,
+        requestTraceId: traceId,
+        conversationContext: providerContext,
+      });
+    }
 
     // Durable provider metrics (best-effort). Never awaited for correctness.
     void this.aiRequests.recordProviderMetrics(request.id, {

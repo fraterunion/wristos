@@ -5,6 +5,10 @@ import { buildIntentCandidate, IntentCandidateFailureReason, StructuredIntentCan
 import { IntentAdapterProvider, IntentInterpretationInput, IntentProviderFailureType } from './intent-adapter-provider';
 import { assertWithinTextLimit, sanitizeConversationContext, MAX_USER_TEXT_LENGTH } from './safety';
 import { INTENT_SCHEMA_VERSION } from './prompt-policy';
+import { RouterRawCandidateOutput } from '../operational-router/operational-intent-router.types';
+
+export const DETERMINISTIC_ROUTER_PROVIDER_NAME = 'operational-intent-router';
+export const DETERMINISTIC_ROUTER_MODEL_NAME = 'deterministic-v1';
 
 export const INTENT_ADAPTER_PROVIDER = Symbol('INTENT_ADAPTER_PROVIDER');
 
@@ -107,6 +111,56 @@ export class IntentAdapterService {
       requestId: rawInput.requestTraceId,
       tokenInput: raw.tokenUsage?.inputTokens,
       tokenOutput: raw.tokenUsage?.outputTokens,
+      funnelStage: 'intent',
+    });
+    return { kind: 'CANDIDATE', candidate: result.candidate, ...meta };
+  }
+
+  /**
+   * The deterministic-router counterpart to interpret() — skips
+   * provider.interpret() entirely and feeds the router's own candidate
+   * through the IDENTICAL buildIntentCandidate() validation gate the
+   * provider path uses (same per-intent entitySchemas, same normalization).
+   * A malformed router extraction is caught by that same Zod boundary, not
+   * trusted implicitly. requestTraceId is accepted only for telemetry
+   * parity with interpret() — never used to bypass any check.
+   */
+  interpretDeterministic(rawOutput: RouterRawCandidateOutput, currentDate: string, requestTraceId?: string): IntentAdapterOutcome {
+    const startedAt = Date.now();
+    const meta: OutcomeMeta = {
+      provider: DETERMINISTIC_ROUTER_PROVIDER_NAME,
+      model: DETERMINISTIC_ROUTER_MODEL_NAME,
+      latencyMs: Date.now() - startedAt,
+      schemaVersion: INTENT_SCHEMA_VERSION,
+    };
+
+    const result = buildIntentCandidate(rawOutput, currentDate);
+    if (result.kind === 'FAILED') {
+      // Should not happen in practice (the router only ever emits
+      // entitySchemas-shaped values) but fails exactly like a malformed
+      // provider response would, rather than throwing — same contract as
+      // interpret()'s INVALID_OUTPUT branch.
+      this.logger.warn(`[operational-intent-router] invalid output reason=${result.reason} issueCount=${result.issueCount}`);
+      telem(this.telemetry, {
+        event: 'ProviderCompleted',
+        provider: meta.provider,
+        model: meta.model,
+        providerLatencyMs: meta.latencyMs,
+        schemaValidationFailure: true,
+        failureType: 'SCHEMA_INVALID',
+        requestId: requestTraceId,
+      });
+      return { kind: 'INVALID_OUTPUT', reason: result.reason, issueCount: result.issueCount, issuePaths: result.issuePaths, ...meta };
+    }
+
+    telem(this.telemetry, {
+      event: 'ProviderCompleted',
+      provider: meta.provider,
+      model: meta.model,
+      providerLatencyMs: meta.latencyMs,
+      providerIntent: result.candidate.intent,
+      normalizedIntent: result.candidate.intent,
+      requestId: requestTraceId,
       funnelStage: 'intent',
     });
     return { kind: 'CANDIDATE', candidate: result.candidate, ...meta };

@@ -226,6 +226,14 @@ export const entitySchemas = {
       currency: currency.optional(),
       effectiveDate: isoDate.optional(),
       paymentMode: z.enum(['PAID', 'CREDIT', 'PARTIAL']).optional(),
+      // The planner (business-actions.ts's registerSaleConditionalMissing)
+      // already treats `destination` as an optional REGISTER_SALE entity,
+      // reachable today only via the closed-choice clarification follow-up
+      // ("¿Dónde se recibió el pago?"). Without it here, a same-turn "...y
+      // me pagó por bancos." was silently stripped by this schema's own
+      // .strip() before ever reaching the planner — from ANY source
+      // (provider or router) — forcing an always-avoidable extra question.
+      destination: z.enum(['CASH', 'BANCOS', 'CESAR']).optional(),
     })
     .strip(),
 
