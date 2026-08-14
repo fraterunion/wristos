@@ -10,9 +10,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const assistantImmersive = pathname === '/assistant' || pathname.startsWith('/assistant/');
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface lg:flex-row">
+    // min-h-dvh (dynamic viewport height), not min-h-screen (100vh, static):
+    // on iOS, 100vh is sized as if browser chrome were fully hidden, so a
+    // page taller than the ACTUAL visible viewport ends up scrollable —
+    // which is exactly the trigger that can bring a Home Screen bookmark's
+    // chrome back mid-navigation on a page that overflows (the assistant's
+    // tall, dynamically-growing thread is far more likely to hit this than
+    // a shorter, more static page like the dashboard). pt-[env(...)] pairs
+    // with appleWebApp's black-translucent status bar (layout.tsx) so
+    // content never renders under the notch/status bar.
+    <div className="flex min-h-dvh flex-col bg-surface pt-[env(safe-area-inset-top)] lg:flex-row">
       <Sidebar />
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+      <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
         {assistantImmersive ? null : <Header />}
         <main
           className={
