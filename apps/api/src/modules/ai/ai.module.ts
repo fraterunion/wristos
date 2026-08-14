@@ -65,6 +65,7 @@ import { WorkingContextService } from './context/working-context.service';
 import { OperationalIntelligenceService } from './operational-intelligence/operational-intelligence.service';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { WatchInventoryResolver } from './watch-intelligence/watch-inventory-resolver.service';
+import { OperationalIntentRouterService } from './operational-router/operational-intent-router.service';
 
 @Module({
   imports: [
@@ -137,6 +138,7 @@ import { WatchInventoryResolver } from './watch-intelligence/watch-inventory-res
     ReferenceResolverService,
     WorkingContextService,
     ClarificationFieldLockService,
+    OperationalIntentRouterService,
     NaturalLanguageAssistantService,
     IntentAdapterRateLimitGuard,
   ],

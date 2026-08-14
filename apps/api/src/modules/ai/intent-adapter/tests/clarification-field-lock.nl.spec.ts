@@ -93,6 +93,7 @@ function buildFieldLockService(overrides: {
     prisma as never,
     compositionOrchestrator as never,
     clarificationFieldLock as never,
+    { route: () => ({ kind: 'NO_OPERATION_MATCH' }) } as never,
   );
   return { service, aiRequests, intentAdapter, executeClaimed, clarificationFieldLock, workingContext };
 }

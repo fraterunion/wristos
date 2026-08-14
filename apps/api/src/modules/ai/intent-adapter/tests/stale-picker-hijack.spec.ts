@@ -68,6 +68,12 @@ function buildService(overrides: {
   const clarificationFieldLock = {
     resolve: overrides.clarificationFieldLockResolve ?? jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }),
   };
+  // Disabled by default so every test in this file keeps exercising the
+  // provider-fallback path these tests were written against (they mock
+  // intentAdapter.interpret directly) — the router's own precedence
+  // interaction with the stale-picker gate is covered separately in
+  // operational-router/tests/nl-assistant-integration.spec.ts.
+  const operationalRouter = { route: () => ({ kind: 'NO_OPERATION_MATCH' }) };
   const service = new NaturalLanguageAssistantService(
     aiRequests as never,
     intentAdapter as never,
@@ -77,6 +83,7 @@ function buildService(overrides: {
     prisma as never,
     compositionOrchestrator as never,
     clarificationFieldLock as never,
+    operationalRouter as never,
   );
   return { service, request, aiRequests, intentAdapter, assistant, workingContext, prisma, clarificationFieldLock };
 }

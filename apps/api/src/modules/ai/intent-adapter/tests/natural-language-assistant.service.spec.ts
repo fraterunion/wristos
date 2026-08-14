@@ -16,6 +16,7 @@ function buildService(overrides: {
   persistSelection?: jest.Mock;
   findFirstAIRequest?: jest.Mock;
   clarificationFieldLockResolve?: jest.Mock;
+  operationalRouter?: { route: (text: string) => unknown };
 } = {}) {
   const request = { id: 'ar-1', traceId: 'trace-1', receivedAt: new Date('2026-08-07T00:00:00Z') };
   const aiRequests = {
@@ -58,6 +59,10 @@ function buildService(overrides: {
   const clarificationFieldLock = {
     resolve: overrides.clarificationFieldLockResolve ?? jest.fn().mockResolvedValue({ kind: 'NO_MATCH' }),
   };
+  // Defaults to NO_OPERATION_MATCH so every existing test in this file keeps
+  // exercising the provider path exactly as before — the router is opt-in
+  // per test via overrides.operationalRouter.
+  const operationalRouter = overrides.operationalRouter ?? { route: () => ({ kind: 'NO_OPERATION_MATCH' }) };
   const service = new NaturalLanguageAssistantService(
     aiRequests as never,
     intentAdapter as never,
@@ -67,6 +72,7 @@ function buildService(overrides: {
     prisma as never,
     compositionOrchestrator as never,
     clarificationFieldLock as never,
+    operationalRouter as never,
   );
   return { service, request, aiRequests, intentAdapter, assistant, workingContext, prisma, clarificationFieldLock };
 }
@@ -238,16 +244,11 @@ describe('NaturalLanguageAssistantService: claims durably BEFORE ever calling th
   });
 
   it('never touches Prisma directly — all durable state goes through AIRequestService', () => {
-    // Structural guarantee: the constructor accepts no PrismaService at all,
-    // so there is no way for this service to read or write a business table
-    // or bypass AIRequestService's own idempotency/audit bookkeeping.
     // Deps: AIRequestService, IntentAdapterService, StructuredAssistantService,
     // ReferenceResolverService, WorkingContextService, PrismaService,
-    // optional TelemetryEmitter.
-    // AIRequestService, IntentAdapterService, StructuredAssistantService,
-    // ReferenceResolverService, WorkingContextService, PrismaService,
-    // CompositionOrchestrator, ClarificationFieldLockService, optional TelemetryEmitter.
-    expect(NaturalLanguageAssistantService.length).toBe(9);
+    // CompositionOrchestrator, ClarificationFieldLockService,
+    // OperationalIntentRouterService, optional TelemetryEmitter.
+    expect(NaturalLanguageAssistantService.length).toBe(10);
   });
 });
 

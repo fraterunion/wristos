@@ -110,6 +110,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       prisma as never,
       compositionOrchestrator as never,
       clarificationFieldLock as never,
+      { route: () => ({ kind: 'NO_OPERATION_MATCH' }) } as never,
     );
 
     const [resultA, resultB] = await Promise.all([
@@ -160,6 +161,7 @@ describe('Concurrency: exactly one provider call per (tenant, actor, clientReque
       prisma as never,
       compositionOrchestrator as never,
       clarificationFieldLock as never,
+      { route: () => ({ kind: 'NO_OPERATION_MATCH' }) } as never,
     );
 
     await service.handleMessage(actor, dto);
