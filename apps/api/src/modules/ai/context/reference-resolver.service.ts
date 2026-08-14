@@ -197,6 +197,33 @@ export class ReferenceResolverService {
     };
   }
 
+  /**
+   * Pure content match against the currently-presented candidate labels —
+   * deliberately independent of candidate-list freshness (unlike
+   * resolveByTypedLabel/resolve, which check freshness FIRST and never even
+   * look at the text once a list is stale). Used to classify "does this
+   * message actually engage with the picker at all" before staleness is
+   * allowed to matter: an explicit attempt to select from a genuinely dead
+   * list must still fail closed as EXPIRED (never silently trusted), while a
+   * message that doesn't match the list's labels at all — expired or not —
+   * is simply not a picker interaction and must never be forced through one.
+   */
+  matchesPresentedLabel(
+    rawText: string,
+    context: AssistantWorkingContext | null,
+  ): 'MATCH' | 'AMBIGUOUS' | 'NO_MATCH' {
+    if (!context?.lastPresentedCandidates) return 'NO_MATCH';
+    const normalizedTyped = normalizeWatchText(rawText);
+    if (!normalizedTyped) return 'NO_MATCH';
+    const candidates = context.lastPresentedCandidates.candidates;
+    const matches = candidates.filter((c) => normalizeWatchText(c.label).includes(normalizedTyped));
+    const exact = matches.filter((c) => normalizeWatchText(c.label) === normalizedTyped);
+    const finalMatches = exact.length ? exact : matches;
+    if (finalMatches.length === 0) return 'NO_MATCH';
+    if (finalMatches.length > 1) return 'AMBIGUOUS';
+    return 'MATCH';
+  }
+
   private resolveOrdinal(
     reference: IntentReference,
     context: AssistantWorkingContext,

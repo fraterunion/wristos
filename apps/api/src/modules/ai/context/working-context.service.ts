@@ -337,6 +337,48 @@ export class WorkingContextService {
   }
 
   /**
+   * Best-effort: strips a picker/candidate list that this turn already
+   * determined the user is NOT engaging with (see
+   * NaturalLanguageAssistantService's picker-relevance gate) so it cannot
+   * hijack the NEXT turn either — a message two turns from now that happens
+   * to type-match one of these stale labels must not resolve against a list
+   * that was actually about something else. Deliberately narrow: never
+   * touches lastIntent, pendingMissingFields, or the ConversationDraft — a
+   * fresh command's own response persists those normally. Silently no-ops
+   * on a version race (another turn already moved state forward) or if the
+   * workspace has no picker context left to clear.
+   */
+  async clearStalePickerCandidates(
+    tenantId: string,
+    userId: string,
+    workspaceId: string,
+    expectedVersion: number,
+  ): Promise<void> {
+    const current = await this.prisma.aIWorkspace.findFirst({
+      where: { id: workspaceId, tenantId, userId, version: expectedVersion, deletedAt: null },
+      select: { resolvedContext: true },
+    });
+    const working = current ? readWorkingContext(current.resolvedContext) : null;
+    if (!working?.lastPresentedCandidates) return;
+    const { lastPresentedCandidates: _drop, ...rest } = working;
+    const nextWorking: AssistantWorkingContext = { ...rest, contextUpdatedAt: new Date().toISOString() };
+    const nextResolved = writeWorkingContext(current!.resolvedContext, nextWorking);
+    try {
+      await this.prisma.aIWorkspace.updateMany({
+        where: { id: workspaceId, tenantId, userId, version: expectedVersion, deletedAt: null },
+        data: {
+          resolvedContext: nextResolved as Prisma.InputJsonObject,
+          version: { increment: 1 },
+          lastActivityAt: new Date(),
+        },
+      });
+    } catch {
+      // Best-effort only — a fresh command's own response will overwrite
+      // this state anyway; this is just early cleanup for the in-between turn.
+    }
+  }
+
+  /**
    * Persist a field-lock entity picker (WATCH/CLIENT/…) so ordinal follow-ups
    * stay on the pending write intent without unrestricted NLP.
    */
