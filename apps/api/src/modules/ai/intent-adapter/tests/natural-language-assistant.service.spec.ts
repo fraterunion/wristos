@@ -34,6 +34,7 @@ function buildService(overrides: {
     persistSelection: overrides.persistSelection ?? jest.fn().mockResolvedValue({ version: 2, working: {} }),
     persistClarificationTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
     persistEntityPickerTurn: jest.fn().mockResolvedValue({ conversationId: 'c-new', workspaceId: 'w-new', version: 2 }),
+    clearStalePickerCandidates: jest.fn().mockResolvedValue(undefined),
     // Mirrors the real WorkingContextService.readConversationDraft(): derives
     // straight from whatever resolvedContextRaw the workingLoad mock above
     // returned, so tests only need to set `resolvedContextRaw.conversationDraft`.
@@ -737,12 +738,8 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
       expect(provider).toHaveBeenCalledTimes(1);
     });
 
-    it('an expired candidate list falls through to normal NLP rather than resolving a stale picker click', async () => {
-      const provider = jest.fn().mockResolvedValue({
-        kind: 'CANDIDATE',
-        candidate: { intent: 'UNKNOWN', entities: {}, missingEntities: [], ambiguities: [], confidence: 'LOW', language: 'es', isReadIntent: false, isWriteIntent: false, candidateHash: 'h2' },
-        provider: 'fake', model: 'fake-v1', latencyMs: 5, schemaVersion: '1.0.0',
-      });
+    it('a typed answer that genuinely matches an EXPIRED candidate list fails closed (EXPIRED) instead of silently falling through — an explicit stale-selection attempt is never trusted', async () => {
+      const provider = jest.fn();
       const executeClaimed = jest.fn();
       const staleAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const { service } = buildService({
@@ -751,9 +748,12 @@ describe('NaturalLanguageAssistantService: conversational Draft hardening — ty
         workingLoad: pickerWorkingLoad({ presentedAt: staleAt }),
       });
 
-      await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-expired' });
+      const result = await service.handleMessage(actor, { ...baseDto, text: 'Valdez', workspaceId: 'w1', conversationId: 'c1', clientRequestId: 'typed-expired' });
 
-      expect(provider).toHaveBeenCalledTimes(1);
+      expect(provider).not.toHaveBeenCalled();
+      expect(executeClaimed).not.toHaveBeenCalled();
+      expect(result.resolvedIntent).toBe('UNKNOWN');
+      expect(String(result.response.payload.message)).toMatch(/elijas nuevamente/i);
     });
 
     it('outside an active picker (no lastPresentedCandidates at all), typed text goes straight to normal NLP — no special handling', async () => {

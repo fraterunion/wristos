@@ -13,7 +13,7 @@ import {
 } from '../context/reference-resolver.service';
 import { IntentReference } from '../context/reference-schema';
 import { mergeTrustedIds, stripUntrustedEntityIds } from '../context/trusted-entities';
-import { AssistantWorkingContext, WORKING_CONTEXT_SCHEMA_VERSION } from '../context/working-context';
+import { AssistantWorkingContext, WORKING_CONTEXT_SCHEMA_VERSION, isCandidateContextFresh } from '../context/working-context';
 import { WorkingContextService } from '../context/working-context.service';
 import { applyDraftPatch, ConversationDraft, draftToEntities, emptyDraft } from '../context/conversation-draft';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
@@ -160,6 +160,106 @@ export class NaturalLanguageAssistantService {
     const deterministicRef = detectDeterministicReference(normalizedText);
     /** May be cleared when the user cancels or switches topics mid-clarification. */
     let workingForProvider = loaded.working;
+    /**
+     * Once true, a stale/irrelevant picker must never resolve a reference
+     * for this turn — even one the LLM itself emits after seeing (possibly
+     * still-present) candidate context in its prompt. Set by either gate
+     * below: the picker-relevance gate (no positive match to the presented
+     * list) or the existing high-confidence topic-change gate (a different
+     * capability, or a same-capability restart that abandons the old draft).
+     */
+    let discardStaleReferenceContext = false;
+
+    // Picker relevance gate (expired/irrelevant picker must never hijack a
+    // fresh message): a candidate list represents the question "which of
+    // these did you mean?" — but a message that doesn't positively engage
+    // with it (no ordinal/deictic, no typed label match) must never be
+    // force-fit as an answer to it, expired or not. This runs BEFORE the
+    // pendingField clarification gate below because that gate's own
+    // field-lock step has no picker-freshness awareness of its own — left
+    // alone it would search CRM/inventory for an entity literally named the
+    // user's entire next sentence. Ordinal/deictic references ("el
+    // primero", "ese") are handled by the existing isPureReferentialUtterance
+    // block further down, unchanged — this gate only classifies typed-label
+    // engagement, since !deterministicRef already excludes that case here.
+    if (loaded.working?.lastPresentedCandidates && !deterministicRef) {
+      const fresh = isCandidateContextFresh(loaded.working);
+      const matchVerdict = this.referenceResolver.matchesPresentedLabel(normalizedText, loaded.working);
+
+      if (matchVerdict !== 'NO_MATCH' && !fresh) {
+        // Explicit attempt to select from a genuinely dead list — fail
+        // closed. Never silently trust it, never revive it.
+        telem(this.telemetry, {
+          event: 'ClarificationShown',
+          tenantId: actor.tenantId,
+          conversationId: dto.conversationId,
+          requestId: request.id,
+          clarificationType: mapClarificationType('EXPIRED'),
+          clarificationReason: 'EXPIRED',
+          entityPickerUsed: true,
+        });
+        const response = buildReferenceClarificationResponse(
+          'Necesito que elijas nuevamente. La lista anterior ya no es válida.',
+          responseCtx,
+          'EXPIRED',
+        );
+        await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'EXPIRED');
+        return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+      }
+
+      if (matchVerdict === 'MATCH' && fresh) {
+        const resolved = this.referenceResolver.resolveByTypedLabel(normalizedText, loaded.working);
+        if (resolved.kind === 'RESOLVED') {
+          return this.continueFromResolvedReference({
+            actor,
+            dto,
+            request,
+            responseCtx,
+            loaded,
+            resolution: resolved,
+            telemetryMeta: { ordinalUsed: false, deicticUsed: false },
+          });
+        }
+        // Content match + fresh guarantees resolveByTypedLabel also resolves
+        // uniquely; falling through here would only happen on an internal
+        // inconsistency, in which case unrestricted NLP is the safe default.
+      }
+
+      if (matchVerdict === 'AMBIGUOUS' && fresh) {
+        const resolved = this.referenceResolver.resolveByTypedLabel(normalizedText, loaded.working);
+        if (resolved.kind === 'CLARIFY' && resolved.failureType === 'AMBIGUOUS') {
+          telem(this.telemetry, {
+            event: 'ClarificationShown',
+            tenantId: actor.tenantId,
+            conversationId: dto.conversationId,
+            requestId: request.id,
+            clarificationType: mapClarificationType(resolved.failureType),
+            clarificationReason: resolved.failureType,
+            entityPickerUsed: true,
+          });
+          const response = buildReferenceClarificationResponse(resolved.message, responseCtx, resolved.failureType);
+          await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, resolved.failureType);
+          return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
+        }
+      }
+
+      if (matchVerdict === 'NO_MATCH') {
+        // This picker — fresh or expired — is not what this message is
+        // about. Strip it so it can neither leak into the provider prompt
+        // nor be honored by a reference the provider emits anyway, and
+        // best-effort clear the stored copy so it cannot hijack the next
+        // turn either.
+        discardStaleReferenceContext = true;
+        const { lastPresentedCandidates: _drop, ...rest } = loaded.working;
+        loaded.working = { ...rest, contextUpdatedAt: new Date().toISOString() };
+        workingForProvider = loaded.working;
+        if (dto.workspaceId && loaded.version !== null) {
+          void this.workingContext
+            .clearStalePickerCandidates(actor.tenantId, actor.userId, dto.workspaceId, loaded.version)
+            .catch(() => {});
+        }
+      }
+    }
 
     // Active clarification continuation: map closed answers into the pending write
     // without losing prior entities. Cancel phrases clear the draft politely.
@@ -232,11 +332,19 @@ export class NaturalLanguageAssistantService {
         }
         workingForProvider = workingForProvider
           ? (() => {
-              const { pendingMissingFields: _drop, pendingActionRunId: _drop2, ...rest } =
-                workingForProvider;
+              const {
+                pendingMissingFields: _drop,
+                pendingActionRunId: _drop2,
+                lastPresentedCandidates: _drop3,
+                ...rest
+              } = workingForProvider;
               return { ...rest, contextUpdatedAt: new Date().toISOString() };
             })()
           : null;
+        // A high-confidence topic change means "start fresh" — a reference
+        // the provider emits anyway (having seen this same stale context on
+        // an earlier turn) must never be honored against it.
+        discardStaleReferenceContext = true;
         telem(this.telemetry, {
           event: 'ClarificationAnswered',
           tenantId: actor.tenantId,
@@ -267,43 +375,13 @@ export class NaturalLanguageAssistantService {
       }
     }
 
-    // Typed picker continuation: while an ENTITY_PICKER is fresh, a typed
-    // candidate label ("Valdez" / "Abraham Valdez") resolves exactly like
-    // clicking the matching button — no NLP/router/Claude involved. Only
-    // engages when the picker is still open and the text uniquely matches
-    // one presented candidate; ambiguous asks again, no-match/expired falls
-    // through to the rest of this method (eventually unrestricted NLP) —
-    // outside an active picker this block never even runs.
-    if (!pendingField && loaded.working?.lastPresentedCandidates && !deterministicRef) {
-      const typedResolution = this.referenceResolver.resolveByTypedLabel(normalizedText, loaded.working);
-      if (typedResolution.kind === 'RESOLVED') {
-        return this.continueFromResolvedReference({
-          actor,
-          dto,
-          request,
-          responseCtx,
-          loaded,
-          resolution: typedResolution,
-          telemetryMeta: { ordinalUsed: false, deicticUsed: false },
-        });
-      }
-      if (typedResolution.kind === 'CLARIFY' && typedResolution.failureType === 'AMBIGUOUS') {
-        telem(this.telemetry, {
-          event: 'ClarificationShown',
-          tenantId: actor.tenantId,
-          conversationId: dto.conversationId,
-          requestId: request.id,
-          clarificationType: mapClarificationType(typedResolution.failureType),
-          clarificationReason: typedResolution.failureType,
-          entityPickerUsed: true,
-        });
-        const response = buildReferenceClarificationResponse(typedResolution.message, responseCtx, typedResolution.failureType);
-        await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, typedResolution.failureType);
-        return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
-      }
-      // NOT_FOUND / EXPIRED / NO_CONTEXT — fall through; this typed text may
-      // simply be an unrelated message, not a picker selection at all.
-    }
+    // Typed picker continuation while an ENTITY_PICKER is active is now
+    // fully handled by the picker-relevance gate at the top of this method
+    // (it runs before the pendingField block and already resolves/clarifies
+    // a positive match, or strips the candidate list on no-match) — by the
+    // time execution reaches here, loaded.working.lastPresentedCandidates
+    // is only ever still present if that gate didn't apply (no candidates,
+    // or a deterministic ordinal/deictic reference, handled further below).
 
     // Draft correction: "No. Era Batman." / "No. Fueron 480." / "No. Fue por
     // Bancos." / "No. Era Abraham Bosquez." mutate exactly one slot of the
@@ -595,7 +673,13 @@ export class NaturalLanguageAssistantService {
     }
 
     // Prefer deterministic reference detection over any LLM-emitted reference.
-    const reference: IntentReference | undefined = deterministicRef ?? outcome.candidate.reference;
+    // Once this turn has already decided the message is a fresh command
+    // (topic change) or irrelevant to the stale picker it saw, never let a
+    // reference — deterministic or provider-emitted — resolve against
+    // context that decision already discarded.
+    const reference: IntentReference | undefined = discardStaleReferenceContext
+      ? undefined
+      : deterministicRef ?? outcome.candidate.reference;
     let entities = stripUntrustedEntityIds(outcome.candidate.entities);
 
     if (reference) {
@@ -851,8 +935,13 @@ export class NaturalLanguageAssistantService {
     }
 
     const intent = outcome.candidate.intent as BusinessActionId;
-    // If we were clarifying a write, preserve prior entities across free-text answers.
+    // If we were clarifying a write, preserve prior entities across free-text
+    // answers — but never once a topic change already abandoned that draft
+    // (a same-capability restart, e.g. a stale REGISTER_SALE clarification
+    // followed by an unrelated fresh "Vendí…" sentence, must not silently
+    // re-merge the old draft's unrelated fields back in).
     if (
+      !discardStaleReferenceContext &&
       pendingField &&
       pendingIntent &&
       WRITE_CLARIFICATION_INTENTS.has(pendingIntent) &&
