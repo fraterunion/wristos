@@ -200,3 +200,17 @@ export interface PickerSelectionRequest {
   timezone: string;
   clientRequestId: string;
 }
+
+/**
+ * "Empezar de nuevo" — Conversation Reset (V1 simplicity, not conversational
+ * editing). Clears the in-flight transaction only; conversation history and
+ * every completed ActionRun are untouched. See POST /ai/assistant/reset.
+ */
+export interface ConversationResetRequest {
+  conversationId?: string;
+  workspaceId?: string;
+  surface: 'MOBILE';
+  locale: string;
+  timezone: string;
+  clientRequestId: string;
+}

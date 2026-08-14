@@ -163,6 +163,25 @@ export function clearConversationDraftFromResolvedContext(rawResolvedContext: un
   return rest;
 }
 
+/**
+ * Conversation Reset (V1 simplicity, not conversational editing): the full,
+ * unconditional clear of every transaction-scoped field this shell can ever
+ * hold — workingContext (lastIntent, pendingMissingFields,
+ * pendingActionRunId, lastPresentedCandidates, lastSelectedEntity,
+ * lastResolvedEntities, lastResponseType), conversationDraft, composition
+ * (dependency-picker state), and the plan checkpoint (entityVersions,
+ * planFingerprint). Deliberately returns a bare empty object rather than
+ * naming each key: every key this shell has ever held is transaction-scoped,
+ * so an explicit allowlist-of-what-to-drop would silently under-clear the
+ * next time a new transient field is added here. The conversation itself
+ * (AIConversation, AIMessage history, completed AIActionRuns) is untouched —
+ * this function only ever produces the replacement for
+ * AIWorkspace.resolvedContext.
+ */
+export function buildResetResolvedContext(): ResolvedContextShell {
+  return {};
+}
+
 export function isCandidateContextFresh(
   context: AssistantWorkingContext,
   now = new Date(),

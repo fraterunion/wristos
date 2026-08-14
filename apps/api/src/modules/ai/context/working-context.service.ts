@@ -1,11 +1,13 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
-import { AIAuditEventType, AIConversationSurface, AIInteractionState, Prisma } from '@prisma/client';
+import { AIActionRunStatus, AIAuditEventType, AIConversationSurface, AIInteractionState, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { canTransition } from '../domain/action-run-state-machine';
 import { applyDraftPatch, ConversationDraft, entitiesToDraftPatch } from './conversation-draft';
 import {
   AssistantWorkingContext,
   applyPresentedCandidates,
   applySelectedEntity,
+  buildResetResolvedContext,
   emptyWorkingContext,
   extractPresentedCandidatesFromEntityList,
   hashEntityId,
@@ -91,6 +93,109 @@ export class WorkingContextService {
         },
       });
       return { version: workspace.version, working: nextWorking };
+    });
+  }
+
+  /**
+   * Conversation Reset (V1 simplicity): the explicit, deterministic
+   * "start over" operation — no provider call, no planner, no router. Clears
+   * every transaction-scoped field this workspace can hold (see
+   * buildResetResolvedContext's doc comment for the full audit of what that
+   * covers) and, if the workspace currently points at an unfinished
+   * ActionRun (DRAFT/NEEDS_CLARIFICATION/READY_FOR_CONFIRMATION), cancels
+   * that ONE run through the same state-machine transition RuntimeService
+   * itself uses — never a completed/executing/already-terminal run, and
+   * never any OTHER conversation's history. conversationId is deliberately
+   * left untouched: conversation history stays visible, only the in-flight
+   * transaction disappears.
+   */
+  async resetConversationTransaction(
+    tenantId: string,
+    userId: string,
+    workspaceId: string,
+    expectedVersion: number,
+  ): Promise<{ conversationId: string | null; workspaceId: string; version: number; cancelledActionRunId: string | null }> {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.aIWorkspace.findFirst({
+        where: { id: workspaceId, tenantId, userId, deletedAt: null },
+      });
+      if (!current) throw new NotFoundException('AI workspace not found');
+      if (current.version !== expectedVersion) throw new ConflictException('AI workspace version is stale');
+
+      let cancelledActionRunId: string | null = null;
+      if (current.activeActionRunId) {
+        const run = await tx.aIActionRun.findFirst({
+          where: { id: current.activeActionRunId, tenantId },
+          select: { id: true, status: true, conversationId: true },
+        });
+        // Only ever cancels a run still genuinely UNSTARTED for this
+        // transaction. canTransition() alone isn't a strict enough guard
+        // here: the general state machine also allows EXECUTING ->
+        // CANCELLED (for admin/error-path cleanup elsewhere), but marking
+        // an in-flight execution CANCELLED here would only corrupt its
+        // bookkeeping — the actual write keeps running underneath and,
+        // once it finishes, RuntimeService's own completeExecution/
+        // failExecution would then hit an illegal CANCELLED -> COMPLETED/
+        // FAILED transition. A write actually in flight must run to its
+        // own terminal outcome, never be yanked mid-execution by a UI click.
+        const cancellableFromReset: AIActionRunStatus[] = [
+          AIActionRunStatus.DRAFT,
+          AIActionRunStatus.NEEDS_CLARIFICATION,
+          AIActionRunStatus.READY_FOR_CONFIRMATION,
+        ];
+        if (run && cancellableFromReset.includes(run.status) && canTransition(run.status, AIActionRunStatus.CANCELLED)) {
+          await tx.aIActionRun.update({ where: { id: run.id }, data: { status: AIActionRunStatus.CANCELLED } });
+          await tx.aIAuditEvent.create({
+            data: {
+              tenantId,
+              actorUserId: userId,
+              workspaceId,
+              conversationId: run.conversationId,
+              actionRunId: run.id,
+              type: AIAuditEventType.EXECUTION_CANCELLED,
+              payload: { reason: 'CONVERSATION_RESET' },
+            },
+          });
+          cancelledActionRunId = run.id;
+        }
+      }
+
+      const changed = await tx.aIWorkspace.updateMany({
+        where: { id: workspaceId, tenantId, userId, version: expectedVersion, deletedAt: null },
+        data: {
+          activeActionRunId: null,
+          interactionState: AIInteractionState.IDLE,
+          draftPayload: Prisma.DbNull,
+          resolvedContext: buildResetResolvedContext() as Prisma.InputJsonObject,
+          selectedEntities: Prisma.DbNull,
+          pendingResponse: Prisma.DbNull,
+          version: { increment: 1 },
+          lastActivityAt: new Date(),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('AI workspace version is stale');
+      const workspace = await tx.aIWorkspace.findUniqueOrThrow({ where: { id: workspaceId } });
+      await tx.aIAuditEvent.create({
+        data: {
+          tenantId,
+          actorUserId: userId,
+          workspaceId,
+          conversationId: current.conversationId,
+          type: AIAuditEventType.WORKSPACE_RESET,
+          payload: {
+            previousVersion: expectedVersion,
+            version: workspace.version,
+            reason: 'CONVERSATION_RESET',
+            ...(cancelledActionRunId ? { cancelledActionRunId } : {}),
+          },
+        },
+      });
+      return {
+        conversationId: current.conversationId,
+        workspaceId,
+        version: workspace.version,
+        cancelledActionRunId,
+      };
     });
   }
 

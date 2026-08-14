@@ -133,6 +133,24 @@ export function buildReferenceClarificationResponse(
   };
 }
 
+/**
+ * "Empezar de nuevo" — Conversation Reset confirmation. Deterministic, fixed
+ * copy: this response never comes from a provider/planner/router call, so
+ * there is no candidate output to render — just the one guaranteed outcome.
+ */
+export function buildConversationResetResponse(context: ResponseContext): StructuredAssistantResponse {
+  return {
+    ...base(context),
+    interactionState: 'COMPLETED',
+    responseType: 'TEXT_ANSWER',
+    payload: {
+      message: 'Listo. Empecemos de nuevo.',
+      unchanged: 'El historial de la conversación se conserva; solo se descartó la transacción en curso.',
+      nextAction: 'Escribe tu siguiente indicación.',
+    },
+  };
+}
+
 export function buildEntitySelectedResponse(
   label: string,
   context: ResponseContext,

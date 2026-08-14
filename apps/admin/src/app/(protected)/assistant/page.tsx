@@ -12,11 +12,13 @@ import {
   createAssistantAction,
   createAssistantMessageAction,
   createPickerSelectionAction,
+  createResetConversationAction,
   readResumeHint,
   resumeAssistantWorkspace,
   writeResumeHint,
   type AssistantAction,
   type AssistantMessageAction,
+  type ConversationResetAction,
   type PickerSelectionAction,
 } from '@/lib/assistant-api';
 import { useAuthContext } from '@/lib/auth-context';
@@ -104,9 +106,9 @@ export default function AssistantPage() {
   const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<AssistantAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [messagePending, setMessagePending] = useState<AssistantMessageAction | PickerSelectionAction | null>(null);
+  const [messagePending, setMessagePending] = useState<AssistantMessageAction | PickerSelectionAction | ConversationResetAction | null>(null);
   const [messagePendingLabel, setMessagePendingLabel] = useState<string | null>(null);
-  const [messageRetryAction, setMessageRetryAction] = useState<AssistantMessageAction | PickerSelectionAction | null>(null);
+  const [messageRetryAction, setMessageRetryAction] = useState<AssistantMessageAction | PickerSelectionAction | ConversationResetAction | null>(null);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [confirmingSale, setConfirmingSale] = useState(false);
   const [composerValue, setComposerValue] = useState('');
@@ -208,7 +210,7 @@ export default function AssistantPage() {
   );
 
   const runMessageAction = useCallback(
-    async (action: AssistantMessageAction | PickerSelectionAction, label: string) => {
+    async (action: AssistantMessageAction | PickerSelectionAction | ConversationResetAction, label: string) => {
       if (pending || messagePending) return;
       setMessagePending(action);
       setMessagePendingLabel(label);
@@ -508,6 +510,34 @@ export default function AssistantPage() {
     void runMessageAction(action, text);
   };
 
+  /**
+   * "Empezar de nuevo" is visible exactly when the most recent turn left an
+   * in-flight transaction behind — the same three response types
+   * StructuredAssistantPersistence.complete() itself treats as "the Draft
+   * stays alive" (ENTITY_PICKER, MISSING_FIELDS_CARD, ACTION_PREVIEW_CARD).
+   * Any other response type (a plain answer, a receipt, a hard error) means
+   * there is nothing in-flight to discard, so the button disappears on its
+   * own without any separate tracking state.
+   */
+  const hasActiveDraft = useMemo(() => {
+    const latest = history[0];
+    if (!latest) return false;
+    return (
+      latest.response.responseType === 'MISSING_FIELDS_CARD' ||
+      latest.response.responseType === 'ENTITY_PICKER' ||
+      latest.response.responseType === 'ACTION_PREVIEW_CARD'
+    );
+  }, [history]);
+
+  const resetConversation = useCallback(() => {
+    if (pending || messagePending) return;
+    const action = createResetConversationAction({
+      conversationId: workspace.conversationId,
+      workspaceId: workspace.workspaceId,
+    });
+    void runMessageAction(action, 'Empezar de nuevo');
+  }, [pending, messagePending, runMessageAction, workspace]);
+
   const startNewConversation = () => {
     setHistory([]);
     setHistoryTimestamps({});
@@ -533,7 +563,9 @@ export default function AssistantPage() {
             messageRetryAction,
             'text' in messageRetryAction.request
               ? messageRetryAction.request.text
-              : messageRetryAction.request.selectedLabel,
+              : 'selectedLabel' in messageRetryAction.request
+                ? messageRetryAction.request.selectedLabel
+                : 'Empezar de nuevo',
           )
       : undefined;
 
@@ -615,6 +647,20 @@ export default function AssistantPage() {
             emptyState={emptyState}
           />
         </div>
+
+        {hasActiveDraft ? (
+          <div className="flex justify-center pb-1">
+            <button
+              type="button"
+              onClick={resetConversation}
+              disabled={busy}
+              className="rounded-full px-3 py-1 text-[12px] text-white/40 transition hover:text-white/70 disabled:cursor-not-allowed disabled:opacity-40"
+              data-testid="assistant-reset-conversation"
+            >
+              Empezar de nuevo
+            </button>
+          </div>
+        ) : null}
 
         <ConversationComposer
           value={composerValue}
