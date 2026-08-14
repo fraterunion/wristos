@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Optional } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { AIRequest } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AIRequestService } from '../assistant/ai-request.service';
@@ -18,6 +18,7 @@ import { WorkingContextService } from '../context/working-context.service';
 import { applyDraftPatch, ConversationDraft, draftToEntities, emptyDraft } from '../context/conversation-draft';
 import { AssistantMessageDto } from '../dto/assistant-message.dto';
 import { PickerSelectionDto } from '../dto/picker-selection.dto';
+import { ConversationResetDto } from '../dto/conversation-reset.dto';
 import { BusinessActionId } from '../planner/planner.types';
 import { mapClarificationType, mapFailureTaxonomy, telem } from '../telemetry/telemetry-hooks';
 import { TelemetryEmitter } from '../telemetry/telemetry-emitter.service';
@@ -47,6 +48,7 @@ import { IntentAdapterOutcome, IntentAdapterService } from './intent-adapter.ser
 import { INTENT_CANDIDATE_VALUES, IntentCandidateIntent } from './intent-schema';
 import { assertWithinTextLimit, decideConfidencePolicy } from './safety';
 import {
+  buildConversationResetResponse,
   buildEntitySelectedResponse,
   buildPolicyResponse,
   buildProviderFailureResponse,
@@ -1089,6 +1091,76 @@ export class NaturalLanguageAssistantService {
       resolution,
       telemetryMeta: { ordinalUsed: false, deicticUsed: false },
     });
+  }
+
+  /**
+   * "Empezar de nuevo" — Conversation Reset (V1 simplicity). A first-class,
+   * explicit operation, not a simulated cancel or an empty message: no
+   * provider call, no planner, no OperationalIntentRouter — a pure
+   * deterministic clear of the current in-flight transaction
+   * (ConversationDraft, pending clarification/picker state, plan
+   * checkpoint), cancelling the one unfinished ActionRun if any. Still
+   * claimed through the same durable AIRequestService.claimText() every
+   * other assistant-surface action uses, so a double-click or retried
+   * network request replays the identical response instead of resetting
+   * twice. Conversation history and every completed ActionRun are
+   * untouched — only conversationId survives on the workspace; everything
+   * transaction-scoped is gone, so the NEXT message behaves exactly like
+   * the first message of a brand-new conversation.
+   */
+  async resetConversation(
+    actor: AssistantActorContext,
+    dto: ConversationResetDto,
+  ): Promise<NaturalLanguageAssistantResult> {
+    const claim = await this.aiRequests.claimText(actor, {
+      clientRequestId: dto.clientRequestId,
+      // A fixed, non-user-authored marker — never shown to the user, never
+      // sent to any provider. Only used as the idempotency/replay key.
+      text: '__CONVERSATION_RESET__',
+      surface: dto.surface,
+      locale: dto.locale,
+      timezone: dto.timezone,
+      conversationId: dto.conversationId,
+      workspaceId: dto.workspaceId,
+    });
+    if (claim.kind === 'REPLAY') {
+      await this.aiRequests.auditReplay(actor, claim.request);
+      return { resolvedIntent: 'UNKNOWN', response: claim.response, resolvedEntities: {} };
+    }
+    if (claim.kind === 'IN_PROGRESS') {
+      return { resolvedIntent: 'UNKNOWN', response: claim.response, resolvedEntities: {} };
+    }
+
+    const request = claim.request;
+    const responseCtx = { conversationId: dto.conversationId, workspaceId: dto.workspaceId, traceId: request.traceId };
+    let response = buildConversationResetResponse(responseCtx);
+
+    if (dto.workspaceId) {
+      try {
+        const loaded = await this.workingContext.load(actor.tenantId, actor.userId, dto.workspaceId);
+        if (loaded.version !== null) {
+          const cleared = await this.workingContext.resetConversationTransaction(
+            actor.tenantId,
+            actor.userId,
+            dto.workspaceId,
+            loaded.version,
+          );
+          response = {
+            ...response,
+            conversationId: cleared.conversationId ?? dto.conversationId ?? '',
+            workspaceId: cleared.workspaceId,
+          };
+        }
+      } catch (error) {
+        // No workspace, or nothing left to clear (already reset/idle) — the
+        // reset still succeeds: there is genuinely no in-flight transaction
+        // to discard, which is exactly the state the user wants to be in.
+        if (!(error instanceof NotFoundException)) throw error;
+      }
+    }
+
+    await this.aiRequests.failUnattached(request, actor, 'UNKNOWN', response, 'CONVERSATION_RESET');
+    return { resolvedIntent: 'UNKNOWN', response, resolvedEntities: {} };
   }
 
   /**

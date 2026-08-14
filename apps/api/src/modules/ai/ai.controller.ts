@@ -7,6 +7,7 @@ import { ConversationService } from './conversation/conversation.service';
 import { AppendMessageDto } from './dto/append-message.dto';
 import { AssistantMessageDto } from './dto/assistant-message.dto';
 import { PickerSelectionDto } from './dto/picker-selection.dto';
+import { ConversationResetDto } from './dto/conversation-reset.dto';
 import { CreateActionRunDto } from './dto/create-action-run.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { ConfirmActionRunDto } from './dto/action-run-command.dto';
@@ -73,6 +74,18 @@ export class AIController {
   @UseGuards(IntentAdapterRateLimitGuard)
   async assistantPickerSelection(@CurrentUser() user: CurrentUserType, @Body() dto: PickerSelectionDto, @Res({ passthrough: true }) response: Response) {
     const result = await this.naturalLanguageAssistant.handlePickerSelection({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
+    const status = structuredAssistantHttpStatus(result.response);
+    if (status !== null) response.status(status);
+    return result;
+  }
+
+  // "Empezar de nuevo" — Conversation Reset (V1 simplicity). Deliberately
+  // NOT guarded by IntentAdapterRateLimitGuard: this never calls the
+  // provider, so there is no LLM cost/quota to protect against. Pure
+  // deterministic clear of the in-flight transaction only.
+  @Post('assistant/reset')
+  async assistantReset(@CurrentUser() user: CurrentUserType, @Body() dto: ConversationResetDto, @Res({ passthrough: true }) response: Response) {
+    const result = await this.naturalLanguageAssistant.resetConversation({ tenantId: user.tenantId, userId: user.userId, role: user.role, permissions: [] }, dto);
     const status = structuredAssistantHttpStatus(result.response);
     if (status !== null) response.status(status);
     return result;

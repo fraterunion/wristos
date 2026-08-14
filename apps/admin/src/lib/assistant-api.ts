@@ -6,6 +6,7 @@ import type {
   AssistantWorkspace,
   BusinessActionId,
   ContextEntityType,
+  ConversationResetRequest,
   JsonValue,
   PickerSelectionRequest,
   StructuredAssistantRequest,
@@ -211,6 +212,58 @@ export function createPickerSelectionAction(input: {
         throw new AssistantMessageRequestError(
           error.status,
           statusMessages[error.status] ?? 'El asistente no está disponible en este momento. No se realizó ningún cambio.',
+          isAssistantMessageResult(error.payload) ? error.payload : undefined,
+        );
+      }
+      throw error;
+    }
+  };
+  return { clientRequestId, request, execute, retry: execute };
+}
+
+export interface ConversationResetAction {
+  readonly clientRequestId: string;
+  readonly request: ConversationResetRequest;
+  execute(): Promise<AssistantMessageResult>;
+  retry(): Promise<AssistantMessageResult>;
+}
+
+/**
+ * "Empezar de nuevo" — POST /ai/assistant/reset. A first-class operation,
+ * not a simulated cancel or an empty message: pure deterministic clear of
+ * the in-flight transaction (no provider/planner/router call server-side).
+ * Returns the identical AssistantMessageResult shape as the message/picker
+ * endpoints, so callers (runMessageAction) render it through the exact same
+ * history-append path — the confirmation becomes a normal turn in the
+ * still-visible conversation thread, nothing else is cleared client-side.
+ */
+export function createResetConversationAction(input: {
+  conversationId?: string;
+  workspaceId?: string;
+}): ConversationResetAction {
+  const clientRequestId = newClientRequestId();
+  const request: ConversationResetRequest = {
+    ...input,
+    clientRequestId,
+    surface: 'MOBILE',
+    locale: typeof navigator === 'undefined' ? 'es' : navigator.language,
+    timezone:
+      typeof Intl === 'undefined'
+        ? 'UTC'
+        : Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  const execute = async () => {
+    try {
+      return await apiPost<AssistantMessageResult, ConversationResetRequest>(
+        '/ai/assistant/reset',
+        request,
+        { authenticated: true },
+      );
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new AssistantMessageRequestError(
+          error.status,
+          statusMessages[error.status] ?? 'No se pudo reiniciar la conversación. Reintenta.',
           isAssistantMessageResult(error.payload) ? error.payload : undefined,
         );
       }
